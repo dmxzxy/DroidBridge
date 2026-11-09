@@ -172,6 +172,26 @@ dialog::backdrop{background:rgba(0,0,0,.45)}
 .steps{margin:0;padding-left:18px;color:var(--sub);display:grid;gap:6px}
 .steps b{color:var(--text);font-weight:500}
 .foot{color:var(--faint);font-size:11px}
+.dev .wl{color:var(--faint);flex:none;display:flex}
+.dev .wl svg{width:13px;height:13px}
+.found-t{margin:10px 0 2px;padding:0 8px;color:var(--faint);font-size:11px}
+.found{display:flex;align-items:center;gap:6px;height:30px;padding:0 4px 0 8px;border-radius:6px;font-size:12px;cursor:pointer;border:1px dashed var(--line2);margin-top:4px}
+.found:hover{background:var(--hover)}
+.found .hn{color:var(--sub);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:55%}
+.found .meta{color:var(--faint);flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.found .ib{width:24px;height:24px}
+dialog.wide{width:min(440px,calc(100vw - 32px))}
+.seg{display:flex;gap:2px;padding:2px;border-radius:8px;background:var(--bg);border:1px solid var(--line)}
+.seg button{flex:1;height:28px;border:0;border-radius:6px;background:none;color:var(--sub)}
+.seg button.on{background:var(--raised);color:var(--text);box-shadow:0 1px 2px rgba(0,0,0,.2)}
+.pane{display:grid;gap:12px}
+.pane[hidden]{display:none}
+.pane>.hint{color:var(--faint);font-size:11px}
+.qrbox{display:grid;place-items:center;min-height:236px;padding:8px;border-radius:8px;background:#fff;width:236px;margin:0 auto}
+.qrbox svg{width:220px;height:220px}
+.qrstate{text-align:center;color:var(--sub);font-size:12px;min-height:18px}
+.qrstate.err{color:var(--bad)}.qrstate.ok{color:var(--ok)}
+.ovtext{white-space:pre-line}
 .steps2{display:grid;gap:8px}
 .step{display:flex;align-items:center;gap:10px;color:var(--sub)}
 .step.cur{color:var(--text)}
@@ -377,7 +397,35 @@ const EN = {"分辨率":"Resolution",
   "已暂停{0}":"Paused{0}",
   " · 新增 {0} 行":" · {0} new lines",
   "已保存 {0} 行日志":"Saved {0} log lines",
-  "通用":"General"};
+  "通用":"General",
+  "无线连接":"Wireless",
+  "无线连接设备":"Connect device wirelessly",
+  "在局域网中发现":"Found on your network",
+  "无线连接设备…":"Connect device wirelessly…",
+  "扫码配对":"QR code",
+  "配对码":"Pairing code",
+  "IP 地址":"IP address",
+  "手机打开 开发者选项 → 无线调试 → 使用二维码配对设备，扫描上方二维码。手机需要与「{0}」在同一网络（Android 11+）。":"On the phone, open Developer options → Wireless debugging → Pair device with QR code and scan the code above. The phone must be on the same network as “{0}” (Android 11+).",
+  "手机打开 开发者选项 → 无线调试 → 使用配对码配对设备，填写其中的 IP 地址、端口和配对码。":"On the phone, open Developer options → Wireless debugging → Pair device with pairing code, and enter the IP address, port and code shown.",
+  "配对地址":"Pairing address",
+  "连接地址（可选）":"Connect address (optional)",
+  "无线调试页面上方显示的 IP 地址和端口；留空会自动查找":"The IP address and port at the top of the Wireless debugging page; found automatically if empty",
+  "已配对设备在无线调试页面显示的地址，或执行过 adb tcpip 的设备（默认端口 5555）":"The address shown on the Wireless debugging page of a paired device, or a device in adb tcpip mode (default port 5555)",
+  "连接":"Connect",
+  "设备将连接到「{0}」":"The device will connect to “{0}”",
+  "重试":"Retry",
+  "声音":"Audio",
+  "默认转发声音（Android 11+）":"Forward audio by default (Android 11+)",
+  "同时在手机上播放（Android 13+）":"Also play on the device (Android 13+)",
+  "转发声音":"Forward audio",
+  "断开无线连接":"Disconnect wireless",
+  "正在断开…":"Disconnecting…",
+  "切换为无线连接":"Switch to wireless",
+  "正在切换为无线连接…":"Switching to wireless…",
+  "停止自动重连":"Stop reconnecting",
+  "正在自动重连…":"Reconnecting automatically…",
+  "「{0}」暂时无法连接，等待恢复…":"“{0}” is unreachable; waiting for it to come back…",
+  "设备已断开，等待重新连接…":"Device disconnected; waiting for it to reconnect…"};
 // 界面语言：?lang= > 手动选择 > 服务端语言（桌面版通过 ?lang= 传入）> 浏览器语言
 let LANG = (() => {
   const q = new URLSearchParams(location.search).get('lang');
@@ -433,6 +481,9 @@ const P = {
   edit: '<path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z"/>',
   trash: '<path d="M3 6h18M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6M10 11v6M14 11v6M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>',
   check: '<path d="M20 6 9 17l-5-5"/>',
+  wifi: '<path d="M5 12.55a11 11 0 0 1 14.08 0M1.42 9a16 16 0 0 1 21.16 0M8.53 16.11a6 6 0 0 1 6.95 0"/><circle cx="12" cy="20" r="1"/>',
+  wifiOff: '<path d="M2 2l20 20M8.5 16.4a6 6 0 0 1 7 0M5 12.6a11 11 0 0 1 5.2-2.5M14 9.3a11 11 0 0 1 5 3.3M1.4 9a16 16 0 0 1 4.7-2.9M10.7 5.1A16 16 0 0 1 22.6 9"/><circle cx="12" cy="20" r="1"/>',
+  headphones: '<path d="M3 18v-6a9 9 0 0 1 18 0v6"/><path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3zM3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z"/>',
   download: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5M12 15V3"/>',
   logs: '<path d="M4 5h16M4 10h16M4 15h10M4 20h6"/>',
   pause: '<rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/>',
@@ -580,10 +631,23 @@ async function refreshHost(hst) {
   catch (e) { hst.error = e.message; hst.devices = []; }
   hst.loaded = true;
 }
+let FOUND = [];
 async function refreshAll() {
   try { await loadPeers(); } catch {}
-  await Promise.all([...hosts.values()].map(refreshHost));
+  await Promise.all([...hosts.values()].map(refreshHost).concat(api('/api/discovered').then(r => { FOUND = r.list || []; }, () => {})));
   renderSide();
+}
+
+/** 在电脑的设备列表中找到同一台设备（无线重连后 serial 可能变化，按 uid 匹配） */
+function matchDevice(hst, dev) {
+  const list = hst.devices || [];
+  return list.find(d => d.serial === dev.serial && d.state === 'device')
+    || (dev.uid && list.find(d => d.uid === dev.uid && d.state === 'device'))
+    || list.find(d => d.serial === dev.serial);
+}
+function findViewer(hst, dev) {
+  for (const v of viewers.values()) if (v.host.id === hst.id && (v.dev.serial === dev.serial || (dev.uid && v.dev.uid === dev.uid))) return v;
+  return null;
 }
 
 function devRows(hst, emptyEl) {
@@ -591,23 +655,24 @@ function devRows(hst, emptyEl) {
   if (hst.error) return [h('div', { class: 'empty err' }, hst.error)];
   if (!hst.devices.length) return [emptyEl];
   return hst.devices.map(d => {
-    const key = hst.id + '|' + d.serial, ready = d.state === 'device';
+    const ready = d.state === 'device';
     return h('div', {
-      class: 'dev' + (viewers.has(key) ? ' open' : '') + (ready ? '' : ' na'), title: d.serial,
+      class: 'dev' + ([...viewers.values()].some(v => v.host.id === hst.id && v.dev.serial === d.serial) ? ' open' : '') + (ready ? '' : ' na'), title: d.serial,
       onclick: () => ready ? openViewer(hst, d) : toast(STATE_HINT[d.state] || (t('设备状态：') + d.state)),
     }, h('span', { class: 'dot ' + (ready ? 'ok' : 'warn') }),
       h('div', { class: 't' }, h('b', {}, d.model || d.serial), d.model ? h('small', {}, d.serial) : null),
+      d.wireless ? h('span', { class: 'wl', title: t('无线连接'), html: svg('wifi') }) : null,
       ready ? null : h('span', { class: 'st' }, STATE_TEXT[d.state] || d.state));
   });
 }
 
 function renderSide() {
   const local = hosts.get('local');
-  const out = [h('div', { class: 'sec' }, t('本机'))];
+  const out = [h('div', { class: 'sec' }, t('本机'), local ? ib('wifi', t('无线连接设备'), () => wirelessDialog(local)) : null)];
   if (local) out.push(...devRows(local, h('div', { class: 'empty' }, t('未检测到设备 · '), h('a', { href: '#', onclick: e => { e.preventDefault(); helpDialog(); } }, t('如何连接')))));
   out.push(h('div', { class: 'sec' }, t('远程电脑'), ib('plus', t('添加远程电脑'), () => peerDialog())));
   const remotes = [...hosts.values()].filter(x => x.remote);
-  if (!remotes.length) out.push(h('div', { class: 'empty' }, t('添加局域网内运行 DroidBridge 的电脑')));
+  if (!remotes.length && !FOUND.length) out.push(h('div', { class: 'empty' }, t('添加局域网内运行 DroidBridge 的电脑')));
   for (const r of remotes) {
     const short = r.error ? (/令牌|token/i.test(r.error) ? t('令牌错误') : t('无法连接')) : null;
     out.push(h('div', { class: 'host', title: r.addr + (r.error ? '\n' + r.error : '') },
@@ -616,11 +681,27 @@ function renderSide() {
       ib('more', t('更多'), e => hostMenu(e.currentTarget, r))));
     if (!r.error) out.push(...devRows(r, h('div', { class: 'empty' }, t('没有设备'))));
   }
+  if (FOUND.length) {
+    out.push(h('div', { class: 'found-t' }, t('在局域网中发现')));
+    for (const f of FOUND) out.push(h('div', { class: 'found', title: f.addr, onclick: () => addFound(f) },
+      h('span', { class: 'hn' }, f.name), h('span', { class: 'meta' }, f.addr),
+      ib('plus', t('添加'), e => { e.stopPropagation(); addFound(f); })));
+  }
   $('#lists').replaceChildren(...out);
+}
+
+async function addFound(f) {
+  if (f.auth) return peerDialog({ addr: f.addr, name: f.name, prefill: true });
+  try {
+    const res = await api('/api/peers', { method: 'POST', body: JSON.stringify({ addr: f.addr, name: '' }) });
+    toast(t('已添加 ') + res.name, { kind: 'ok' });
+    refreshAll();
+  } catch (e) { toast(e.message, { kind: 'bad', ms: 4000 }); }
 }
 
 function hostMenu(anchor, r) {
   menu(anchor, [
+    { icon: 'wifi', label: t('无线连接设备…'), fn: () => wirelessDialog(r) },
     { icon: 'refresh', label: t('刷新'), fn: async () => { await refreshHost(r); renderSide(); if (r.error) toast(r.error, { kind: 'bad', ms: 4000 }); } },
     { icon: 'edit', label: t('编辑'), fn: () => peerDialog(r) },
     { icon: 'download', label: t('通过 SSH 重新安装…'), fn: () => peerDialog(r, { install: true }) },
@@ -631,7 +712,7 @@ function hostMenu(anchor, r) {
 
 // 添加 / 编辑远程电脑；opts.install=true 时默认打开“通过 SSH 安装”
 function peerDialog(p, opts = {}) {
-  const editing = !!p && !opts.install;
+  const editing = !!p && !opts.install && !p.prefill;
   const addr = h('input', { class: 'input', value: p ? p.addr : '', placeholder: '192.168.1.20', autofocus: true, required: true, autocomplete: 'off' });
   const name = h('input', { class: 'input', value: p ? p.name : '', placeholder: t('默认使用对方的计算机名'), autocomplete: 'off' });
   const token = h('input', { class: 'input', type: 'password', placeholder: p && p.has_token ? t('已设置，留空保持不变') : t('对方未设置可不填'), autocomplete: 'new-password' });
@@ -743,6 +824,93 @@ function helpDialog() {
   });
 }
 
+// 无线连接：二维码配对 / 配对码 / IP 地址。设备需与该电脑在同一网络
+function wirelessDialog(hst) {
+  const peerQ = 'peer=' + encodeURIComponent(hst.id);
+  let job = null, polling = false;
+  const tabs = [['qr', t('扫码配对')], ['code', t('配对码')], ['ip', t('IP 地址')]];
+  const panes = {}, tabBtns = {};
+  // 二维码
+  const qrBox = h('div', { class: 'qrbox' }, h('div', { class: 'spin sm' }));
+  const qrState = h('div', { class: 'qrstate' });
+  panes.qr = h('div', { class: 'pane' }, qrBox, qrState,
+    h('div', { class: 'hint' }, t('手机打开 开发者选项 → 无线调试 → 使用二维码配对设备，扫描上方二维码。手机需要与「{0}」在同一网络（Android 11+）。', hst.name)));
+  // 配对码
+  const pAddr = h('input', { class: 'input', placeholder: '192.168.1.31:37099', autocomplete: 'off' });
+  const pCode = h('input', { class: 'input', placeholder: '123456', inputmode: 'numeric', autocomplete: 'off' });
+  const pConn = h('input', { class: 'input', placeholder: '192.168.1.31:41235', autocomplete: 'off' });
+  panes.code = h('div', { class: 'pane' },
+    h('div', { class: 'hint' }, t('手机打开 开发者选项 → 无线调试 → 使用配对码配对设备，填写其中的 IP 地址、端口和配对码。')),
+    field(t('配对地址'), pAddr), field(t('配对码'), pCode), field(t('连接地址（可选）'), pConn, t('无线调试页面上方显示的 IP 地址和端口；留空会自动查找')));
+  // IP
+  const iAddr = h('input', { class: 'input', placeholder: '192.168.1.31:5555', autocomplete: 'off' });
+  panes.ip = h('div', { class: 'pane' }, field(t('地址'), iAddr, t('已配对设备在无线调试页面显示的地址，或执行过 adb tcpip 的设备（默认端口 5555）')));
+  const err = h('div', { class: 'dlg-err' });
+  const ok = h('button', { class: 'btn primary', type: 'submit' }, t('连接'));
+  const seg = h('div', { class: 'seg' }, tabs.map(([k, label]) => (tabBtns[k] = h('button', { type: 'button', onclick: () => show(k) }, label))));
+  const dlg = dialog({
+    title: t('无线连接设备'),
+    desc: hst.remote ? t('设备将连接到「{0}」', hst.name) : null,
+    body: [seg, panes.qr, panes.code, panes.ip, err],
+    actions: [h('button', { class: 'btn', type: 'button', onclick: () => dlg.close() }, t('关闭')), ok],
+    onsubmit: submit,
+  });
+  dlg.classList.add('wide');
+  dlg.addEventListener('close', () => { polling = false; if (job) api(`/api/adb/qr/${job}?${peerQ}`, { method: 'DELETE' }).catch(() => {}); });
+  function show(k) {
+    for (const [key] of tabs) { panes[key].hidden = key !== k; tabBtns[key].classList.toggle('on', key === k); }
+    ok.hidden = k === 'qr'; ok.dataset.tab = k; err.textContent = '';
+    if (k === 'qr' && !job) startQr();
+    (k === 'code' ? pAddr : k === 'ip' ? iAddr : ok).focus();
+  }
+  async function startQr() {
+    qrBox.replaceChildren(h('div', { class: 'spin sm' })); qrState.textContent = '';
+    try {
+      const r = await api('/api/adb/qr?' + peerQ, { method: 'POST', body: '{}' });
+      job = r.job; qrBox.innerHTML = r.svg; polling = true; poll();
+    } catch (e) { qrBox.replaceChildren(); qrState.textContent = e.message; qrState.className = 'qrstate err'; }
+  }
+  async function poll() {
+    while (polling && job) {
+      let s; try { s = await api(`/api/adb/qr/${job}?${peerQ}`); } catch { s = null; }
+      if (s) {
+        qrState.textContent = s.msg; qrState.className = 'qrstate' + (s.state === 'failed' ? ' err' : s.state === 'done' ? ' ok' : '');
+        if (s.state === 'done') { toast(s.msg, { kind: 'ok' }); refreshAll(); job = null; setTimeout(() => dlg.open && dlg.close(), 1200); return; }
+        if (s.state === 'failed') {
+          job = null;
+          qrState.append(' ', h('button', { class: 'linkbtn', type: 'button', onclick: startQr }, t('重试')));
+          return;
+        }
+      }
+      await new Promise(r => setTimeout(r, 1000));
+    }
+  }
+  async function submit() {
+    err.textContent = '';
+    const tab = ok.dataset.tab;
+    const [path, body] = tab === 'code'
+      ? ['/api/adb/pair', { addr: pAddr.value, code: pCode.value, connect: pConn.value }]
+      : ['/api/adb/connect', { addr: iAddr.value }];
+    ok.disabled = true; const label = ok.textContent; ok.textContent = t('正在连接…');
+    try {
+      const r = await api(path + '?' + peerQ, { method: 'POST', body: JSON.stringify(body) });
+      toast(r.msg, { kind: 'ok' }); refreshAll(); dlg.close();
+    } catch (e) { err.textContent = e.message; }
+    ok.disabled = false; ok.textContent = label;
+  }
+  show('qr');
+}
+
+async function wirelessAction(v, path, label) {
+  const tt = toast(label, { sticky: true });
+  try {
+    const r = await api(path + '?peer=' + encodeURIComponent(v.host.id), { method: 'POST', body: JSON.stringify({ serial: v.dev.serial }) });
+    tt.set(r.msg, 'ok');
+    await refreshHost(v.host); renderSide();
+  } catch (e) { tt.set(e.message, 'bad'); }
+  tt.close(4500);
+}
+
 function settingsDialog() {
   const sel = (k) => {
     const s = h('select', { class: 'select', onchange: () => pref.set(k, s.value) }, QUALITY[k].opts.map(([v, l]) => h('option', { value: v }, l)));
@@ -751,6 +919,10 @@ function settingsDialog() {
   };
   const awake = h('input', { type: 'checkbox', onchange: () => pref.set('awake', awake.checked ? '1' : '0') });
   awake.checked = pref.get('awake', '1') === '1';
+  const audio = h('input', { type: 'checkbox', onchange: () => pref.set('audio', audio.checked ? '1' : '0') });
+  audio.checked = pref.get('audio', '0') === '1';
+  const dup = h('input', { type: 'checkbox', onchange: () => pref.set('audiodup', dup.checked ? '1' : '0') });
+  dup.checked = pref.get('audiodup', '0') === '1';
   const lang = h('select', { class: 'select', onchange: () => { localStorage.setItem('db_lang', lang.value); location.reload(); } },
     h('option', { value: 'zh' }, '简体中文'), h('option', { value: 'en' }, 'English'));
   lang.value = LANG;
@@ -759,6 +931,9 @@ function settingsDialog() {
   const body = [
     h('div', { class: 'group' }, h('div', { class: 'group-t' }, t('画面')), sel('size'), sel('rate'), sel('fps'),
       h('label', { class: 'row' }, h('span', {}, t('投屏时保持屏幕常亮')), h('span', { class: 'switch' }, awake, h('i')))),
+    h('div', { class: 'group' }, h('div', { class: 'group-t' }, t('声音')),
+      h('label', { class: 'row' }, h('span', {}, t('默认转发声音（Android 11+）')), h('span', { class: 'switch' }, audio, h('i'))),
+      h('label', { class: 'row' }, h('span', {}, t('同时在手机上播放（Android 13+）')), h('span', { class: 'switch' }, dup, h('i')))),
     h('div', { class: 'group' }, h('div', { class: 'group-t' }, t('通用')),
       h('label', { class: 'row' }, h('span', {}, 'Language / 语言'), lang)),
     h('div', { class: 'group' }, h('div', { class: 'group-t' }, t('本机')),
@@ -946,9 +1121,68 @@ class LogPanel {
   }
 }
 
+// ---------------- 声音 ----------------
+let AUDIO_CODEC = 'raw', AUDIO_CTX = null;
+(async () => {
+  try {
+    if (window.AudioDecoder && (await AudioDecoder.isConfigSupported({ codec: 'opus', sampleRate: 48000, numberOfChannels: 2 })).supported) AUDIO_CODEC = 'opus';
+  } catch {}
+})();
+function audioCtx() {
+  if (!AUDIO_CTX) AUDIO_CTX = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 48000, latencyHint: 'interactive' });
+  if (AUDIO_CTX.state === 'suspended') AUDIO_CTX.resume().catch(() => {});
+  return AUDIO_CTX;
+}
+// 浏览器要求用户操作后才能播放声音
+addEventListener('pointerdown', () => { if (AUDIO_CTX && AUDIO_CTX.state === 'suspended') AUDIO_CTX.resume().catch(() => {}); }, true);
+
+class AudioOut {
+  constructor(codec) {
+    this.codec = codec; this.ctx = audioCtx(); this.next = 0;
+    this.gain = this.ctx.createGain(); this.gain.connect(this.ctx.destination);
+    if (codec !== 'raw') this.dec = new AudioDecoder({ output: a => this.onData(a), error: e => console.warn('audio decoder', e) });
+  }
+  packet(config, pts, data) {
+    if (this.codec === 'raw') return this.pcm(data);
+    if (config) {
+      try { this.dec.configure({ codec: 'opus', sampleRate: 48000, numberOfChannels: 2, description: data.slice() }); this.ready = true; } catch (e) { console.warn(e); }
+      return;
+    }
+    if (!this.ready) { try { this.dec.configure({ codec: 'opus', sampleRate: 48000, numberOfChannels: 2 }); this.ready = true; } catch { return; } }
+    try { this.dec.decode(new EncodedAudioChunk({ type: 'key', timestamp: pts, data })); } catch {}
+  }
+  onData(a) {
+    const n = a.numberOfFrames, ch = a.numberOfChannels, buf = this.ctx.createBuffer(ch, n, a.sampleRate);
+    for (let i = 0; i < ch; i++) { const tmp = new Float32Array(n); a.copyTo(tmp, { planeIndex: i, format: 'f32-planar' }); buf.copyToChannel(tmp, i); }
+    a.close();
+    this.schedule(buf);
+  }
+  pcm(data) {
+    const frames = data.byteLength >> 2;
+    if (!frames) return;
+    const dv = new DataView(data.buffer, data.byteOffset, frames * 4), buf = this.ctx.createBuffer(2, frames, 48000);
+    const l = buf.getChannelData(0), r = buf.getChannelData(1);
+    for (let i = 0; i < frames; i++) { l[i] = dv.getInt16(i * 4, true) / 32768; r[i] = dv.getInt16(i * 4 + 2, true) / 32768; }
+    this.schedule(buf);
+  }
+  schedule(buf) {
+    const now = this.ctx.currentTime;
+    if (this.next < now + 0.02) this.next = now + 0.06;   // 欠载：留一点缓冲
+    else if (this.next > now + 0.4) return;               // 积压：丢弃以控制延迟
+    const src = this.ctx.createBufferSource();
+    src.buffer = buf; src.connect(this.gain); src.start(this.next);
+    this.next += buf.duration;
+  }
+  close() {
+    try { if (this.dec && this.dec.state !== 'closed') this.dec.close(); } catch {}
+    try { this.gain.disconnect(); } catch {}
+  }
+}
+
 class Viewer {
   constructor(host, dev) {
     this.host = host; this.dev = dev; this.key = host.id + '|' + dev.serial;
+    this.audioOn = pref.get('audio', '0') === '1'; this.fails = 0;
     this.vw = 0; this.vh = 0; this.bytes = 0; this.frames = 0; this.lastKeyReq = 0;
     this.pointers = new Map();
     this.build();
@@ -976,6 +1210,8 @@ class Viewer {
     this.fileInput = h('input', { type: 'file', multiple: true, hidden: true, onchange: () => { this.upload([...this.fileInput.files]); this.fileInput.value = ''; } });
     this.moreBtn = ib('more', t('更多'), () => this.moreMenu());
     this.logBtn = ib('logs', t('日志'), () => this.toggleLog());
+    this.audioBtn = ib('headphones', t('转发声音'), () => this.toggleAudio());
+    this.audioBtn.classList.toggle('on', this.audioOn);
     this.vlog = h('div', { class: 'vlog' });
     this.root = h('div', { class: 'viewer' },
       h('div', { class: 'vhead' }, this.dot, this.nameEl, h('span', { class: 'sub' }, this.host.remote ? this.host.name : ''), this.statEl,
@@ -990,7 +1226,7 @@ class Viewer {
           ib('power', t('电源键'), key(AKEY.POWER)), ib('volUp', t('音量 +'), key(AKEY.VOLUME_UP)), ib('volDown', t('音量 −'), key(AKEY.VOLUME_DOWN)),
           ib('rotate', t('旋转屏幕'), () => this.send({ t: 'cmd', name: 'rotate' })),
           h('div', { class: 'sep' }),
-          ib('camera', t('截图'), () => this.screenshot()), this.kbBtn, this.logBtn, this.moreBtn)),
+          ib('camera', t('截图'), () => this.screenshot()), this.kbBtn, this.audioBtn, this.logBtn, this.moreBtn)),
       this.vlog),
       this.fileInput);
     this.bindInput();
@@ -1008,38 +1244,82 @@ class Viewer {
       { icon: 'paste', label: t('粘贴电脑剪贴板'), fn: () => this.paste() },
       { icon: 'upload', label: t('安装 APK / 传文件…'), fn: () => this.fileInput.click() },
       '-',
+      this.dev.wireless
+        ? { icon: 'wifiOff', label: t('断开无线连接'), fn: () => wirelessAction(this, '/api/adb/disconnect', t('正在断开…')) }
+        : { icon: 'wifi', label: t('切换为无线连接'), fn: () => wirelessAction(this, '/api/adb/tcpip', t('正在切换为无线连接…')) },
       { icon: 'refresh', label: t('重新连接'), fn: () => this.reconnect() },
     ]);
   }
 
   wsUrl() {
-    const p = new URLSearchParams({ serial: this.dev.serial, peer: this.host.id, lang: LANG, max_size: q('size'), bit_rate: q('rate'), max_fps: q('fps'), stay_awake: pref.get('awake', '1') });
+    const p = new URLSearchParams({ serial: this.dev.serial, peer: this.host.id, lang: LANG, max_size: q('size'), bit_rate: q('rate'), max_fps: q('fps'), stay_awake: pref.get('awake', '1'),
+      audio: this.audioOn ? '1' : '0', audio_codec: AUDIO_CODEC, audio_dup: pref.get('audiodup', '0') });
     const tk = pref.get('token', ''); if (tk) p.set('token', tk);
     return (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws/stream?' + p;
   }
 
   connect() {
-    this.closed = false; this.gotFrame = false; this.pendingConfig = null; this.needKey = true; this.errorShown = false;
+    this.closed = false; this.gotFrame = false; this.pendingConfig = null; this.needKey = true; this.lastError = '';
     this.showOverlay(t('正在连接…'), { spin: true });
     this.setDot('warn');
     const ws = this.ws = new WebSocket(this.wsUrl());
     ws.binaryType = 'arraybuffer';
     ws.onmessage = e => typeof e.data === 'string' ? this.onText(JSON.parse(e.data)) : this.onBinary(e.data);
     ws.onclose = () => {
-      if (this.ws !== ws) return;
-      this.setDot('bad');
-      if (!this.closed && !this.errorShown) this.showOverlay(t('连接已断开'), { retry: true });
+      if (this.ws !== ws || this.closed) return;
+      this.ws = null;
+      this.onLost();
     };
   }
-  reconnect() { this.teardown(); this.connect(); if (this.log) this.log.connect(); }
+  /** 手动重连：清零失败计数 */
+  reconnect() { this.recovering = false; this.fails = 0; this.restart(); }
+  restart() { this.teardown(); this.connect(); if (this.log) this.log.connect(); }
+
+  /** 连接断开后自动恢复：设备在线就重连（失败多次后停止），设备不在就等它回来 */
+  async onLost() {
+    if (this.recovering) return;
+    if (!this.gotFrame) this.fails++; else this.fails = 0;
+    this.teardown();
+    this.recovering = true;
+    this.setDot('warn');
+    const reason = this.lastError || t('连接已断开');
+    const stop = () => { this.recovering = false; this.setDot('bad'); this.showOverlay(reason, { retry: true }); };
+    const wait = (text) => this.showOverlay(text, { spin: true, extra: h('button', { class: 'btn', type: 'button', onclick: stop }, t('停止自动重连')) });
+    let delay = Math.min(1000 * 2 ** Math.max(0, this.fails - 1), 8000);
+    while (this.recovering && !this.closed) {
+      wait(reason + '\n' + t('正在自动重连…'));
+      await new Promise(r => setTimeout(r, delay));
+      if (!this.recovering || this.closed) return;
+      await refreshHost(this.host);
+      renderSide();
+      const d = matchDevice(this.host, this.dev);
+      if (d && d.state === 'device') {
+        if (this.fails >= 4) return stop();
+        this.dev = Object.assign({}, this.dev, d);
+        this.recovering = false;
+        return this.restart();
+      }
+      wait(this.host.error ? t('「{0}」暂时无法连接，等待恢复…', this.host.name) : t('设备已断开，等待重新连接…'));
+      delay = 2000;
+    }
+  }
   teardown() {
     if (this.ws) { const w = this.ws; this.ws = null; try { w.close(); } catch {} }
     if (this.decoder && this.decoder.state !== 'closed') try { this.decoder.close(); } catch {}
     this.decoder = null; this.decoderReady = false;
     if (this.pendingFrame) { this.pendingFrame.close(); this.pendingFrame = null; }
+    if (this.audioOut) { this.audioOut.close(); this.audioOut = null; }
+  }
+
+  toggleAudio() {
+    this.audioOn = !this.audioOn;
+    pref.set('audio', this.audioOn ? '1' : '0');
+    this.audioBtn.classList.toggle('on', this.audioOn);
+    if (this.audioOn) audioCtx();   // 在点击中创建，满足浏览器自动播放限制
+    this.reconnect();
   }
   close() {
-    this.closed = true;
+    this.closed = true; this.recovering = false;
     if (this.log) this.log.destroy();
     this.teardown();
     clearInterval(this.statTimer);
@@ -1050,9 +1330,9 @@ class Viewer {
   }
 
   setDot(c) { this.dot.className = 'dot ' + c; }
-  showOverlay(text, { spin, retry } = {}) {
-    this.overlay.replaceChildren(...[spin ? h('div', { class: 'spin' }) : null, h('div', {}, text),
-      retry ? h('button', { class: 'btn', type: 'button', onclick: () => this.reconnect() }, t('重新连接')) : null].filter(Boolean));
+  showOverlay(text, { spin, retry, extra } = {}) {
+    this.overlay.replaceChildren(...[spin ? h('div', { class: 'spin' }) : null, h('div', { class: 'ovtext' }, text),
+      retry ? h('button', { class: 'btn', type: 'button', onclick: () => this.reconnect() }, t('重新连接')) : null, extra].filter(Boolean));
     this.overlay.classList.remove('hide');
   }
 
@@ -1095,7 +1375,11 @@ class Viewer {
         if (this.canvas.width !== m.width || this.canvas.height !== m.height) { this.canvas.width = m.width; this.canvas.height = m.height; }
         this.fit();
         break;
-      case 'error': this.errorShown = true; this.setDot('bad'); this.showOverlay(m.msg, { retry: true }); break;
+      case 'error': this.lastError = m.msg; break;
+      case 'audio':
+        if (m.state === 'on') { if (this.audioOut) this.audioOut.close(); this.audioOut = new AudioOut(m.codec === 'raw' ? 'raw' : 'opus'); this.audioBtn.title = t('转发声音'); }
+        else { toast(m.msg, { ms: 5000 }); this.audioBtn.title = m.msg; this.audioBtn.classList.remove('on'); }
+        break;
       case 'log': console.log('[' + this.dev.serial + ']', m.msg); break;
       case 'clipboard':
         if (navigator.clipboard && isSecureContext) navigator.clipboard.writeText(m.text).then(() => toast(t('已同步手机剪贴板')), () => {});
@@ -1123,6 +1407,7 @@ class Viewer {
     const flags = dv.getUint8(0);
     const pts = Number(dv.getBigUint64(1));
     let data = new Uint8Array(buf, 9);
+    if (flags & 4) { if (this.audioOut) this.audioOut.packet(!!(flags & 1), pts, data); return; }
     if (flags & 1) {
       this.pendingConfig = data.slice();
       this.ensureDecoder();
@@ -1158,7 +1443,7 @@ class Viewer {
     this.ctx.drawImage(f, 0, 0, w, ht);
     f.close();
     this.frames++;
-    if (!this.gotFrame) { this.gotFrame = true; this.overlay.classList.add('hide'); this.setDot('ok'); }
+    if (!this.gotFrame) { this.gotFrame = true; this.fails = 0; this.overlay.classList.add('hide'); this.setDot('ok'); }
   }
   updateStat() {
     if (!this.gotFrame) { this.statEl.textContent = ''; return; }
@@ -1278,7 +1563,8 @@ class Viewer {
 function openViewer(hst, dev) {
   const key = hst.id + '|' + dev.serial;
   if (isMobile()) document.body.classList.add('viewing');
-  if (viewers.has(key)) { viewers.get(key).root.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); return; }
+  const existing = findViewer(hst, dev);
+  if (existing) { existing.root.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); return; }
   if (!window.VideoDecoder) { showNotice(); toast(t('当前浏览器无法解码视频')); document.body.classList.remove('viewing'); return; }
   const v = new Viewer(hst, dev);
   viewers.set(key, v);

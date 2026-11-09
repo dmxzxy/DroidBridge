@@ -5,12 +5,14 @@
 pub mod i18n;
 pub mod adb;
 pub mod control;
+pub mod discovery;
 pub mod icon;
 pub mod logcat;
 pub mod peers;
 pub mod remote;
 pub mod scrcpy;
 pub mod util;
+pub mod wireless;
 
 use axum::body::Bytes;
 use axum::extract::ws::WebSocketUpgrade;
@@ -44,6 +46,8 @@ pub struct Config {
     pub adb: PathBuf,
     pub data_dir: PathBuf,
     pub server_jar: PathBuf,
+    /// 局域网自动发现
+    pub discovery: bool,
 }
 
 const HELP_ZH: &str = "DroidBridge — 安卓设备投屏与远程操作
@@ -58,6 +62,7 @@ const HELP_ZH: &str = "DroidBridge — 安卓设备投屏与远程操作
   --adb <路径>          adb 可执行文件路径（默认自动查找）
   --data <目录>         数据目录
   --lang <zh|en>        界面与提示语言（默认跟随系统）
+  --no-discovery        不参与局域网自动发现
   -h, --help            显示帮助
 ";
 
@@ -73,6 +78,7 @@ Usage: droidbridge [options]
   --adb <path>          Path to adb (found automatically by default)
   --data <dir>          Data directory
   --lang <zh|en>        UI and message language (default: system)
+  --no-discovery        Do not take part in LAN discovery
   -h, --help            Show help
 ";
 
@@ -91,6 +97,7 @@ impl Config {
         let mut name = None;
         let mut adb = None;
         let mut data = None;
+        let mut discovery = true;
 
         let args: Vec<String> = args.into_iter().collect();
         i18n::init_from_args(&args);
@@ -105,6 +112,7 @@ impl Config {
                 "--name" => name = Some(val("--name")?),
                 "--adb" => adb = Some(PathBuf::from(val("--adb")?)),
                 "--data" => data = Some(PathBuf::from(val("--data")?)),
+                "--no-discovery" => discovery = false,
                 "--lang" => {
                     val("--lang")?;
                 }
@@ -122,7 +130,9 @@ impl Config {
             .or_else(|| std::env::var("HOSTNAME").ok())
             .or_else(util::hostname)
             .unwrap_or_else(|| tr!("本机", "This computer"));
+        let discovery = discovery && bind != "127.0.0.1" && bind != "localhost";
         Ok(Some(Config {
+            discovery,
             bind,
             port,
             https_port,
@@ -162,6 +172,10 @@ pub struct AppState {
     pub peers: peers::PeerStore,
     pub start_lock: tokio::sync::Mutex<()>,
     pub jobs: std::sync::Mutex<HashMap<String, remote::Job>>,
+    pub discovery: discovery::Discovery,
+    pub wireless: wireless::Wireless,
+    /// 无线设备 serial → ro.serialno
+    pub uids: std::sync::Mutex<HashMap<String, String>>,
 }
 
 type Shared = Arc<AppState>;
@@ -216,9 +230,16 @@ pub async fn start(cfg: Config) -> Result<Started, StartError> {
         peers: peers::PeerStore::load(cfg.data_dir.join("peers.json")),
         start_lock: tokio::sync::Mutex::new(()),
         jobs: std::sync::Mutex::new(HashMap::new()),
+        discovery: discovery::Discovery::new(),
+        wireless: wireless::Wireless::load(cfg.data_dir.join("wireless.json")),
+        uids: std::sync::Mutex::new(HashMap::new()),
         cfg,
     });
     let app = router(state.clone());
+    if state.cfg.discovery {
+        tokio::spawn(discovery::run(state.clone(), port));
+    }
+    tokio::spawn(wireless::keeper(state.clone()));
 
     let mut https_port = state.cfg.https_port;
     if https_port != 0 {
@@ -267,6 +288,13 @@ fn router(state: Shared) -> Router {
         .route("/api/peers/{id}", put(edit_peer).delete(remove_peer))
         .route("/api/install", post(install_start))
         .route("/api/install/{id}", get(install_status))
+        .route("/api/discovered", get(discovered))
+        .route("/api/adb/connect", post(adb_connect))
+        .route("/api/adb/pair", post(adb_pair))
+        .route("/api/adb/disconnect", post(adb_disconnect))
+        .route("/api/adb/tcpip", post(adb_tcpip))
+        .route("/api/adb/qr", post(adb_qr_start))
+        .route("/api/adb/qr/{id}", get(adb_qr_status).delete(adb_qr_cancel))
         .route("/api/push", post(push_file).layer(DefaultBodyLimit::max(4usize << 30)))
         .route("/ws/stream", get(ws_stream))
         .route("/ws/logcat", get(ws_logcat))
@@ -367,7 +395,10 @@ fn remote_id(q: &HashMap<String, String>) -> Option<&str> {
 async fn devices(State(st): State<Shared>, Query(q): Query<HashMap<String, String>>) -> Response {
     match remote_id(&q) {
         None => match adb::list_devices(&st.cfg.adb).await {
-            Ok(list) => Json(list).into_response(),
+            Ok(mut list) => {
+                fill_uids(&st, &mut list).await;
+                Json(list).into_response()
+            }
             Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, e),
         },
         Some(id) => {
@@ -568,7 +599,116 @@ async fn ws_stream(State(st): State<Shared>, ws: WebSocketUpgrade, req_uri: axum
         bit_rate: num("bit_rate", 8_000_000),
         max_fps: num("max_fps", 60),
         stay_awake: q.get("stay_awake").map(|v| v == "1" || v == "true").unwrap_or(true),
+        audio: q.get("audio").is_some_and(|v| v == "1" || v == "true"),
+        audio_codec: q.get("audio_codec").cloned().unwrap_or_else(|| "opus".into()),
+        audio_dup: q.get("audio_dup").is_some_and(|v| v == "1" || v == "true"),
     };
     let en = i18n::is_en();
     ws.on_upgrade(move |socket| i18n::REQUEST_EN.scope(en, scrcpy::run_session(st, serial, opts, socket)))
+}
+
+// ---------------------------------------------------------------- 发现与无线 adb
+
+/// 读取无线设备的 ro.serialno（结果缓存），用于识别“同一台设备换了连接方式”
+async fn fill_uids(st: &AppState, list: &mut [adb::Device]) {
+    for d in list.iter_mut().filter(|d| d.wireless && d.state == "device") {
+        let cached = st.uids.lock().unwrap().get(&d.serial).cloned();
+        let uid = match cached {
+            Some(u) => u,
+            None => {
+                let u = adb::run_timeout(&st.cfg.adb, &["-s", &d.serial, "shell", "getprop ro.serialno"], std::time::Duration::from_secs(4))
+                    .await
+                    .map(|o| o.trim().to_string())
+                    .unwrap_or_default();
+                if !u.is_empty() {
+                    st.uids.lock().unwrap().insert(d.serial.clone(), u.clone());
+                }
+                u
+            }
+        };
+        d.uid = uid;
+    }
+}
+
+/// 局域网中发现的其他节点（已添加的电脑和本机除外）
+async fn discovered(State(st): State<Shared>) -> Json<serde_json::Value> {
+    let known: Vec<String> = st.peers.list().await.into_iter().map(|p| p.addr).collect();
+    let mine: Vec<String> = util::local_ips().into_iter().map(|ip| format!("{ip}:{}", st.cfg.port)).collect();
+    let list: Vec<_> = st
+        .discovery
+        .list()
+        .into_iter()
+        .filter(|f| !known.contains(&f.addr) && !mine.contains(&f.addr))
+        .collect();
+    Json(json!({"enabled": st.cfg.discovery, "list": list}))
+}
+
+/// 带 ?peer= 时把请求转发给远程电脑，否则在本机执行
+async fn local_or_peer<F, Fut>(st: &AppState, q: &HashMap<String, String>, method: &str, path: &str, body: &[u8], local: F) -> Response
+where
+    F: FnOnce() -> Fut,
+    Fut: std::future::Future<Output = Result<serde_json::Value, String>>,
+{
+    if let Some(id) = remote_id(q) {
+        let Some(peer) = st.peers.get(id).await else {
+            return err(StatusCode::NOT_FOUND, tr!("远程电脑不存在", "Remote computer not found"));
+        };
+        return match peers::forward(&peer, method, path, body, std::time::Duration::from_secs(60)).await {
+            Ok((code, b)) => (
+                StatusCode::from_u16(code).unwrap_or(StatusCode::BAD_GATEWAY),
+                [(header::CONTENT_TYPE, "application/json")],
+                b,
+            )
+                .into_response(),
+            Err(e) => err(StatusCode::BAD_GATEWAY, e),
+        };
+    }
+    match local().await {
+        Ok(v) => Json(v).into_response(),
+        Err(e) => err(StatusCode::BAD_REQUEST, e),
+    }
+}
+
+macro_rules! adb_post {
+    ($name:ident, $req:ty, $path:literal, $f:path) => {
+        async fn $name(State(st): State<Shared>, Query(q): Query<HashMap<String, String>>, body: Bytes) -> Response {
+            let st2 = st.clone();
+            let b = body.clone();
+            local_or_peer(&st, &q, "POST", $path, &body, || async move {
+                let r: $req = serde_json::from_slice(&b).map_err(|e| e.to_string())?;
+                $f(&st2, r).await
+            })
+            .await
+        }
+    };
+}
+adb_post!(adb_connect, wireless::ConnectReq, "/api/adb/connect", wireless::connect);
+adb_post!(adb_pair, wireless::PairReq, "/api/adb/pair", wireless::pair);
+adb_post!(adb_disconnect, wireless::SerialReq, "/api/adb/disconnect", wireless::disconnect);
+adb_post!(adb_tcpip, wireless::SerialReq, "/api/adb/tcpip", wireless::tcpip);
+
+async fn adb_qr_start(State(st): State<Shared>, Query(q): Query<HashMap<String, String>>) -> Response {
+    let st2 = st.clone();
+    local_or_peer(&st, &q, "POST", "/api/adb/qr", b"", || async move { wireless::qr_start(st2) }).await
+}
+
+async fn adb_qr_status(State(st): State<Shared>, Path(id): Path<String>, Query(q): Query<HashMap<String, String>>) -> Response {
+    let path = format!("/api/adb/qr/{}", util::url_encode(&id));
+    let st2 = st.clone();
+    local_or_peer(&st, &q, "GET", &path, b"", || async move {
+        wireless::qr_status(&st2, &id)
+            .map(|j| serde_json::to_value(j).unwrap_or_default())
+            .ok_or_else(|| tr!("任务不存在", "Job not found"))
+    })
+    .await
+}
+
+async fn adb_qr_cancel(State(st): State<Shared>, Path(id): Path<String>, Query(q): Query<HashMap<String, String>>) -> Response {
+    let path = format!("/api/adb/qr/{}", util::url_encode(&id));
+    let st2 = st.clone();
+    local_or_peer(&st, &q, "DELETE", &path, b"", || async move {
+        wireless::qr_cancel(&st2, &id);
+        Ok(json!({"ok": true}))
+    })
+    .await
 }

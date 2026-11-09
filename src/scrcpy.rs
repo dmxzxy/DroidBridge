@@ -28,6 +28,12 @@ pub struct StreamOpts {
     pub bit_rate: u32,
     pub max_fps: u32,
     pub stay_awake: bool,
+    /// 声音转发（Android 11+）
+    pub audio: bool,
+    /// opus 或 raw（浏览器不支持 Opus 解码时用 raw PCM）
+    pub audio_codec: String,
+    /// 同时在手机上播放（Android 13+）
+    pub audio_dup: bool,
 }
 
 type Out = mpsc::Sender<Message>;
@@ -127,7 +133,15 @@ async fn session(
     args.push(format!("scid={scid:08x}"));
     args.push("log_level=info".into());
     args.push("tunnel_forward=true".into());
-    args.push("audio=false".into());
+    if opts.audio {
+        args.push("audio=true".into());
+        args.push(format!("audio_codec={}", if opts.audio_codec == "raw" { "raw" } else { "opus" }));
+        if opts.audio_dup {
+            args.push("audio_dup=true".into());
+        }
+    } else {
+        args.push("audio=false".into());
+    }
     args.push("control=true".into());
     args.push("cleanup=true".into());
     args.push("video_codec=h264".into());
@@ -190,6 +204,16 @@ async fn session(
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
     let mut video = video.ok_or_else(|| tr!("连接 scrcpy-server 超时", "Timed out connecting to scrcpy-server"))?;
+    // 通道顺序：视频、声音、控制
+    let audio = if opts.audio {
+        Some(
+            TcpStream::connect(("127.0.0.1", port))
+                .await
+                .map_err(|e| tr!("连接声音通道失败：{e}", "Failed to open audio channel: {e}"))?,
+        )
+    } else {
+        None
+    };
     let control = TcpStream::connect(("127.0.0.1", port))
         .await
         .map_err(|e| tr!("连接控制通道失败：{e}", "Failed to open control channel: {e}"))?;
@@ -219,6 +243,10 @@ async fn session(
     let (ctl_r, mut ctl_w) = control.into_split();
     let mut video_task = tokio::spawn(read_video(video, out.clone()));
     let ctl_task = tokio::spawn(read_device_msgs(ctl_r, out.clone()));
+    let audio_task = audio.map(|a| {
+        let _ = a.set_nodelay(true);
+        tokio::spawn(read_audio(a, out.clone()))
+    });
 
     let result = tokio::select! {
         r = &mut video_task => match r {
@@ -231,8 +259,55 @@ async fn session(
 
     video_task.abort();
     ctl_task.abort();
+    if let Some(t) = audio_task {
+        t.abort();
+    }
     let _ = child.kill().await;
     result
+}
+
+/// 声音流：编码 ID，然后是带 12 字节头的数据包。转发给浏览器时 flags 置 bit2（0x04）
+async fn read_audio(mut s: TcpStream, out: Out) {
+    let mut cid = [0u8; 4];
+    if s.read_exact(&mut cid).await.is_err() {
+        return;
+    }
+    match u32::from_be_bytes(cid) {
+        0 => {
+            let msg = tr!("这台设备不支持声音转发（需要 Android 11 及以上；Android 11 需在开始投屏时解锁屏幕）", "This device cannot forward audio (requires Android 11+; on Android 11 the screen must be unlocked when mirroring starts)");
+            let _ = out.send(text(json!({"type":"audio","state":"unsupported","msg":msg}))).await;
+            return;
+        }
+        1 => {
+            let msg = tr!("设备端声音配置错误", "Audio configuration error on the device");
+            let _ = out.send(text(json!({"type":"audio","state":"error","msg":msg}))).await;
+            return;
+        }
+        _ => {}
+    }
+    let codec = String::from_utf8_lossy(&cid).trim_matches(char::from(0)).to_string();
+    if out.send(text(json!({"type":"audio","state":"on","codec":codec}))).await.is_err() {
+        return;
+    }
+    let mut hdr = [0u8; 12];
+    loop {
+        if s.read_exact(&mut hdr).await.is_err() {
+            return;
+        }
+        let pts_flags = u64::from_be_bytes(hdr[0..8].try_into().unwrap());
+        let len = u32::from_be_bytes(hdr[8..12].try_into().unwrap()) as usize;
+        if len == 0 || len > 4 * 1024 * 1024 {
+            return;
+        }
+        let config = pts_flags & (1 << 62) != 0;
+        let pts = pts_flags & ((1 << 61) - 1);
+        let mut buf = vec![0u8; 9 + len];
+        buf[0] = 0x04 | u8::from(config);
+        buf[1..9].copy_from_slice(&pts.to_be_bytes());
+        if s.read_exact(&mut buf[9..]).await.is_err() || out.send(Message::Binary(Bytes::from(buf))).await.is_err() {
+            return;
+        }
+    }
 }
 
 async fn read_video(mut s: TcpStream, out: Out) -> Result<(), String> {

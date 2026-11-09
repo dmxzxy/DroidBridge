@@ -6,7 +6,7 @@
     { id: 'pB', name: 'Lab-Mac', addr: '192.168.1.20:8730', has_token: true },
     { id: 'pC', name: 'Build-Linux', addr: '192.168.1.30:8730', has_token: false },
   ];
-  const d = (serial, state, model) => ({ serial, state, model, product: '', device: '', transport_id: '1' });
+  const d = (serial, state, model) => ({ serial, state, model, product: '', device: '', transport_id: '1', wireless: serial.includes(':'), uid: serial });
   const DEV = {
     local: [d('R5CT20ABCDE', 'device', 'SM S9180'), d('7HX5T19B28', 'unauthorized', '')],
     pB: [d('2A281FDH3000XY', 'device', 'Pixel 7'), d('192.168.1.31:5555', 'device', '23013RK75C'), d('emulator-5554', 'offline', '')],
@@ -17,6 +17,9 @@
     const u = new URL(url, 'http://x');
     if (u.pathname === '/api/info') return json(INFO);
     if (u.pathname === '/api/peers') return json(PEERS);
+    if (u.pathname === '/api/discovered') return json({ enabled: true, list: [{ name: 'QA-Bench-04', addr: '192.168.1.44:8730', auth: false, version: '0.2.0', os: 'windows' }] });
+    if (u.pathname === '/api/adb/qr') return json({ job: 'q1', name: 'DroidBridge-demo', svg: fakeQr() });
+    if (u.pathname.startsWith('/api/adb/qr/')) return json({ state: 'waiting', msg: LANG === 'en' ? 'Waiting for the phone to scan…' : '等待手机扫码…' });
     if (u.pathname === '/api/devices') {
       const peer = u.searchParams.get('peer') || 'local';
       if (peer === 'pC') return json({ error: (LANG === "en" ? "Cannot reach 192.168.1.30:8730: connection refused (os error 111)" : "无法访问 192.168.1.30:8730：由于目标计算机积极拒绝，无法连接。 (os error 10061)") }, 502);
@@ -25,6 +28,13 @@
     return json({ error: 'not found' }, 404);
   };
   if (!window.VideoDecoder) window.VideoDecoder = function () {};
+  function fakeQr() {
+    const n = 29, c = 8; let r = '', seed = 7;
+    const rnd = () => (seed = (seed * 9301 + 49297) % 233280) / 233280;
+    const finder = (x, y) => `<rect x="${x*c}" y="${y*c}" width="${7*c}" height="${7*c}"/><rect x="${(x+1)*c}" y="${(y+1)*c}" width="${5*c}" height="${5*c}" fill="#fff"/><rect x="${(x+2)*c}" y="${(y+2)*c}" width="${3*c}" height="${3*c}"/>`;
+    for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) { const inF = (x < 8 && y < 8) || (x > n - 9 && y < 8) || (x < 8 && y > n - 9); if (!inF && rnd() < 0.5) r += `<rect x="${x*c}" y="${y*c}" width="${c}" height="${c}"/>`; }
+    return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="-16 -16 ${n*c+32} ${n*c+32}"><rect x="-16" y="-16" width="${n*c+32}" height="${n*c+32}" fill="#fff"/>${r}${finder(0,0)}${finder(n-7,0)}${finder(0,n-7)}</svg>`;
+  }
 
   const KIND = { 'R5CT20ABCDE': 'home', '2A281FDH3000XY': 'settings', '192.168.1.31:5555': 'error' };
   const NAME = { 'R5CT20ABCDE': 'SM-S9180', '2A281FDH3000XY': 'Pixel 7' };
@@ -44,6 +54,7 @@
       if (kind === 'error') {
         this.emit({ type: 'status', msg: (LANG === "en" ? "Pushing scrcpy-server…" : "推送 scrcpy-server…") });
         setTimeout(() => this.emit({ type: 'error', msg: (LANG === "en" ? "scrcpy-server exited (exit code: 1); make sure USB debugging is authorized on the device" : "scrcpy-server 启动失败并退出（exit code: 1），请检查设备是否已授权 USB 调试") }), 100);
+        setTimeout(() => { this.readyState = 3; this.onclose && this.onclose(); }, 150);
         return;
       }
       this.emit({ type: 'meta', device_name: NAME[this.serial] || this.serial, codec: 'h264', serial: this.serial });
@@ -119,6 +130,7 @@
     if (S === 'mview' || S === 'menu' || S === 'settings' || S === 'log') openViewer(L, DEV.local[0]);
     if (S === 'log') setTimeout(() => [...viewers.values()][0].toggleLog(true), 300);
     if (S === 'add') peerDialog();
+    if (S === 'wireless') wirelessDialog(L);
     if (S === 'settings') setTimeout(settingsDialog, 300);
     if (S === 'menu') { removeEventListener('scroll', closeMenu, true); window.closeMenu = () => {}; setTimeout(() => [...viewers.values()][0].moreMenu(), 200); }
     if (S === 'mview' || S === 'desk') window.scrollTo(0, 0);

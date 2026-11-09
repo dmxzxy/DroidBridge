@@ -33,6 +33,29 @@ pub async fn run(adb: &Path, args: &[&str]) -> Result<String, String> {
     }
 }
 
+/// 同 run，带超时（无线连接、配对等可能长时间无响应）
+pub async fn run_timeout(adb: &Path, args: &[&str], timeout: std::time::Duration) -> Result<String, String> {
+    match tokio::time::timeout(timeout, run_merged(adb, args)).await {
+        Ok(r) => r,
+        Err(_) => {
+            let a = args.join(" ");
+            Err(tr!("adb {a} 超时", "adb {a} timed out"))
+        }
+    }
+}
+
+/// 执行并返回 stdout+stderr（adb connect / pair 把结果写在不同的流里）
+async fn run_merged(adb: &Path, args: &[&str]) -> Result<String, String> {
+    let out = command(adb)
+        .args(args)
+        .kill_on_drop(true)
+        .output()
+        .await
+        .map_err(|e| { let p = adb.display(); tr!("无法执行 adb（{p}）：{e}", "Cannot run adb ({p}): {e}") })?;
+    let text = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+    if out.status.success() { Ok(text) } else { Err(text.trim().to_string()) }
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct Device {
     pub serial: String,
@@ -42,6 +65,14 @@ pub struct Device {
     pub product: String,
     pub device: String,
     pub transport_id: String,
+    /// 无线连接（ip:port 或 mDNS 名称）
+    pub wireless: bool,
+    /// 稳定的设备标识（ro.serialno），用于断线后识别同一台设备；无线设备重连后 serial 可能变化
+    pub uid: String,
+}
+
+pub fn is_wireless(serial: &str) -> bool {
+    serial.contains(':') || serial.contains("._adb-tls-connect")
 }
 
 pub async fn list_devices(adb: &Path) -> Result<Vec<Device>, String> {
@@ -71,6 +102,8 @@ fn parse_devices(out: &str) -> Vec<Device> {
             product: String::new(),
             device: String::new(),
             transport_id: String::new(),
+            wireless: is_wireless(serial),
+            uid: if is_wireless(serial) { String::new() } else { serial.to_string() },
         };
         for p in parts {
             if let Some((k, v)) = p.split_once(':') {

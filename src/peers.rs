@@ -154,8 +154,9 @@ pub async fn http_request(
             .map_err(|_| tr!("连接 {addr} 超时", "Connection to {addr} timed out"))?
             .map_err(|e| tr!("无法连接 {addr}：{e}", "Cannot connect to {addr}: {e}"))?;
         let req = format!(
-            "{method} {path} HTTP/1.1\r\nHost: {addr}\r\nAccept: application/json\r\nX-Lang: {}\r\nContent-Type: application/octet-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            "{method} {path} HTTP/1.1\r\nHost: {addr}\r\nAccept: application/json\r\nX-Lang: {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
             crate::i18n::code(),
+            if body.first() == Some(&b'{') { "application/json" } else { "application/octet-stream" },
             body.len()
         );
         s.write_all(req.as_bytes()).await.map_err(|e| e.to_string())?;
@@ -216,6 +217,11 @@ pub async fn post_file(peer: &Peer, query: &str, body: &[u8]) -> Result<serde_js
     let path = with_token(&format!("/api/push?{query}"), &peer.token);
     let (code, resp) = http_request(&peer.addr, "POST", &path, body, Duration::from_secs(600)).await?;
     parse_json_reply(code, &resp)
+}
+
+/// 把请求原样转发给远程节点（自动附加令牌），返回 (状态码, body)
+pub async fn forward(peer: &Peer, method: &str, path_query: &str, body: &[u8], timeout: Duration) -> Result<(u16, Vec<u8>), String> {
+    http_request(&peer.addr, method, &with_token(path_query, &peer.token), body, timeout).await
 }
 
 fn parse_json_reply(code: u16, body: &[u8]) -> Result<serde_json::Value, String> {

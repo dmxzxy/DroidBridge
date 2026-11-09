@@ -13,6 +13,9 @@ macro_rules! tr {
     ($zh:literal, $en:literal $(,)?) => {
         if $crate::i18n::is_en() { format!($en) } else { format!($zh) }
     };
+    ($zh:literal, $en:literal, $($arg:tt)+) => {
+        if $crate::i18n::is_en() { format!($en, $($arg)+) } else { format!($zh, $($arg)+) }
+    };
 }
 
 pub fn is_en() -> bool {
