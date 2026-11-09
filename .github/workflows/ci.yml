@@ -21,7 +21,7 @@ jobs:
       matrix:
         include:
           - { name: Windows, os: windows-latest }
-          - { name: macOS, os: macos-14 }
+          - { name: macOS, os: macos-latest }
           - { name: Linux, os: ubuntu-22.04 }
     steps:
       - uses: actions/checkout@v4
