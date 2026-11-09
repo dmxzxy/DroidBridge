@@ -60,7 +60,7 @@ The desktop app also runs the server, so other computers can add it. Use the ser
 2. Start DroidBridge and click a device in the sidebar.
 3. Other computers running DroidBridge on the same LAN appear under **Found on your network**; click **+** to add one. You can also click **+** next to **Remote computers** and enter an IP (default port 8730).
    - Windows: run DroidBridge on that computer.
-   - macOS / Linux without DroidBridge: turn on **Install over SSH if not installed**. DroidBridge logs in with the keys in your `~/.ssh`, uploads the source and builds it there (installing Rust with rustup for the current user if needed), finds or installs `adb` (Homebrew), and registers a login service (launchd / `systemd --user`).
+   - macOS / Linux without DroidBridge: choose the **Install over SSH** tab. Sign in with your SSH keys (`~/.ssh`, ssh-agent, `~/.ssh/config`), a password, or a specific key file. With a password, **Remember** adds this computer's public key so later reinstalls need no password; passwords are never stored. DroidBridge uploads the source and builds it there (installing Rust with rustup for the current user if needed), finds or installs `adb` (Homebrew), and registers a login service (launchd / `systemd --user`).
 4. If the firewall asks, allow DroidBridge on private networks; otherwise other computers cannot connect.
 
 ### Controls

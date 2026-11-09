@@ -192,6 +192,19 @@ dialog.wide{width:min(440px,calc(100vw - 32px))}
 .qrstate{text-align:center;color:var(--sub);font-size:12px;min-height:18px}
 .qrstate.err{color:var(--bad)}.qrstate.ok{color:var(--ok)}
 .ovtext{white-space:pre-line}
+.intro{color:var(--sub);font-size:12px;margin-top:-4px}
+.grid-b{display:grid;gap:14px}
+.grid-b[hidden],.field[hidden],.check[hidden]{display:none}
+.seg.sm button{height:26px;font-size:12px}
+.field .seg{margin-bottom:6px}
+.check{display:flex;gap:8px;align-items:flex-start;color:var(--sub);font-size:12px;cursor:pointer}
+.check input{margin:2px 0 0;accent-color:var(--accent)}
+.adv>summary{cursor:pointer;color:var(--sub);font-size:12px;list-style:none;display:flex;align-items:center;gap:4px;user-select:none}
+.adv>summary::-webkit-details-marker{display:none}
+.adv>summary::before{content:"›";display:inline-block;transition:transform .15s;font-size:14px}
+.adv[open]>summary::before{transform:rotate(90deg)}
+.adv>.grid-b{margin-top:12px;padding-left:12px;border-left:2px solid var(--line)}
+.dlg-err .linkbtn{font-size:12px}
 .steps2{display:grid;gap:8px}
 .step{display:flex;align-items:center;gap:10px;color:var(--sub)}
 .step.cur{color:var(--text)}
@@ -284,8 +297,6 @@ const EN = {"分辨率":"Resolution",
   "移除":"Remove",
   "默认使用对方的计算机名":"Defaults to its computer name",
   "已设置，留空保持不变":"Set; leave empty to keep",
-  "对方未设置可不填":"Leave empty if not set",
-  "SSH 用户":"SSH user",
   "安装并添加":"Install and add",
   "保存":"Save",
   "添加":"Add",
@@ -295,12 +306,9 @@ const EN = {"分辨率":"Resolution",
   "访问令牌":"Access token",
   "通过 SSH 重新安装":"Reinstall over SSH",
   "编辑远程电脑":"Edit remote computer",
-  "用这台电脑的 SSH 密钥登录对方，安装或更新 DroidBridge 服务。":"Log in with this computer’s SSH key to install or update the DroidBridge service.",
-  "对方电脑需要运行 DroidBridge，并与本机在同一局域网。":"The other computer must run DroidBridge on the same LAN.",
   "正在连接…":"Connecting…",
   "已保存 ":"Saved ",
   "已添加 ":"Added ",
-  "对方电脑上没有运行 DroidBridge。可以打开下面的开关，通过 SSH 自动安装。":"DroidBridge isn’t running there. Turn on the switch below to install it over SSH.",
   "查看日志":"Show log",
   "收起日志":"Hide log",
   "正在安装到 ":"Installing to ",
@@ -373,9 +381,6 @@ const EN = {"分辨率":"Resolution",
   "把文件拖到设备画面上即可安装或传输":"Drop files on a device screen to install or send them",
   "无法连接 DroidBridge：":"Cannot connect to DroidBridge: ",
   "通过 SSH 重新安装…":"Reinstall over SSH…",
-  "默认读取 ~/.ssh/config":"Defaults to ~/.ssh/config",
-  "使用这台电脑的 SSH 密钥登录，自动上传、编译并注册为开机服务。支持 macOS、Linux。":"Uses this computer’s SSH key to upload, build and register a login service. Supports macOS and Linux.",
-  "对方未安装时，通过 SSH 安装":"Install over SSH if not installed",
   "投屏时保持屏幕常亮":"Keep screen awake while mirroring",
   "局域网地址":"LAN address",
   "过滤：关键字或 Tag，-排除":"Filter: text or tag, -exclude",
@@ -425,7 +430,40 @@ const EN = {"分辨率":"Resolution",
   "停止自动重连":"Stop reconnecting",
   "正在自动重连…":"Reconnecting automatically…",
   "「{0}」暂时无法连接，等待恢复…":"“{0}” is unreachable; waiting for it to come back…",
-  "设备已断开，等待重新连接…":"Device disconnected; waiting for it to reconnect…"};
+  "设备已断开，等待重新连接…":"Device disconnected; waiting for it to reconnect…",
+  "密钥没有口令可不填":"Leave empty if the key has no passphrase",
+  "对方启动时用 --token 设置的令牌":"The token the other computer was started with (--token)",
+  "对方设置了访问令牌？":"Does it require an access token?",
+  "本机密钥":"My SSH keys",
+  "密码":"Password",
+  "密钥文件":"Key file",
+  "只用于这次安装，不会保存":"Used for this install only; never saved",
+  "记住登录：把本机公钥加到对方，以后不用再输密码":"Remember: add this computer’s public key to it so no password is needed next time",
+  "这台电脑上的私钥路径":"Path of a private key on this computer",
+  "密钥口令":"Key passphrase",
+  "高级选项":"Advanced",
+  "SSH 端口":"SSH port",
+  "显示名称":"Display name",
+  "为对方设置访问令牌（可选）":"Set an access token for it (optional)",
+  "设置后，其他电脑和浏览器访问它都需要这个令牌":"Other computers and browsers will need this token to use it",
+  "登录方式":"Sign in with",
+  "用户名":"User name",
+  "已运行 DroidBridge":"Already running DroidBridge",
+  "通过 SSH 安装":"Install over SSH",
+  "用 SSH 登录一台 macOS 或 Linux 电脑，自动安装 DroidBridge 并设为开机启动，然后添加到列表。Windows 电脑请在对方直接运行安装包。":"Sign in to a macOS or Linux computer over SSH, install DroidBridge as a login service, and add it. For Windows, run the installer on that computer instead.",
+  "对方电脑已经运行着 DroidBridge（桌面版或服务版），并与本机在同一局域网。":"The other computer already runs DroidBridge (desktop or server) on the same LAN.",
+  "IP 或主机名，如 192.168.1.20":"IP or host name, e.g. 192.168.1.20",
+  "留空表示不设置":"Leave empty for none",
+  "留空则使用 ~/.ssh/config 或当前用户名":"Empty: use ~/.ssh/config or your user name",
+  "对方电脑的登录用户名":"Login user on that computer",
+  "使用这台电脑 ~/.ssh 里的密钥、ssh-agent 和 ~/.ssh/config，和在命令行执行 ssh 一样。":"Uses the keys in ~/.ssh, ssh-agent and ~/.ssh/config on this computer, just like running ssh in a terminal.",
+  "用对方电脑的账号密码登录。macOS 需在“系统设置 → 通用 → 共享”中打开“远程登录”。":"Sign in with an account password. On macOS, turn on Remote Login in System Settings → General → Sharing.",
+  "使用指定的私钥文件登录。":"Sign in with a specific private key file.",
+  "连不上这台电脑上的 DroidBridge，它可能还没安装或没有运行。":"Cannot reach DroidBridge on that computer; it may not be installed or running.",
+  "改为通过 SSH 安装":"Install over SSH instead",
+  "SSH 端口不正确":"Invalid SSH port",
+  "请填写 SSH 密码":"Please enter the SSH password",
+  "修改后重试":"Edit and retry"};
 // 界面语言：?lang= > 手动选择 > 服务端语言（桌面版通过 ?lang= 传入）> 浏览器语言
 let LANG = (() => {
   const q = new URLSearchParams(location.search).get('lang');
@@ -524,11 +562,13 @@ function toast(text, opt = {}) {
 
 // ---------------- 菜单 ----------------
 let openMenu = null;
+let renderPending = false;
 function closeMenu() {
   if (!openMenu) return;
   openMenu.anchor.removeAttribute('aria-expanded');
   openMenu.el.remove();
   openMenu = null;
+  if (renderPending) setTimeout(renderSide);
 }
 function menu(anchor, items) {
   const wasOpen = openMenu && openMenu.anchor === anchor;
@@ -551,7 +591,8 @@ function menu(anchor, items) {
 document.addEventListener('pointerdown', e => { if (openMenu && !openMenu.el.contains(e.target) && !openMenu.anchor.contains(e.target)) closeMenu(); }, true);
 document.addEventListener('keydown', e => { if (e.key === 'Escape') closeMenu(); });
 addEventListener('resize', () => { if (openMenu && (openMenu.w !== innerWidth || openMenu.h !== innerHeight)) closeMenu(); });
-addEventListener('scroll', closeMenu, true);
+// 只有菜单的锚点所在区域滚动时才关闭（日志面板自动滚动等不影响）
+addEventListener('scroll', e => { if (openMenu && (e.target === document || (e.target.contains && e.target.contains(openMenu.anchor)))) closeMenu(); }, true);
 
 // ---------------- 对话框 ----------------
 function dialog({ title, desc, body = [], actions = [], onsubmit, cls }) {
@@ -667,6 +708,9 @@ function devRows(hst, emptyEl) {
 }
 
 function renderSide() {
+  // 侧栏里有展开的菜单时先不刷新，关闭菜单后再补上
+  if (openMenu && $('#lists').contains(openMenu.anchor)) { renderPending = true; return; }
+  renderPending = false;
   const local = hosts.get('local');
   const out = [h('div', { class: 'sec' }, t('本机'), local ? ib('wifi', t('无线连接设备'), () => wirelessDialog(local)) : null)];
   if (local) out.push(...devRows(local, h('div', { class: 'empty' }, t('未检测到设备 · '), h('a', { href: '#', onclick: e => { e.preventDefault(); helpDialog(); } }, t('如何连接')))));
@@ -691,7 +735,7 @@ function renderSide() {
 }
 
 async function addFound(f) {
-  if (f.auth) return peerDialog({ addr: f.addr, name: f.name, prefill: true });
+  if (f.auth) return peerDialog({ addr: f.addr, name: f.name, prefill: true, auth: true });
   try {
     const res = await api('/api/peers', { method: 'POST', body: JSON.stringify({ addr: f.addr, name: '' }) });
     toast(t('已添加 ') + res.name, { kind: 'ok' });
@@ -710,61 +754,146 @@ function hostMenu(anchor, r) {
   ]);
 }
 
-// 添加 / 编辑远程电脑；opts.install=true 时默认打开“通过 SSH 安装”
+// 添加 / 编辑远程电脑。opts.install=true：直接进入“通过 SSH 安装”
 function peerDialog(p, opts = {}) {
   const editing = !!p && !opts.install && !p.prefill;
-  const addr = h('input', { class: 'input', value: p ? p.addr : '', placeholder: '192.168.1.20', autofocus: true, required: true, autocomplete: 'off' });
-  const name = h('input', { class: 'input', value: p ? p.name : '', placeholder: t('默认使用对方的计算机名'), autocomplete: 'off' });
-  const token = h('input', { class: 'input', type: 'password', placeholder: p && p.has_token ? t('已设置，留空保持不变') : t('对方未设置可不填'), autocomplete: 'new-password' });
-  const sshUser = h('input', { class: 'input', placeholder: t('默认读取 ~/.ssh/config'), autocomplete: 'off' });
-  const sshOn = h('input', { type: 'checkbox' });
-  const sshBox = h('div', { class: 'field', hidden: true }, h('label', {}, t('SSH 用户')), sshUser,
-    h('div', { class: 'hint' }, t('使用这台电脑的 SSH 密钥登录，自动上传、编译并注册为开机服务。支持 macOS、Linux。')));
-  const sshRow = h('label', { class: 'row' }, h('span', {}, t('对方未安装时，通过 SSH 安装')), h('span', { class: 'switch' }, sshOn, h('i')));
-  const setSsh = (on) => { sshOn.checked = on; sshBox.hidden = !on; ok.textContent = on ? t('安装并添加') : (editing ? t('保存') : t('添加')); };
-  sshOn.onchange = () => setSsh(sshOn.checked);
-  const err = h('div', { class: 'dlg-err' }, p && p.error && !opts.install ? p.error : '');
-  const ok = h('button', { class: 'btn primary', type: 'submit' }, editing ? t('保存') : t('添加'));
+  const sshPref = (k, d) => pref.get('ssh_' + k, d);
+  let mode = opts.install ? 'ssh' : 'run';
+  let authMode = sshPref('auth', 'agent');
+
+  // ---- 输入框 ----
+  const addr = h('input', { class: 'input', value: p ? p.addr : '', autofocus: true, required: true, autocomplete: 'off', spellcheck: 'false' });
+  const name = h('input', { class: 'input', value: p && p.name ? p.name : '', placeholder: t('默认使用对方的计算机名'), autocomplete: 'off' });
+  const token = h('input', { class: 'input', type: 'password', autocomplete: 'new-password' });
+  const user = h('input', { class: 'input', value: sshPref('user', ''), autocomplete: 'off', spellcheck: 'false' });
+  const password = h('input', { class: 'input', type: 'password', autocomplete: 'new-password' });
+  const remember = h('input', { type: 'checkbox' }); remember.checked = sshPref('remember', '1') === '1';
+  const keyList = h('datalist', { id: 'sshkeys' });
+  const keyFile = h('input', { class: 'input', list: 'sshkeys', value: sshPref('key', ''), placeholder: '~/.ssh/id_ed25519', autocomplete: 'off', spellcheck: 'false' });
+  const passphrase = h('input', { class: 'input', type: 'password', placeholder: t('密钥没有口令可不填'), autocomplete: 'new-password' });
+  const sshPort = h('input', { class: 'input', placeholder: '22', inputmode: 'numeric', autocomplete: 'off' });
+  api('/api/ssh/keys').then(r => {
+    keyList.replaceChildren(...(r.keys || []).map(k => h('option', { value: k })));
+    if (!keyFile.value && r.keys && r.keys.length) keyFile.value = r.keys[0];
+  }).catch(() => {});
+
+  const err = h('div', { class: 'dlg-err' }, editing && p.error ? p.error : '');
+  const ok = h('button', { class: 'btn primary', type: 'submit' });
   const cancel = h('button', { class: 'btn', type: 'button', onclick: () => dlg.close() }, t('取消'));
-  const formBody = [field(t('地址'), addr, t('端口默认 8730，可写成 IP:端口')), field(t('名称'), name), field(t('访问令牌'), token)];
-  if (!editing) formBody.push(sshRow, sshBox);
-  formBody.push(err);
+  const intro = h('div', { class: 'intro' });
+
+  // ---- “已运行”模式：地址、名称；访问令牌默认收起 ----
+  const addrHint = h('div', { class: 'hint' });
+  const addrField = h('div', { class: 'field' }, h('label', {}, t('地址')), addr, addrHint);
+  const nameSlot = h('div'), tokenSlot = h('div');
+  const nameField = field(t('名称'), nameSlot);
+  const tokenField = field(t('访问令牌'), tokenSlot, t('对方启动时用 --token 设置的令牌'));
+  const tokenLink = h('button', { class: 'linkbtn', type: 'button', onclick: () => { tokenLink.hidden = true; tokenField.hidden = false; token.focus(); } }, t('对方设置了访问令牌？'));
+  const showToken = editing ? p.has_token : !!(p && p.auth);
+  tokenField.hidden = !(editing || showToken);
+  tokenLink.hidden = editing || showToken;
+  const runBox = h('div', { class: 'grid-b' }, nameField, h('div', {}, tokenLink), tokenField);
+
+  // ---- “SSH 安装”模式 ----
+  const AUTHS = [['agent', t('本机密钥')], ['password', t('密码')], ['key', t('密钥文件')]];
+  const authBtns = {};
+  const authSeg = h('div', { class: 'seg sm' }, AUTHS.map(([k, l]) => (authBtns[k] = h('button', { type: 'button', onclick: () => setAuth(k) }, l))));
+  const authHint = h('div', { class: 'hint' });
+  const pwField = field(t('密码'), password, t('只用于这次安装，不会保存'));
+  const rememberRow = h('label', { class: 'check' }, remember, h('span', {}, t('记住登录：把本机公钥加到对方，以后不用再输密码')));
+  const keyField = field(t('密钥文件'), h('div', {}, keyFile, keyList), t('这台电脑上的私钥路径'));
+  const ppField = field(t('密钥口令'), passphrase);
+  const advName = h('div'), advToken = h('div');
+  const adv = h('details', { class: 'adv' }, h('summary', {}, t('高级选项')),
+    h('div', { class: 'grid-b' }, field(t('SSH 端口'), sshPort), field(t('显示名称'), advName),
+      field(t('为对方设置访问令牌（可选）'), advToken, t('设置后，其他电脑和浏览器访问它都需要这个令牌'))));
+  const sshBox = h('div', { class: 'grid-b' },
+    h('div', { class: 'field' }, h('label', {}, t('登录方式')), authSeg, authHint),
+    field(t('用户名'), user), pwField, rememberRow, keyField, ppField, adv);
+
+  const tabs = {};
+  const seg = h('div', { class: 'seg' }, [['run', t('已运行 DroidBridge')], ['ssh', t('通过 SSH 安装')]]
+    .map(([k, l]) => (tabs[k] = h('button', { type: 'button', onclick: () => setMode(k) }, l))));
+
   const dlg = dialog({
-    title: opts.install ? t('通过 SSH 重新安装') : editing ? t('编辑远程电脑') : t('添加远程电脑'),
-    desc: opts.install ? t('用这台电脑的 SSH 密钥登录对方，安装或更新 DroidBridge 服务。') : editing ? null : t('对方电脑需要运行 DroidBridge，并与本机在同一局域网。'),
-    body: formBody,
-    actions: [cancel, ok],
-    onsubmit: async () => {
-      err.textContent = '';
-      if (sshOn.checked) return runInstall();
-      ok.disabled = true; ok.textContent = t('正在连接…');
-      try {
-        const res = await api(editing ? '/api/peers/' + encodeURIComponent(p.id) : '/api/peers', {
-          method: editing ? 'PUT' : 'POST', body: JSON.stringify({ addr: addr.value, name: name.value, token: token.value }),
-        });
-        dlg.close();
-        toast((editing ? t('已保存 ') : t('已添加 ')) + res.name, { kind: 'ok' });
-        refreshAll();
-      } catch (e) {
-        err.textContent = e.message;
-        ok.disabled = false; setSsh(false);
-        // 对方没有运行 DroidBridge：引导用 SSH 安装
-        if (!editing && /无法连接|无法访问|拒绝|refused|超时|timed out|cannot (connect|reach)/i.test(e.message)) {
-          err.textContent = t('对方电脑上没有运行 DroidBridge。可以打开下面的开关，通过 SSH 自动安装。');
-          setSsh(true);
-        }
-      }
-    },
+    title: editing ? t('编辑远程电脑') : opts.install ? t('通过 SSH 重新安装') : t('添加远程电脑'),
+    body: editing ? [addrField, runBox, err] : [seg, intro, addrField, runBox, sshBox, err],
+    actions: [cancel, ok], onsubmit: submit,
   });
-  if (opts.install) setSsh(true);
+  dlg.classList.add('wide');
+
+  function setMode(m) {
+    mode = m; err.textContent = '';
+    for (const k in tabs) tabs[k].classList.toggle('on', k === m);
+    const ssh = m === 'ssh';
+    runBox.hidden = ssh; sshBox.hidden = !ssh;
+    intro.textContent = ssh
+      ? t('用 SSH 登录一台 macOS 或 Linux 电脑，自动安装 DroidBridge 并设为开机启动，然后添加到列表。Windows 电脑请在对方直接运行安装包。')
+      : t('对方电脑已经运行着 DroidBridge（桌面版或服务版），并与本机在同一局域网。');
+    addr.placeholder = ssh ? t('IP 或主机名，如 192.168.1.20') : '192.168.1.20';
+    addrHint.textContent = ssh ? '' : t('端口默认 8730，可写成 IP:端口');
+    // 名称、令牌输入框在两种模式间共用
+    (ssh ? advName : nameSlot).append(name);
+    (ssh ? advToken : tokenSlot).append(token);
+    token.placeholder = ssh ? t('留空表示不设置') : '';
+    ok.textContent = ssh ? t('安装并添加') : t('添加');
+    if (ssh) setAuth(authMode);
+  }
+  function setAuth(a) {
+    authMode = a;
+    for (const k in authBtns) authBtns[k].classList.toggle('on', k === a);
+    pwField.hidden = a !== 'password'; rememberRow.hidden = a !== 'password';
+    keyField.hidden = a !== 'key'; ppField.hidden = a !== 'key';
+    user.placeholder = a === 'agent' ? t('留空则使用 ~/.ssh/config 或当前用户名') : t('对方电脑的登录用户名');
+    authHint.textContent = {
+      agent: t('使用这台电脑 ~/.ssh 里的密钥、ssh-agent 和 ~/.ssh/config，和在命令行执行 ssh 一样。'),
+      password: t('用对方电脑的账号密码登录。macOS 需在“系统设置 → 通用 → 共享”中打开“远程登录”。'),
+      key: t('使用指定的私钥文件登录。'),
+    }[a];
+  }
+
+  async function submit() {
+    err.textContent = '';
+    if (mode === 'ssh' && !editing) return runInstall();
+    ok.disabled = true; const label = ok.textContent; ok.textContent = t('正在连接…');
+    try {
+      const res = await api(editing ? '/api/peers/' + encodeURIComponent(p.id) : '/api/peers', {
+        method: editing ? 'PUT' : 'POST', body: JSON.stringify({ addr: addr.value, name: name.value, token: token.value }),
+      });
+      dlg.close();
+      toast((editing ? t('已保存 ') : t('已添加 ')) + res.name, { kind: 'ok' });
+      refreshAll();
+    } catch (e) {
+      ok.disabled = false; ok.textContent = label;
+      err.replaceChildren(e.message);
+      if (/令牌|token/i.test(e.message)) { tokenLink.hidden = true; tokenField.hidden = false; token.focus(); }
+      else if (!editing && /无法连接|无法访问|拒绝|refused|超时|timed out|cannot (connect|reach)/i.test(e.message)) {
+        err.replaceChildren(t('连不上这台电脑上的 DroidBridge，它可能还没安装或没有运行。'), ' ',
+          h('button', { class: 'linkbtn', type: 'button', onclick: () => setMode('ssh') }, t('改为通过 SSH 安装')));
+      }
+    }
+  }
+
+  if (editing) { ok.textContent = t('保存'); nameSlot.append(name); tokenSlot.append(token); token.placeholder = p.has_token ? t('已设置，留空保持不变') : ''; addrHint.textContent = t('端口默认 8730，可写成 IP:端口'); }
+  else setMode(mode);
 
   // ---- SSH 安装：表单替换为步骤进度 ----
   async function runInstall() {
+    const port = sshPort.value.trim();
+    if (port && !/^\d{1,5}$/.test(port)) { err.textContent = t('SSH 端口不正确'); return; }
+    if (authMode === 'password' && !password.value) { err.textContent = t('请填写 SSH 密码'); password.focus(); return; }
+    pref.set('ssh_auth', authMode); pref.set('ssh_user', user.value.trim()); pref.set('ssh_remember', remember.checked ? '1' : '0');
+    if (authMode === 'key') pref.set('ssh_key', keyFile.value.trim());
     ok.disabled = true;
     let job;
     try {
-      job = (await api('/api/install', { method: 'POST', body: JSON.stringify({ addr: addr.value, user: sshUser.value.trim(), name: name.value, token: token.value }) })).job;
+      job = (await api('/api/install', { method: 'POST', body: JSON.stringify({
+        addr: addr.value, name: name.value, token: token.value, user: user.value.trim(), ssh_port: port ? +port : null,
+        auth: authMode, password: authMode === 'password' ? password.value : authMode === 'key' ? passphrase.value : '',
+        key_file: authMode === 'key' ? keyFile.value.trim() : '', remember: authMode === 'password' && remember.checked,
+      }) })).job;
     } catch (e) { err.textContent = e.message; ok.disabled = false; return; }
+    password.value = ''; passphrase.value = '';
     const target = addr.value.trim();
     const stepsEl = h('div', { class: 'steps2' });
     const lastEl = h('div', { class: 'logline' });
@@ -796,9 +925,9 @@ function peerDialog(p, opts = {}) {
         if (dlg.open) dlg.close();
       } else {
         tt.set(t('安装失败：') + s.error, 'bad'); tt.close(6000);
-        err.textContent = s.error;
         lastEl.textContent = '';
         cancel.textContent = t('关闭');
+        err.replaceChildren(s.error, ' ', h('button', { class: 'linkbtn', type: 'button', onclick: () => { dlg.close(); peerDialog({ addr: target, name: name.value, prefill: true }, { install: true }); } }, t('修改后重试')));
       }
       return;
     }

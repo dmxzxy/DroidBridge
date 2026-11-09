@@ -112,12 +112,82 @@ pub struct InstallReq {
     pub name: String,
     #[serde(default)]
     pub token: Option<String>,
+    /// 登录方式：agent（本机 SSH 密钥 / ssh-agent / ~/.ssh/config，默认）、password、key（指定密钥文件）
+    #[serde(default)]
+    pub auth: String,
+    /// 密码，或密钥文件的口令；只在本次安装中使用，不保存
+    #[serde(default)]
+    pub password: String,
+    #[serde(default)]
+    pub key_file: String,
+    /// 密码登录成功后，把本机公钥加入对方 authorized_keys，以后免密码
+    #[serde(default)]
+    pub remember: bool,
+}
+
+#[derive(Clone, PartialEq)]
+enum Auth {
+    Agent,
+    Password(String),
+    Key { path: String, passphrase: String },
 }
 
 struct Target {
     host: String,
     user: Option<String>,
     port: Option<u16>,
+    auth: Auth,
+}
+
+/// SSH_ASKPASS 入口：ssh 需要密码 / 口令时会以本程序为 askpass 运行。
+/// 在 main 的最开始调用；返回 true 表示已作为 askpass 处理完毕，应直接退出。
+pub fn askpass_hook() -> bool {
+    if std::env::var("DROIDBRIDGE_ASKPASS").as_deref() != Ok("1") {
+        return false;
+    }
+    let prompt: String = std::env::args().skip(1).collect::<Vec<_>>().join(" ").to_ascii_lowercase();
+    // 主机密钥确认等是/否问题一律拒绝（已用 accept-new 处理首次连接）
+    if prompt.contains("yes/no") || prompt.contains("(yes") {
+        println!("no");
+    } else {
+        println!("{}", std::env::var("DROIDBRIDGE_ASKPASS_SECRET").unwrap_or_default());
+    }
+    true
+}
+
+/// 本机 ~/.ssh 下的私钥文件（供界面选择）
+pub fn list_keys() -> Vec<String> {
+    let Some(dir) = ssh_dir() else { return Vec::new() };
+    let mut v: Vec<String> = std::fs::read_dir(&dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|e| {
+            let p = e.path();
+            let name = p.file_name()?.to_string_lossy().to_string();
+            let skip = name.ends_with(".pub") || name.starts_with("known_hosts") || name.starts_with("config") || name == "authorized_keys";
+            if skip || !p.is_file() {
+                return None;
+            }
+            let head = std::fs::read(&p).ok()?;
+            (head.starts_with(b"-----BEGIN") && String::from_utf8_lossy(&head[..head.len().min(80)]).contains("PRIVATE KEY")).then(|| p.to_string_lossy().to_string())
+        })
+        .collect();
+    v.sort();
+    v
+}
+
+fn ssh_dir() -> Option<std::path::PathBuf> {
+    std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")).map(|h| std::path::PathBuf::from(h).join(".ssh"))
+}
+
+fn expand_home(p: &str) -> String {
+    if let Some(rest) = p.strip_prefix("~/").or_else(|| p.strip_prefix("~\\")) {
+        if let Some(h) = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")) {
+            return std::path::PathBuf::from(h).join(rest).to_string_lossy().to_string();
+        }
+    }
+    p.to_string()
 }
 
 fn valid_host(s: &str) -> bool {
@@ -178,10 +248,27 @@ fn split_host_port(addr: &str) -> (String, u16) {
 
 async fn install(ctx: &Ctx, req: &InstallReq, addr: &str) -> Result<serde_json::Value, String> {
     let (host, port) = split_host_port(addr);
+    let auth = match req.auth.as_str() {
+        "password" => {
+            if req.password.is_empty() {
+                return Err(tr!("请填写 SSH 密码", "Please enter the SSH password"));
+            }
+            Auth::Password(req.password.clone())
+        }
+        "key" => {
+            let path = expand_home(req.key_file.trim());
+            if path.is_empty() || !std::path::Path::new(&path).is_file() {
+                return Err(tr!("找不到密钥文件：{path}", "Key file not found: {path}"));
+            }
+            Auth::Key { path, passphrase: req.password.clone() }
+        }
+        _ => Auth::Agent,
+    };
     let t = Target {
         host: host.clone(),
         user: req.user.clone().filter(|u| !u.is_empty()),
         port: req.ssh_port,
+        auth,
     };
     let token = req.token.clone().filter(|t| !t.is_empty());
 
@@ -205,6 +292,12 @@ async fn install(ctx: &Ctx, req: &InstallReq, addr: &str) -> Result<serde_json::
         return Err(tr!("暂只支持通过 SSH 安装到 macOS / Linux（对方系统：{os}）。Windows 电脑请直接运行安装包", "SSH install supports macOS / Linux only (remote: {os}). On Windows, run the installer package instead"));
     }
     ctx.log(&format!("{remote_name}：{os} {arch}"));
+    if req.remember && matches!(t.auth, Auth::Password(_)) {
+        match remember_key(ctx, &t).await {
+            Ok(m) => ctx.log(&m),
+            Err(e) => ctx.log(&tr!("未能保存免密登录：{e}", "Could not set up key login: {e}")),
+        }
+    }
     let dir = format!("{home}/.droidbridge");
 
     // 已在运行相同版本时跳过安装
@@ -318,10 +411,66 @@ async fn install(ctx: &Ctx, req: &InstallReq, addr: &str) -> Result<serde_json::
 
 // ---------------------------------------------------------------- SSH
 
+/// 把本机公钥加入对方 ~/.ssh/authorized_keys；本机没有密钥时用 ssh-keygen 生成 ed25519 密钥
+async fn remember_key(ctx: &Ctx, t: &Target) -> Result<String, String> {
+    let dir = ssh_dir().ok_or("no home directory")?;
+    let find = || ["id_ed25519.pub", "id_ecdsa.pub", "id_rsa.pub"].iter().map(|n| dir.join(n)).find(|p| p.is_file());
+    let pubfile = match find() {
+        Some(p) => p,
+        None => {
+            let _ = std::fs::create_dir_all(&dir);
+            let key = dir.join("id_ed25519");
+            let mut c = Command::new("ssh-keygen");
+            c.args(["-q", "-t", "ed25519", "-N", "", "-C", "droidbridge", "-f"]).arg(&key).stdin(Stdio::null());
+            #[cfg(windows)]
+            c.creation_flags(0x0800_0000);
+            let st = c.status().await.map_err(|e| e.to_string())?;
+            if !st.success() {
+                return Err(format!("ssh-keygen: {st}"));
+            }
+            find().ok_or("ssh-keygen produced no key")?
+        }
+    };
+    let key = std::fs::read_to_string(&pubfile).map_err(|e| e.to_string())?.trim().to_string();
+    if !key.starts_with("ssh-") && !key.starts_with("ecdsa-") {
+        return Err("invalid public key".into());
+    }
+    let script = "umask 077; mkdir -p ~/.ssh; touch ~/.ssh/authorized_keys; read -r K; grep -qxF \"$K\" ~/.ssh/authorized_keys || echo \"$K\" >> ~/.ssh/authorized_keys";
+    ssh_run(ctx, t, script, Some(format!("{key}
+").into_bytes()), Duration::from_secs(30), false).await?;
+    let name = pubfile.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+    Ok(tr!("已把本机公钥（{name}）加入对方，以后可直接用本机密钥登录", "Added this computer's public key ({name}); later logins can use the key"))
+}
+
 fn ssh_cmd(t: &Target, remote: &str) -> Command {
     let mut c = Command::new("ssh");
+    let secret = match &t.auth {
+        Auth::Agent => None,
+        Auth::Password(p) => {
+            // Windows 版 OpenSSH 的 keyboard-interactive 不走 askpass（会卡在等待控制台输入），只用 password
+            let methods = if cfg!(windows) { "PreferredAuthentications=password" } else { "PreferredAuthentications=password,keyboard-interactive" };
+            c.args(["-o", methods, "-o", "PubkeyAuthentication=no"]);
+            Some(p.clone())
+        }
+        Auth::Key { path, passphrase } => {
+            c.args(["-i", path, "-o", "IdentitiesOnly=yes", "-o", "PreferredAuthentications=publickey"]);
+            Some(passphrase.clone())
+        }
+    };
+    match secret {
+        // 由本程序充当 askpass 提供密码 / 口令（不经过终端，也不写入磁盘）
+        Some(sec) => {
+            c.args(["-o", "BatchMode=no", "-o", "NumberOfPasswordPrompts=1"]);
+            if let Ok(exe) = std::env::current_exe() {
+                c.env("SSH_ASKPASS", exe);
+            }
+            c.env("SSH_ASKPASS_REQUIRE", "force").env("DISPLAY", ":0").env("DROIDBRIDGE_ASKPASS", "1").env("DROIDBRIDGE_ASKPASS_SECRET", sec);
+        }
+        None => {
+            c.args(["-o", "BatchMode=yes"]);
+        }
+    }
     c.args([
-        "-o", "BatchMode=yes",
         "-o", "StrictHostKeyChecking=accept-new",
         "-o", "ConnectTimeout=8",
         "-o", "ServerAliveInterval=15",
@@ -342,9 +491,13 @@ fn ssh_cmd(t: &Target, remote: &str) -> Command {
     c
 }
 
-fn explain_ssh_error(stderr: &str) -> Option<String> {
+fn explain_ssh_error(t: &Target, stderr: &str) -> Option<String> {
     let s = stderr.to_ascii_lowercase();
-    if s.contains("permission denied") {
+    if s.contains("permission denied") && matches!(t.auth, Auth::Password(_)) {
+        Some(tr!("SSH 登录失败：用户名或密码不正确（对方也可能禁用了密码登录）", "SSH login failed: wrong user name or password (password login may also be disabled on the remote computer)"))
+    } else if s.contains("permission denied") && matches!(t.auth, Auth::Key { .. }) {
+        Some(tr!("SSH 登录失败：对方不接受这个密钥，或密钥口令不正确", "SSH login failed: the key was not accepted, or its passphrase is wrong"))
+    } else if s.contains("permission denied") {
         Some(tr!("SSH 认证失败：本机 ~/.ssh 中的密钥未被对方接受。请把本机公钥（~/.ssh/id_rsa.pub 等）加入对方的 ~/.ssh/authorized_keys，或填写正确的 SSH 用户名", "SSH authentication failed: no key in ~/.ssh was accepted. Add your public key (~/.ssh/id_rsa.pub etc.) to the remote ~/.ssh/authorized_keys, or set the right SSH user"))
     } else if s.contains("connection refused") {
         Some(tr!("对方没有开启 SSH。macOS：系统设置 → 通用 → 共享 → 打开“远程登录”；Linux：安装并启动 openssh-server", "SSH is not enabled on the remote computer. macOS: System Settings → General → Sharing → Remote Login; Linux: install and start openssh-server"))
@@ -419,7 +572,7 @@ async fn ssh_run(
     }
     let err = errbuf.lock().unwrap().clone();
     if status.code() == Some(255) {
-        if let Some(msg) = explain_ssh_error(&err) {
+        if let Some(msg) = explain_ssh_error(t, &err) {
             return Err(msg);
         }
     }

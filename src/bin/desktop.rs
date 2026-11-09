@@ -11,6 +11,10 @@ use tao::window::{Icon, WindowBuilder};
 use wry::{NewWindowResponse, WebContext, WebViewBuilder};
 
 fn main() {
+    // 作为 SSH_ASKPASS 被 ssh 调用时，只输出密码后退出
+    if droidbridge::remote::askpass_hook() {
+        return;
+    }
     let args: Vec<String> = std::env::args().skip(1).collect();
     let cfg = match Config::from_args(args.clone()) {
         Ok(Some(c)) => Ok(c),

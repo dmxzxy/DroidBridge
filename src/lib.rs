@@ -288,6 +288,7 @@ fn router(state: Shared) -> Router {
         .route("/api/peers/{id}", put(edit_peer).delete(remove_peer))
         .route("/api/install", post(install_start))
         .route("/api/install/{id}", get(install_status))
+        .route("/api/ssh/keys", get(ssh_keys))
         .route("/api/discovered", get(discovered))
         .route("/api/adb/connect", post(adb_connect))
         .route("/api/adb/pair", post(adb_pair))
@@ -711,4 +712,9 @@ async fn adb_qr_cancel(State(st): State<Shared>, Path(id): Path<String>, Query(q
         Ok(json!({"ok": true}))
     })
     .await
+}
+
+/// 本机 ~/.ssh 下可用的私钥文件
+async fn ssh_keys() -> Json<serde_json::Value> {
+    Json(json!({ "keys": remote::list_keys() }))
 }

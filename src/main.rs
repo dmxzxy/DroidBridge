@@ -4,6 +4,10 @@ use droidbridge::{tr, Config};
 
 #[tokio::main]
 async fn main() {
+    // 作为 SSH_ASKPASS 被 ssh 调用时，只输出密码后退出
+    if droidbridge::remote::askpass_hook() {
+        return;
+    }
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
