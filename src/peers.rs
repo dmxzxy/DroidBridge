@@ -50,7 +50,7 @@ impl PeerStore {
         if let Some(dir) = self.path.parent() {
             let _ = tokio::fs::create_dir_all(dir).await;
         }
-        tokio::fs::write(&self.path, data).await.map_err(|e| format!("保存 peers.json 失败：{e}"))
+        tokio::fs::write(&self.path, data).await.map_err(|e| tr!("保存 peers.json 失败：{e}", "Failed to save peers.json: {e}"))
     }
 
     pub async fn list(&self) -> Vec<PeerPublic> {
@@ -84,10 +84,10 @@ impl PeerStore {
     pub async fn update(&self, peer: Peer) -> Result<(), String> {
         let mut peers = self.peers.write().await;
         if peers.iter().any(|p| p.id != peer.id && p.addr == peer.addr) {
-            return Err("该地址已在列表中".into());
+            return Err(tr!("该地址已在列表中", "This address is already in the list"));
         }
         let Some(p) = peers.iter_mut().find(|p| p.id == peer.id) else {
-            return Err("远程电脑不存在".into());
+            return Err(tr!("远程电脑不存在", "Remote computer not found"));
         };
         *p = peer;
         self.save(&peers).await
@@ -113,10 +113,10 @@ pub fn normalize_addr(s: &str) -> Result<String, String> {
     }
     let a = a.split('/').next().unwrap_or("").trim();
     if a.is_empty() {
-        return Err("地址不能为空".into());
+        return Err(tr!("地址不能为空", "Address is required"));
     }
     if a.contains(' ') {
-        return Err("地址格式不正确".into());
+        return Err(tr!("地址格式不正确", "Invalid address"));
     }
     let has_port = if a.starts_with('[') {
         a.contains("]:")
@@ -151,10 +151,11 @@ pub async fn http_request(
     let fut = async {
         let mut s = tokio::time::timeout(Duration::from_secs(3), TcpStream::connect(addr))
             .await
-            .map_err(|_| format!("连接 {addr} 超时"))?
-            .map_err(|e| format!("无法连接 {addr}：{e}"))?;
+            .map_err(|_| tr!("连接 {addr} 超时", "Connection to {addr} timed out"))?
+            .map_err(|e| tr!("无法连接 {addr}：{e}", "Cannot connect to {addr}: {e}"))?;
         let req = format!(
-            "{method} {path} HTTP/1.1\r\nHost: {addr}\r\nAccept: application/json\r\nContent-Type: application/octet-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            "{method} {path} HTTP/1.1\r\nHost: {addr}\r\nAccept: application/json\r\nX-Lang: {}\r\nContent-Type: application/octet-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            crate::i18n::code(),
             body.len()
         );
         s.write_all(req.as_bytes()).await.map_err(|e| e.to_string())?;
@@ -167,18 +168,18 @@ pub async fn http_request(
     };
     let buf = tokio::time::timeout(total, fut)
         .await
-        .map_err(|_| format!("请求 {addr} 超时"))??;
+        .map_err(|_| tr!("请求 {addr} 超时", "Request to {addr} timed out"))??;
     let split = buf
         .windows(4)
         .position(|w| w == b"\r\n\r\n")
-        .ok_or("对端响应格式错误")?;
+        .ok_or_else(|| tr!("对端响应格式错误", "Malformed response"))?;
     let head = String::from_utf8_lossy(&buf[..split]).to_string();
     let mut body = buf[split + 4..].to_vec();
     let status: u16 = head
         .split_whitespace()
         .nth(1)
         .and_then(|s| s.parse().ok())
-        .ok_or("对端响应格式错误")?;
+        .ok_or_else(|| tr!("对端响应格式错误", "Malformed response"))?;
     if head.to_ascii_lowercase().contains("transfer-encoding: chunked") {
         body = dechunk(&body);
     }
@@ -219,12 +220,12 @@ pub async fn post_file(peer: &Peer, query: &str, body: &[u8]) -> Result<serde_js
 
 fn parse_json_reply(code: u16, body: &[u8]) -> Result<serde_json::Value, String> {
     let v: serde_json::Value =
-        serde_json::from_slice(body).map_err(|_| format!("对端返回非 JSON（HTTP {code}），确认对方运行的是 DroidBridge"))?;
+        serde_json::from_slice(body).map_err(|_| tr!("对端返回非 JSON（HTTP {code}），确认对方运行的是 DroidBridge", "Unexpected non-JSON response (HTTP {code}); is the other side running DroidBridge?"))?;
     if code == 401 {
-        return Err("对端需要令牌或令牌错误".into());
+        return Err(tr!("对端需要令牌或令牌错误", "Access token missing or wrong"));
     }
     if code >= 400 {
-        return Err(v.get("error").and_then(|e| e.as_str()).unwrap_or("对端错误").to_string());
+        return Err(v.get("error").and_then(|e| e.as_str()).map(String::from).unwrap_or_else(|| tr!("对端错误", "Remote error")));
     }
     Ok(v)
 }
@@ -251,12 +252,14 @@ pub async fn proxy_ws(socket: WebSocket, peer: Peer, path: &'static str, raw_que
     {
         Ok(Ok((ws, _))) => ws,
         Ok(Err(e)) => {
-            let msg = serde_json::json!({"type":"error","msg":format!("连接远程电脑 {} 失败：{e}", peer.name)});
+            let n = &peer.name;
+            let msg = serde_json::json!({"type":"error","msg":tr!("连接远程电脑 {n} 失败：{e}", "Cannot connect to remote computer {n}: {e}")});
             let _ = ctx.send(AMsg::Text(msg.to_string().into())).await;
             return;
         }
         Err(_) => {
-            let msg = serde_json::json!({"type":"error","msg":format!("连接远程电脑 {} 超时", peer.name)});
+            let n = &peer.name;
+            let msg = serde_json::json!({"type":"error","msg":tr!("连接远程电脑 {n} 超时", "Connection to remote computer {n} timed out")});
             let _ = ctx.send(AMsg::Text(msg.to_string().into())).await;
             return;
         }

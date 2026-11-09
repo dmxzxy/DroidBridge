@@ -64,6 +64,33 @@ pub fn random_scid() -> u32 {
     (h.finish() as u32) & 0x7fff_ffff
 }
 
+/// 主机名（macOS 优先使用“电脑名称”）
+pub fn hostname() -> Option<String> {
+    #[cfg(target_os = "macos")]
+    if let Some(n) = run_line("scutil", &["--get", "ComputerName"]) {
+        return Some(n);
+    }
+    #[cfg(unix)]
+    {
+        if let Ok(s) = std::fs::read_to_string("/etc/hostname") {
+            let s = s.trim();
+            if !s.is_empty() {
+                return Some(s.to_string());
+            }
+        }
+        return run_line("hostname", &[]);
+    }
+    #[allow(unreachable_code)]
+    None
+}
+
+#[cfg(unix)]
+fn run_line(cmd: &str, args: &[&str]) -> Option<String> {
+    let out = std::process::Command::new(cmd).args(args).output().ok()?;
+    let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    (out.status.success() && !s.is_empty()).then_some(s)
+}
+
 /// 通过 UDP "连接" 外部地址的方式获得本机主网卡 IP（不会真正发包）。
 pub fn local_ips() -> Vec<String> {
     let mut ips = Vec::new();

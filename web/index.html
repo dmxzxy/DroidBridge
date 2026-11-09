@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
@@ -218,12 +218,12 @@ dialog::backdrop{background:rgba(0,0,0,.45)}
 </head>
 <body>
 <div class="topbar">
-  <button class="ib back" id="mBack" title="设备列表" aria-label="设备列表"></button>
+  <button class="ib back" id="mBack"></button>
   <span class="logo" id="mLogo"></span><span id="mTitle">DroidBridge</span>
-  <button class="ib gear" id="mGear" title="设置" aria-label="设置"></button>
+  <button class="ib gear" id="mGear"></button>
 </div>
 <aside>
-  <div class="brand"><span class="logo" id="logo"></span>DroidBridge<button class="ib" id="gear" title="设置" aria-label="设置"></button></div>
+  <div class="brand"><span class="logo" id="logo"></span>DroidBridge<button class="ib" id="gear"></button></div>
   <div id="noticeSide"></div>
   <div class="lists" id="lists"></div>
 </aside>
@@ -235,6 +235,161 @@ dialog::backdrop{background:rgba(0,0,0,.45)}
 <div class="toasts" id="toasts"></div>
 <script>
 'use strict';
+// ---------------- 语言 ----------------
+const EN = {"分辨率":"Resolution",
+  "原始":"Original",
+  "码率":"Bitrate",
+  "帧率":"Frame rate",
+  "取消":"Cancel",
+  "确定":"OK",
+  "需要访问令牌":"Access token required",
+  "这台 DroidBridge 启用了访问令牌。":"This DroidBridge requires an access token.",
+  "未授权":"Unauthorized",
+  "离线":"Offline",
+  "请在手机上点击“允许 USB 调试”":"Tap “Allow USB debugging” on the phone",
+  "设备离线，请重新插拔数据线":"Device is offline; reconnect the USB cable",
+  "本机":"This computer",
+  "正在读取…":"Loading…",
+  "设备状态：":"Device state: ",
+  "未检测到设备 · ":"No devices · ",
+  "如何连接":"How to connect",
+  "远程电脑":"Remote computers",
+  "添加远程电脑":"Add remote computer",
+  "添加局域网内运行 DroidBridge 的电脑":"Add computers on your LAN running DroidBridge",
+  "令牌错误":"Wrong token",
+  "无法连接":"Unreachable",
+  "没有设备":"No devices",
+  "刷新":"Refresh",
+  "编辑":"Edit",
+  "移除":"Remove",
+  "默认使用对方的计算机名":"Defaults to its computer name",
+  "已设置，留空保持不变":"Set; leave empty to keep",
+  "对方未设置可不填":"Leave empty if not set",
+  "SSH 用户":"SSH user",
+  "安装并添加":"Install and add",
+  "保存":"Save",
+  "添加":"Add",
+  "地址":"Address",
+  "端口默认 8730，可写成 IP:端口":"Port defaults to 8730; use IP:port to change",
+  "名称":"Name",
+  "访问令牌":"Access token",
+  "通过 SSH 重新安装":"Reinstall over SSH",
+  "编辑远程电脑":"Edit remote computer",
+  "用这台电脑的 SSH 密钥登录对方，安装或更新 DroidBridge 服务。":"Log in with this computer’s SSH key to install or update the DroidBridge service.",
+  "对方电脑需要运行 DroidBridge，并与本机在同一局域网。":"The other computer must run DroidBridge on the same LAN.",
+  "正在连接…":"Connecting…",
+  "已保存 ":"Saved ",
+  "已添加 ":"Added ",
+  "对方电脑上没有运行 DroidBridge。可以打开下面的开关，通过 SSH 自动安装。":"DroidBridge isn’t running there. Turn on the switch below to install it over SSH.",
+  "查看日志":"Show log",
+  "收起日志":"Hide log",
+  "正在安装到 ":"Installing to ",
+  "可以关闭窗口，安装会在后台继续。":"You can close this window; installation continues in the background.",
+  "后台运行":"Run in background",
+  "安装失败：":"Install failed: ",
+  "关闭":"Close",
+  "移除远程电脑":"Remove remote computer",
+  "连接安卓设备":"Connect an Android device",
+  "在手机上打开 ":"On the phone, turn on ",
+  "设置 → 开发者选项 → USB 调试":"Settings → Developer options → USB debugging",
+  "。没有开发者选项时，在“关于手机”里连续点击版本号 7 次。":". If Developer options is hidden, tap the build number in “About phone” 7 times.",
+  "用数据线连接电脑，在手机弹窗中点击 ":"Connect it with a USB cable and tap ",
+  "允许":"Allow",
+  "小米、红米等机型还需开启 ":"On Xiaomi / Redmi devices also turn on ",
+  "USB 调试（安全设置）":"USB debugging (Security settings)",
+  "，否则无法点击和输入。":", otherwise touches and typing won’t work.",
+  "设备出现在左侧列表后，点击即可投屏。":"When the device appears in the list, click it to start mirroring.",
+  "知道了":"Got it",
+  "复制":"Copy",
+  "画面":"Video",
+  "其他电脑添加本机时填写局域网地址；画面设置对之后打开的投屏生效。":"Other computers add this one by its LAN address. Video settings apply to newly opened devices.",
+  "重新连接已打开的设备":"Reconnect open devices",
+  "完成":"Done",
+  "设置":"Settings",
+  "已复制 ":"Copied ",
+  "级别":"Level",
+  "全部":"All",
+  "调试+":"Debug+",
+  "信息+":"Info+",
+  "警告+":"Warn+",
+  "错误":"Error",
+  "暂停":"Pause",
+  "跳到最新":"Jump to latest",
+  "清空":"Clear",
+  "只看当前前台应用":"Only the foreground app",
+  "日志连接已断开":"Log disconnected",
+  " 重连":" Reconnect",
+  "（未运行）":" (not running)",
+  "继续":"Resume",
+  "没有可保存的日志":"Nothing to save",
+  "输入文字":"Type text",
+  "更多":"More",
+  "日志":"Logs",
+  "全屏":"Fullscreen",
+  "松开以安装 APK 或传到手机":"Drop to install the APK or copy to the device",
+  "电源键":"Power",
+  "音量 +":"Volume up",
+  "截图":"Screenshot",
+  "下拉通知栏":"Open notifications",
+  "快捷设置":"Quick settings",
+  "粘贴电脑剪贴板":"Paste computer clipboard",
+  "安装 APK / 传文件…":"Install APK / send file…",
+  "重新连接":"Reconnect",
+  "连接已断开":"Disconnected",
+  "等待画面…":"Waiting for video…",
+  "已同步手机剪贴板":"Device clipboard copied",
+  "解码器不支持此视频：":"Decoder does not support this video: ",
+  "粘贴到手机":"Paste to device",
+  "浏览器无法读取剪贴板，请在这里粘贴内容。":"The browser cannot read the clipboard; paste the text here.",
+  "发送":"Send",
+  "截图已保存":"Screenshot saved",
+  "正在安装 ":"Installing ",
+  "正在传输 ":"Sending ",
+  "传输失败：":"Transfer failed: ",
+  "当前浏览器无法解码视频":"This browser cannot decode video",
+  "当前通过 HTTP 访问，浏览器不允许解码视频。请改用 ":"Video decoding is blocked over plain HTTP. Please open ",
+  "（首次需在浏览器中选择继续访问）。":" instead (accept the certificate warning the first time).",
+  "当前浏览器不支持视频解码，请使用新版 Chrome、Edge 或 Safari。":"This browser lacks video decoding support; use a recent Chrome, Edge or Safari.",
+  "把文件拖到设备画面上即可安装或传输":"Drop files on a device screen to install or send them",
+  "无法连接 DroidBridge：":"Cannot connect to DroidBridge: ",
+  "通过 SSH 重新安装…":"Reinstall over SSH…",
+  "默认读取 ~/.ssh/config":"Defaults to ~/.ssh/config",
+  "使用这台电脑的 SSH 密钥登录，自动上传、编译并注册为开机服务。支持 macOS、Linux。":"Uses this computer’s SSH key to upload, build and register a login service. Supports macOS and Linux.",
+  "对方未安装时，通过 SSH 安装":"Install over SSH if not installed",
+  "投屏时保持屏幕常亮":"Keep screen awake while mirroring",
+  "局域网地址":"LAN address",
+  "过滤：关键字或 Tag，-排除":"Filter: text or tag, -exclude",
+  "全部应用":"All apps",
+  "只看某个应用：填写包名后回车":"Filter by app: type a package name and press Enter",
+  "保存为文件":"Save to file",
+  "关闭日志":"Close logs",
+  "输入文字，回车发送":"Type text, Enter to send",
+  "返回":"Back",
+  "主页":"Home",
+  "最近任务":"Recents",
+  "音量 −":"Volume down",
+  "旋转屏幕":"Rotate",
+  "关闭手机屏幕（投屏继续）":"Turn device screen off (keep mirroring)",
+  "打开手机屏幕":"Turn device screen on",
+  "选择设备开始投屏":"Select a device to start",
+  "设备需开启 USB 调试并连接到电脑":"Devices need USB debugging enabled and a USB connection",
+  "将从列表中移除“{0}”，对方电脑不受影响。":"Remove “{0}” from the list? The other computer is not affected.",
+  "已暂停{0}":"Paused{0}",
+  " · 新增 {0} 行":" · {0} new lines",
+  "已保存 {0} 行日志":"Saved {0} log lines",
+  "通用":"General"};
+// 界面语言：?lang= > 手动选择 > 服务端语言（桌面版通过 ?lang= 传入）> 浏览器语言
+let LANG = (() => {
+  const q = new URLSearchParams(location.search).get('lang');
+  const v = localStorage.getItem('db_lang') || q || (navigator.language || 'en');
+  return /^zh/i.test(v) ? 'zh' : 'en';
+})();
+document.documentElement.lang = LANG === 'zh' ? 'zh-CN' : 'en';
+/** 翻译：中文原文作为键；{0}、{1} 为参数 */
+function t(zh, ...args) {
+  const s = LANG === 'zh' ? zh : (EN[zh] !== undefined ? EN[zh] : zh);
+  return args.length ? s.replace(/\{(\d)\}/g, (_, i) => args[+i]) : s;
+}
 // ---------------- 基础工具 ----------------
 const $ = (s, r = document) => r.querySelector(s);
 function h(tag, attrs, ...kids) {
@@ -295,9 +450,9 @@ const pref = {
   set(k, v) { localStorage.setItem('db_' + k, v); },
 };
 const QUALITY = {
-  size: { label: '分辨率', def: '1280', opts: [['720', '720p'], ['1280', '1280p'], ['1920', '1920p'], ['0', '原始']] },
-  rate: { label: '码率', def: '8000000', opts: [['2000000', '2 Mbps'], ['4000000', '4 Mbps'], ['8000000', '8 Mbps'], ['16000000', '16 Mbps'], ['32000000', '32 Mbps']] },
-  fps: { label: '帧率', def: '60', opts: [['30', '30 fps'], ['60', '60 fps'], ['90', '90 fps']] },
+  size: { label: t('分辨率'), def: '1280', opts: [['720', '720p'], ['1280', '1280p'], ['1920', '1920p'], ['0', t('原始')]] },
+  rate: { label: t('码率'), def: '8000000', opts: [['2000000', '2 Mbps'], ['4000000', '4 Mbps'], ['8000000', '8 Mbps'], ['16000000', '16 Mbps'], ['32000000', '32 Mbps']] },
+  fps: { label: t('帧率'), def: '60', opts: [['30', '30 fps'], ['60', '60 fps'], ['90', '90 fps']] },
 };
 const q = (k) => pref.get(k, QUALITY[k] ? QUALITY[k].def : '');
 
@@ -309,7 +464,7 @@ function toast(text, opt = {}) {
   $('#toasts').append(el);
   let timer = null;
   const api = {
-    set(t, kind) { label.textContent = t; dot.className = 'dot' + (kind ? ' ' + kind : ''); if (!dot.isConnected) el.prepend(dot); return api; },
+    set(msg, kind) { label.textContent = msg; dot.className = 'dot' + (kind ? ' ' + kind : ''); if (!dot.isConnected) el.prepend(dot); return api; },
     close(ms = 0) { clearTimeout(timer); timer = setTimeout(() => el.remove(), ms); },
   };
   if (!opt.sticky) api.close(opt.ms || 2600);
@@ -366,7 +521,7 @@ function confirmDialog(title, desc, okText, danger) {
     let ok = false;
     const dlg = dialog({
       title, desc,
-      actions: [h('button', { class: 'btn', type: 'button', onclick: () => dlg.close() }, '取消'),
+      actions: [h('button', { class: 'btn', type: 'button', onclick: () => dlg.close() }, t('取消')),
         h('button', { class: 'btn ' + (danger ? 'danger' : 'primary'), type: 'submit' }, okText)],
       onsubmit: () => { ok = true; dlg.close(); },
     });
@@ -374,13 +529,13 @@ function confirmDialog(title, desc, okText, danger) {
   });
 }
 
-function promptDialog(title, desc, { placeholder = '', value = '', type = 'text', okText = '确定' } = {}) {
+function promptDialog(title, desc, { placeholder = '', value = '', type = 'text', okText = t('确定') } = {}) {
   return new Promise(res => {
     let result = null;
     const input = h('input', { class: 'input', type, placeholder, value, autofocus: true });
     const dlg = dialog({
       title, desc, body: [input],
-      actions: [h('button', { class: 'btn', type: 'button', onclick: () => dlg.close() }, '取消'), h('button', { class: 'btn primary', type: 'submit' }, okText)],
+      actions: [h('button', { class: 'btn', type: 'button', onclick: () => dlg.close() }, t('取消')), h('button', { class: 'btn primary', type: 'submit' }, okText)],
       onsubmit: () => { result = input.value; dlg.close(); },
     });
     dlg.addEventListener('close', () => res(result));
@@ -389,18 +544,18 @@ function promptDialog(title, desc, { placeholder = '', value = '', type = 'text'
 
 // ---------------- API ----------------
 const withToken = (url) => {
-  const t = pref.get('token', '');
-  return t ? url + (url.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(t) : url;
+  const tk = pref.get('token', '');
+  return tk ? url + (url.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(tk) : url;
 };
 let tokenAsk = null;
 async function api(path, opts = {}) {
-  const r = await fetch(withToken(path), { ...opts, headers: { 'content-type': 'application/json', ...(opts.headers || {}) } });
+  const r = await fetch(withToken(path), { ...opts, headers: { 'content-type': 'application/json', 'x-lang': LANG, ...(opts.headers || {}) } });
   let body = null;
   try { body = await r.json(); } catch {}
   if (r.status === 401) {
-    tokenAsk = tokenAsk || promptDialog('需要访问令牌', '这台 DroidBridge 启用了访问令牌。', { type: 'password', value: pref.get('token', '') }).finally(() => { tokenAsk = null; });
-    const t = await tokenAsk;
-    if (t !== null) { pref.set('token', t.trim()); return api(path, opts); }
+    tokenAsk = tokenAsk || promptDialog(t('需要访问令牌'), t('这台 DroidBridge 启用了访问令牌。'), { type: 'password', value: pref.get('token', '') }).finally(() => { tokenAsk = null; });
+    const tk = await tokenAsk;
+    if (tk !== null) { pref.set('token', tk.trim()); return api(path, opts); }
   }
   if (!r.ok) throw new Error((body && body.error) || ('HTTP ' + r.status));
   return body;
@@ -410,14 +565,14 @@ async function api(path, opts = {}) {
 let INFO = null;
 const hosts = new Map();
 const viewers = new Map();
-const STATE_TEXT = { unauthorized: '未授权', offline: '离线', recovery: 'Recovery', sideload: 'Sideload', bootloader: 'Bootloader' };
-const STATE_HINT = { unauthorized: '请在手机上点击“允许 USB 调试”', offline: '设备离线，请重新插拔数据线' };
+const STATE_TEXT = { unauthorized: t('未授权'), offline: t('离线'), recovery: 'Recovery', sideload: 'Sideload', bootloader: 'Bootloader' };
+const STATE_HINT = { unauthorized: t('请在手机上点击“允许 USB 调试”'), offline: t('设备离线，请重新插拔数据线') };
 
 async function loadPeers() {
   const peers = await api('/api/peers');
   const ids = new Set(['local', ...peers.map(p => p.id)]);
   for (const id of [...hosts.keys()]) if (!ids.has(id)) hosts.delete(id);
-  if (!hosts.has('local')) hosts.set('local', { id: 'local', name: (INFO && INFO.name) || '本机', devices: [] });
+  if (!hosts.has('local')) hosts.set('local', { id: 'local', name: (INFO && INFO.name) || t('本机'), devices: [] });
   for (const p of peers) hosts.set(p.id, Object.assign(hosts.get(p.id) || { devices: [] }, p, { remote: true }));
 }
 async function refreshHost(hst) {
@@ -432,14 +587,14 @@ async function refreshAll() {
 }
 
 function devRows(hst, emptyEl) {
-  if (!hst.loaded) return [h('div', { class: 'empty' }, '正在读取…')];
+  if (!hst.loaded) return [h('div', { class: 'empty' }, t('正在读取…'))];
   if (hst.error) return [h('div', { class: 'empty err' }, hst.error)];
   if (!hst.devices.length) return [emptyEl];
   return hst.devices.map(d => {
     const key = hst.id + '|' + d.serial, ready = d.state === 'device';
     return h('div', {
       class: 'dev' + (viewers.has(key) ? ' open' : '') + (ready ? '' : ' na'), title: d.serial,
-      onclick: () => ready ? openViewer(hst, d) : toast(STATE_HINT[d.state] || ('设备状态：' + d.state)),
+      onclick: () => ready ? openViewer(hst, d) : toast(STATE_HINT[d.state] || (t('设备状态：') + d.state)),
     }, h('span', { class: 'dot ' + (ready ? 'ok' : 'warn') }),
       h('div', { class: 't' }, h('b', {}, d.model || d.serial), d.model ? h('small', {}, d.serial) : null),
       ready ? null : h('span', { class: 'st' }, STATE_TEXT[d.state] || d.state));
@@ -448,29 +603,29 @@ function devRows(hst, emptyEl) {
 
 function renderSide() {
   const local = hosts.get('local');
-  const out = [h('div', { class: 'sec' }, '本机')];
-  if (local) out.push(...devRows(local, h('div', { class: 'empty' }, '未检测到设备 · ', h('a', { href: '#', onclick: e => { e.preventDefault(); helpDialog(); } }, '如何连接'))));
-  out.push(h('div', { class: 'sec' }, '远程电脑', ib('plus', '添加远程电脑', () => peerDialog())));
+  const out = [h('div', { class: 'sec' }, t('本机'))];
+  if (local) out.push(...devRows(local, h('div', { class: 'empty' }, t('未检测到设备 · '), h('a', { href: '#', onclick: e => { e.preventDefault(); helpDialog(); } }, t('如何连接')))));
+  out.push(h('div', { class: 'sec' }, t('远程电脑'), ib('plus', t('添加远程电脑'), () => peerDialog())));
   const remotes = [...hosts.values()].filter(x => x.remote);
-  if (!remotes.length) out.push(h('div', { class: 'empty' }, '添加局域网内运行 DroidBridge 的电脑'));
+  if (!remotes.length) out.push(h('div', { class: 'empty' }, t('添加局域网内运行 DroidBridge 的电脑')));
   for (const r of remotes) {
-    const short = r.error ? (/令牌/.test(r.error) ? '令牌错误' : '无法连接') : null;
+    const short = r.error ? (/令牌|token/i.test(r.error) ? t('令牌错误') : t('无法连接')) : null;
     out.push(h('div', { class: 'host', title: r.addr + (r.error ? '\n' + r.error : '') },
       h('span', { class: 'hn' }, r.name),
       h('span', { class: 'meta' + (short ? ' err' : '') }, short || r.addr),
-      ib('more', '更多', e => hostMenu(e.currentTarget, r))));
-    if (!r.error) out.push(...devRows(r, h('div', { class: 'empty' }, '没有设备')));
+      ib('more', t('更多'), e => hostMenu(e.currentTarget, r))));
+    if (!r.error) out.push(...devRows(r, h('div', { class: 'empty' }, t('没有设备'))));
   }
   $('#lists').replaceChildren(...out);
 }
 
 function hostMenu(anchor, r) {
   menu(anchor, [
-    { icon: 'refresh', label: '刷新', fn: async () => { await refreshHost(r); renderSide(); if (r.error) toast(r.error, { kind: 'bad', ms: 4000 }); } },
-    { icon: 'edit', label: '编辑', fn: () => peerDialog(r) },
-    { icon: 'download', label: '通过 SSH 重新安装…', fn: () => peerDialog(r, { install: true }) },
+    { icon: 'refresh', label: t('刷新'), fn: async () => { await refreshHost(r); renderSide(); if (r.error) toast(r.error, { kind: 'bad', ms: 4000 }); } },
+    { icon: 'edit', label: t('编辑'), fn: () => peerDialog(r) },
+    { icon: 'download', label: t('通过 SSH 重新安装…'), fn: () => peerDialog(r, { install: true }) },
     '-',
-    { icon: 'trash', label: '移除', danger: true, fn: () => removePeer(r) },
+    { icon: 'trash', label: t('移除'), danger: true, fn: () => removePeer(r) },
   ]);
 }
 
@@ -478,43 +633,43 @@ function hostMenu(anchor, r) {
 function peerDialog(p, opts = {}) {
   const editing = !!p && !opts.install;
   const addr = h('input', { class: 'input', value: p ? p.addr : '', placeholder: '192.168.1.20', autofocus: true, required: true, autocomplete: 'off' });
-  const name = h('input', { class: 'input', value: p ? p.name : '', placeholder: '默认使用对方的计算机名', autocomplete: 'off' });
-  const token = h('input', { class: 'input', type: 'password', placeholder: p && p.has_token ? '已设置，留空保持不变' : '对方未设置可不填', autocomplete: 'new-password' });
-  const sshUser = h('input', { class: 'input', placeholder: '默认读取 ~/.ssh/config', autocomplete: 'off' });
+  const name = h('input', { class: 'input', value: p ? p.name : '', placeholder: t('默认使用对方的计算机名'), autocomplete: 'off' });
+  const token = h('input', { class: 'input', type: 'password', placeholder: p && p.has_token ? t('已设置，留空保持不变') : t('对方未设置可不填'), autocomplete: 'new-password' });
+  const sshUser = h('input', { class: 'input', placeholder: t('默认读取 ~/.ssh/config'), autocomplete: 'off' });
   const sshOn = h('input', { type: 'checkbox' });
-  const sshBox = h('div', { class: 'field', hidden: true }, h('label', {}, 'SSH 用户'), sshUser,
-    h('div', { class: 'hint' }, '使用这台电脑的 SSH 密钥登录，自动上传、编译并注册为开机服务。支持 macOS、Linux。'));
-  const sshRow = h('label', { class: 'row' }, h('span', {}, '对方未安装时，通过 SSH 安装'), h('span', { class: 'switch' }, sshOn, h('i')));
-  const setSsh = (on) => { sshOn.checked = on; sshBox.hidden = !on; ok.textContent = on ? '安装并添加' : (editing ? '保存' : '添加'); };
+  const sshBox = h('div', { class: 'field', hidden: true }, h('label', {}, t('SSH 用户')), sshUser,
+    h('div', { class: 'hint' }, t('使用这台电脑的 SSH 密钥登录，自动上传、编译并注册为开机服务。支持 macOS、Linux。')));
+  const sshRow = h('label', { class: 'row' }, h('span', {}, t('对方未安装时，通过 SSH 安装')), h('span', { class: 'switch' }, sshOn, h('i')));
+  const setSsh = (on) => { sshOn.checked = on; sshBox.hidden = !on; ok.textContent = on ? t('安装并添加') : (editing ? t('保存') : t('添加')); };
   sshOn.onchange = () => setSsh(sshOn.checked);
   const err = h('div', { class: 'dlg-err' }, p && p.error && !opts.install ? p.error : '');
-  const ok = h('button', { class: 'btn primary', type: 'submit' }, editing ? '保存' : '添加');
-  const cancel = h('button', { class: 'btn', type: 'button', onclick: () => dlg.close() }, '取消');
-  const formBody = [field('地址', addr, '端口默认 8730，可写成 IP:端口'), field('名称', name), field('访问令牌', token)];
+  const ok = h('button', { class: 'btn primary', type: 'submit' }, editing ? t('保存') : t('添加'));
+  const cancel = h('button', { class: 'btn', type: 'button', onclick: () => dlg.close() }, t('取消'));
+  const formBody = [field(t('地址'), addr, t('端口默认 8730，可写成 IP:端口')), field(t('名称'), name), field(t('访问令牌'), token)];
   if (!editing) formBody.push(sshRow, sshBox);
   formBody.push(err);
   const dlg = dialog({
-    title: opts.install ? '通过 SSH 重新安装' : editing ? '编辑远程电脑' : '添加远程电脑',
-    desc: opts.install ? '用这台电脑的 SSH 密钥登录对方，安装或更新 DroidBridge 服务。' : editing ? null : '对方电脑需要运行 DroidBridge，并与本机在同一局域网。',
+    title: opts.install ? t('通过 SSH 重新安装') : editing ? t('编辑远程电脑') : t('添加远程电脑'),
+    desc: opts.install ? t('用这台电脑的 SSH 密钥登录对方，安装或更新 DroidBridge 服务。') : editing ? null : t('对方电脑需要运行 DroidBridge，并与本机在同一局域网。'),
     body: formBody,
     actions: [cancel, ok],
     onsubmit: async () => {
       err.textContent = '';
       if (sshOn.checked) return runInstall();
-      ok.disabled = true; ok.textContent = '正在连接…';
+      ok.disabled = true; ok.textContent = t('正在连接…');
       try {
         const res = await api(editing ? '/api/peers/' + encodeURIComponent(p.id) : '/api/peers', {
           method: editing ? 'PUT' : 'POST', body: JSON.stringify({ addr: addr.value, name: name.value, token: token.value }),
         });
         dlg.close();
-        toast((editing ? '已保存 ' : '已添加 ') + res.name, { kind: 'ok' });
+        toast((editing ? t('已保存 ') : t('已添加 ')) + res.name, { kind: 'ok' });
         refreshAll();
       } catch (e) {
         err.textContent = e.message;
         ok.disabled = false; setSsh(false);
         // 对方没有运行 DroidBridge：引导用 SSH 安装
-        if (!editing && /无法连接|拒绝|refused|超时/.test(e.message)) {
-          err.textContent = '对方电脑上没有运行 DroidBridge。可以打开下面的开关，通过 SSH 自动安装。';
+        if (!editing && /无法连接|无法访问|拒绝|refused|超时|timed out|cannot (connect|reach)/i.test(e.message)) {
+          err.textContent = t('对方电脑上没有运行 DroidBridge。可以打开下面的开关，通过 SSH 自动安装。');
           setSsh(true);
         }
       }
@@ -533,15 +688,15 @@ function peerDialog(p, opts = {}) {
     const stepsEl = h('div', { class: 'steps2' });
     const lastEl = h('div', { class: 'logline' });
     const logEl = h('pre', { class: 'logbox', hidden: true });
-    const logBtn = h('button', { class: 'linkbtn', type: 'button', onclick: () => { logEl.hidden = !logEl.hidden; logBtn.textContent = logEl.hidden ? '查看日志' : '收起日志'; logEl.scrollTop = logEl.scrollHeight; } }, '查看日志');
+    const logBtn = h('button', { class: 'linkbtn', type: 'button', onclick: () => { logEl.hidden = !logEl.hidden; logBtn.textContent = logEl.hidden ? t('查看日志') : t('收起日志'); logEl.scrollTop = logEl.scrollHeight; } }, t('查看日志'));
     const body = $('.dlg-b', dlg);
     body.replaceChildren(stepsEl, lastEl, h('div', {}, logBtn), logEl, err);
-    $('.dlg-h', dlg).textContent = '正在安装到 ' + target;
-    const d = $('.dlg-d', dlg); if (d) d.textContent = '可以关闭窗口，安装会在后台继续。';
-    cancel.textContent = '后台运行';
+    $('.dlg-h', dlg).textContent = t('正在安装到 ') + target;
+    const d = $('.dlg-d', dlg); if (d) d.textContent = t('可以关闭窗口，安装会在后台继续。');
+    cancel.textContent = t('后台运行');
     ok.hidden = true;
     let since = 0, lines = [];
-    const t = toast('正在安装到 ' + target + '…', { sticky: true });
+    const tt = toast(t('正在安装到 ') + target + '…', { sticky: true });
     while (true) {
       let s;
       try { s = await api(`/api/install/${job}?since=${since}`); } catch (e) { await new Promise(r => setTimeout(r, 1500)); continue; }
@@ -553,16 +708,16 @@ function peerDialog(p, opts = {}) {
           : s.state === 'failed' ? h('span', { class: 'st-bad', html: svg('x') }) : h('span', { class: 'spin sm' });
         return h('div', { class: 'step' + (last && s.state === 'running' ? ' cur' : '') }, icon, h('span', {}, name));
       }));
-      if (s.state === 'running') { t.set('正在安装到 ' + target + '：' + (s.steps[s.steps.length - 1] || '…')); await new Promise(r => setTimeout(r, 800)); continue; }
+      if (s.state === 'running') { tt.set(t('正在安装到 ') + target + '：' + (s.steps[s.steps.length - 1] || '…')); await new Promise(r => setTimeout(r, 800)); continue; }
       if (s.state === 'done') {
-        t.set('已添加 ' + (s.peer && s.peer.name || target), 'ok'); t.close(3000);
+        tt.set(t('已添加 ') + (s.peer && s.peer.name || target), 'ok'); tt.close(3000);
         refreshAll();
         if (dlg.open) dlg.close();
       } else {
-        t.set('安装失败：' + s.error, 'bad'); t.close(6000);
+        tt.set(t('安装失败：') + s.error, 'bad'); tt.close(6000);
         err.textContent = s.error;
         lastEl.textContent = '';
-        cancel.textContent = '关闭';
+        cancel.textContent = t('关闭');
       }
       return;
     }
@@ -570,7 +725,7 @@ function peerDialog(p, opts = {}) {
 }
 
 async function removePeer(r) {
-  if (!await confirmDialog('移除远程电脑', `将从列表中移除“${r.name}”，对方电脑不受影响。`, '移除', true)) return;
+  if (!await confirmDialog(t('移除远程电脑'), t('将从列表中移除“{0}”，对方电脑不受影响。', r.name), t('移除'), true)) return;
   try { await api('/api/peers/' + encodeURIComponent(r.id), { method: 'DELETE' }); } catch (e) { toast(e.message, { kind: 'bad' }); }
   for (const v of [...viewers.values()]) if (v.host.id === r.id) v.close();
   refreshAll();
@@ -578,13 +733,13 @@ async function removePeer(r) {
 
 function helpDialog() {
   const dlg = dialog({
-    title: '连接安卓设备',
+    title: t('连接安卓设备'),
     body: [h('ol', { class: 'steps' },
-      h('li', {}, '在手机上打开 ', h('b', {}, '设置 → 开发者选项 → USB 调试'), '。没有开发者选项时，在“关于手机”里连续点击版本号 7 次。'),
-      h('li', {}, '用数据线连接电脑，在手机弹窗中点击 ', h('b', {}, '允许'), '。'),
-      h('li', {}, '小米、红米等机型还需开启 ', h('b', {}, 'USB 调试（安全设置）'), '，否则无法点击和输入。'),
-      h('li', {}, '设备出现在左侧列表后，点击即可投屏。'))],
-    actions: [h('button', { class: 'btn primary', type: 'button', onclick: () => dlg.close() }, '知道了')],
+      h('li', {}, t('在手机上打开 '), h('b', {}, t('设置 → 开发者选项 → USB 调试')), t('。没有开发者选项时，在“关于手机”里连续点击版本号 7 次。')),
+      h('li', {}, t('用数据线连接电脑，在手机弹窗中点击 '), h('b', {}, t('允许')), '。'),
+      h('li', {}, t('小米、红米等机型还需开启 '), h('b', {}, t('USB 调试（安全设置）')), t('，否则无法点击和输入。')),
+      h('li', {}, t('设备出现在左侧列表后，点击即可投屏。')))],
+    actions: [h('button', { class: 'btn primary', type: 'button', onclick: () => dlg.close() }, t('知道了'))],
   });
 }
 
@@ -596,27 +751,32 @@ function settingsDialog() {
   };
   const awake = h('input', { type: 'checkbox', onchange: () => pref.set('awake', awake.checked ? '1' : '0') });
   awake.checked = pref.get('awake', '1') === '1';
-  const copyRow = (text) => h('div', { class: 'addr' }, text, ib('copy', '复制', () => copyText(text)));
+  const lang = h('select', { class: 'select', onchange: () => { localStorage.setItem('db_lang', lang.value); location.reload(); } },
+    h('option', { value: 'zh' }, '简体中文'), h('option', { value: 'en' }, 'English'));
+  lang.value = LANG;
+  const copyRow = (text) => h('div', { class: 'addr' }, text, ib('copy', t('复制'), () => copyText(text)));
   const addrs = INFO ? (INFO.ips || []).map(ip => copyRow(`${ip}:${INFO.port}`)) : [];
   const body = [
-    h('div', { class: 'group' }, h('div', { class: 'group-t' }, '画面'), sel('size'), sel('rate'), sel('fps'),
-      h('label', { class: 'row' }, h('span', {}, '投屏时保持屏幕常亮'), h('span', { class: 'switch' }, awake, h('i')))),
-    h('div', { class: 'group' }, h('div', { class: 'group-t' }, '本机'),
-      h('div', { class: 'row' }, h('span', {}, '名称'), h('span', {}, INFO ? INFO.name : '—')),
-      h('div', { class: 'row' }, h('span', {}, '局域网地址'), h('div', {}, addrs.length ? addrs : '—'))),
-    h('div', { class: 'foot' }, '其他电脑添加本机时填写局域网地址；画面设置对之后打开的投屏生效。',
+    h('div', { class: 'group' }, h('div', { class: 'group-t' }, t('画面')), sel('size'), sel('rate'), sel('fps'),
+      h('label', { class: 'row' }, h('span', {}, t('投屏时保持屏幕常亮')), h('span', { class: 'switch' }, awake, h('i')))),
+    h('div', { class: 'group' }, h('div', { class: 'group-t' }, t('通用')),
+      h('label', { class: 'row' }, h('span', {}, 'Language / 语言'), lang)),
+    h('div', { class: 'group' }, h('div', { class: 'group-t' }, t('本机')),
+      h('div', { class: 'row' }, h('span', {}, t('名称')), h('span', {}, INFO ? INFO.name : '—')),
+      h('div', { class: 'row' }, h('span', {}, t('局域网地址')), h('div', {}, addrs.length ? addrs : '—'))),
+    h('div', { class: 'foot' }, t('其他电脑添加本机时填写局域网地址；画面设置对之后打开的投屏生效。'),
       INFO ? h('div', {}, `DroidBridge ${INFO.version} · scrcpy-server ${INFO.scrcpy}`) : null),
   ];
   const actions = [];
-  if (viewers.size) actions.push(h('button', { class: 'btn', type: 'button', onclick: () => { for (const v of viewers.values()) v.reconnect(); dlg.close(); } }, '重新连接已打开的设备'));
-  actions.push(h('button', { class: 'btn primary', type: 'button', onclick: () => dlg.close() }, '完成'));
-  const dlg = dialog({ title: '设置', body, actions });
+  if (viewers.size) actions.push(h('button', { class: 'btn', type: 'button', onclick: () => { for (const v of viewers.values()) v.reconnect(); dlg.close(); } }, t('重新连接已打开的设备')));
+  actions.push(h('button', { class: 'btn primary', type: 'button', onclick: () => dlg.close() }, t('完成')));
+  const dlg = dialog({ title: t('设置'), body, actions });
 }
 
-function copyText(t) {
-  const done = () => toast('已复制 ' + t);
-  if (navigator.clipboard && isSecureContext) navigator.clipboard.writeText(t).then(done, () => toast(t));
-  else { const i = h('textarea', {}, t); document.body.append(i); i.select(); try { document.execCommand('copy'); done(); } catch { toast(t); } i.remove(); }
+function copyText(text) {
+  const done = () => toast(t('已复制 ') + text);
+  if (navigator.clipboard && isSecureContext) navigator.clipboard.writeText(text).then(done, () => toast(text));
+  else { const i = h('textarea', {}, text); document.body.append(i); i.select(); try { document.execCommand('copy'); done(); } catch { toast(text); } i.remove(); }
 }
 
 // ---------------- 投屏查看器 ----------------
@@ -645,39 +805,39 @@ class LogPanel {
     this.v = v; this.buf = []; this.pkg = ''; this.pids = new Set();
     this.paused = false; this.pending = 0; this.follow = true; this.queue = []; this.words = [];
     this.minLv = +pref.get('loglv', '0');
-    const lv = h('select', { class: 'select', title: '级别', onchange: () => { this.minLv = +lv.value; pref.set('loglv', lv.value); this.rerender(); } },
-      [['0', '全部'], ['1', '调试+'], ['2', '信息+'], ['3', '警告+'], ['4', '错误']].map(([val, l]) => h('option', { value: val }, l)));
+    const lv = h('select', { class: 'select', title: t('级别'), onchange: () => { this.minLv = +lv.value; pref.set('loglv', lv.value); this.rerender(); } },
+      [['0', t('全部')], ['1', t('调试+')], ['2', t('信息+')], ['3', t('警告+')], ['4', t('错误')]].map(([val, l]) => h('option', { value: val }, l)));
     lv.value = String(this.minLv);
-    this.qInput = h('input', { class: 'input q', placeholder: '过滤：关键字或 Tag，-排除', spellcheck: 'false' });
+    this.qInput = h('input', { class: 'input q', placeholder: t('过滤：关键字或 Tag，-排除'), spellcheck: 'false' });
     let qt = 0;
     this.qInput.addEventListener('input', () => { clearTimeout(qt); qt = setTimeout(() => { this.setQuery(this.qInput.value); this.rerender(); }, 150); });
-    this.appInput = h('input', { class: 'input', placeholder: '全部应用', title: '只看某个应用：填写包名后回车', spellcheck: 'false' });
+    this.appInput = h('input', { class: 'input', placeholder: t('全部应用'), title: t('只看某个应用：填写包名后回车'), spellcheck: 'false' });
     this.appInput.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); this.sendPkg(this.appInput.value.trim()); } });
     this.appInput.addEventListener('change', () => this.sendPkg(this.appInput.value.trim()));
     this.stateEl = h('span', { class: 'lstate' });
-    this.pauseBtn = ib('pause', '暂停', () => this.togglePause());
+    this.pauseBtn = ib('pause', t('暂停'), () => this.togglePause());
     this.list = h('div', { class: 'lbody' });
-    this.jump = h('button', { class: 'ljump', type: 'button', hidden: true, onclick: () => { this.follow = true; this.list.scrollTop = this.list.scrollHeight; this.jump.hidden = true; } }, '跳到最新');
+    this.jump = h('button', { class: 'ljump', type: 'button', hidden: true, onclick: () => { this.follow = true; this.list.scrollTop = this.list.scrollHeight; this.jump.hidden = true; } }, t('跳到最新'));
     this.list.addEventListener('scroll', () => {
       this.follow = this.list.scrollTop + this.list.clientHeight >= this.list.scrollHeight - 24;
       this.jump.hidden = this.follow;
     });
     this.el = h('div', { class: 'lpanel' },
-      h('div', { class: 'lhead' }, h('span', { class: 'ltitle' }, '日志'), this.stateEl,
-        this.pauseBtn, ib('trash', '清空', () => this.clear()), ib('download', '保存为文件', () => this.save()), ib('x', '关闭日志', () => v.toggleLog(false))),
+      h('div', { class: 'lhead' }, h('span', { class: 'ltitle' }, t('日志')), this.stateEl,
+        this.pauseBtn, ib('trash', t('清空'), () => this.clear()), ib('download', t('保存为文件'), () => this.save()), ib('x', t('关闭日志'), () => v.toggleLog(false))),
       h('div', { class: 'lbar' }, lv, this.qInput,
-        h('div', { class: 'lapp' }, this.appInput, ib('target', '只看当前前台应用', () => this.sendPkg('@top')))),
+        h('div', { class: 'lapp' }, this.appInput, ib('target', t('只看当前前台应用'), () => this.sendPkg('@top')))),
       this.list, this.jump);
     this.connect();
   }
 
   connect() {
     if (this.ws) { const w = this.ws; this.ws = null; try { w.close(); } catch {} }
-    const p = new URLSearchParams({ serial: this.v.dev.serial, peer: this.v.host.id });
-    const t = pref.get('token', ''); if (t) p.set('token', t);
+    const p = new URLSearchParams({ serial: this.v.dev.serial, peer: this.v.host.id, lang: LANG });
+    const tk = pref.get('token', ''); if (tk) p.set('token', tk);
     const ws = this.ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws/logcat?' + p);
     this.ended = false;
-    this.setState('正在连接…');
+    this.setState(t('正在连接…'));
     ws.onopen = () => { this.setState(''); if (this.pkg) this.sendPkg(this.pkg); };
     ws.onmessage = e => {
       const m = JSON.parse(e.data);
@@ -686,18 +846,18 @@ class LogPanel {
       else if (m.type === 'notice') toast(m.msg);
       else if (m.type === 'end') { this.ended = true; this.setState(m.msg, true); }
     };
-    ws.onclose = () => { if (this.ws === ws && !this.ended) this.setState('日志连接已断开', true); };
+    ws.onclose = () => { if (this.ws === ws && !this.ended) this.setState(t('日志连接已断开'), true); };
   }
   destroy() { const w = this.ws; this.ws = null; if (w) try { w.close(); } catch {} }
 
   setState(text, retry) {
-    this.stateEl.replaceChildren(text, retry ? h('button', { class: 'linkbtn', type: 'button', onclick: () => this.connect() }, ' 重连') : '');
+    this.stateEl.replaceChildren(text, retry ? h('button', { class: 'linkbtn', type: 'button', onclick: () => this.connect() }, t(' 重连')) : '');
     this.stateEl.title = text;
   }
   updateState() {
     const parts = [];
-    if (this.pkg) parts.push(this.pids.size ? this.pkg : this.pkg + '（未运行）');
-    if (this.paused) parts.push(`已暂停${this.pending ? ' · 新增 ' + this.pending + ' 行' : ''}`);
+    if (this.pkg) parts.push(this.pids.size ? this.pkg : this.pkg + t('（未运行）'));
+    if (this.paused) parts.push(t('已暂停{0}', this.pending ? t(' · 新增 {0} 行', this.pending) : ''));
     this.setState(parts.join(' · '));
   }
 
@@ -770,7 +930,7 @@ class LogPanel {
   togglePause() {
     this.paused = !this.paused;
     this.pauseBtn.innerHTML = svg(this.paused ? 'play' : 'pause');
-    this.pauseBtn.title = this.paused ? '继续' : '暂停';
+    this.pauseBtn.title = this.paused ? t('继续') : t('暂停');
     this.pauseBtn.classList.toggle('on', this.paused);
     if (!this.paused) { this.pending = 0; this.rerender(); }
     this.updateState();
@@ -778,11 +938,11 @@ class LogPanel {
   clear() { this.buf = []; this.queue = []; this.pending = 0; this.list.replaceChildren(); this.updateState(); }
   save() {
     const lines = this.buf.filter(e => this.match(e)).map(e => e.raw);
-    if (!lines.length) { toast('没有可保存的日志'); return; }
+    if (!lines.length) { toast(t('没有可保存的日志')); return; }
     const name = (this.v.dev.model || this.v.dev.serial).replace(/[^\w.-]/g, '_');
     const a = h('a', { href: URL.createObjectURL(new Blob([lines.join('\n') + '\n'], { type: 'text/plain' })), download: `${name}-logcat-${new Date().toISOString().replace(/\D/g, '').slice(0, 14)}.txt` });
     a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 5000);
-    toast(`已保存 ${lines.length} 行日志`);
+    toast(t('已保存 {0} 行日志', lines.length));
   }
 }
 
@@ -804,7 +964,7 @@ class Viewer {
     this.dot = h('span', { class: 'dot warn' });
     this.nameEl = h('span', { class: 'name' }, this.dev.model || this.dev.serial);
     this.statEl = h('span', { class: 'fps' });
-    this.textInput = h('input', { class: 'input', placeholder: '输入文字，回车发送', enterkeyhint: 'send' });
+    this.textInput = h('input', { class: 'input', placeholder: t('输入文字，回车发送'), enterkeyhint: 'send' });
     this.textInput.addEventListener('keydown', e => {
       if (e.key !== 'Enter' || e.isComposing) return;
       e.preventDefault();
@@ -812,25 +972,25 @@ class Viewer {
       if (v) { this.send({ t: 'text', text: v }); this.textInput.value = ''; } else this.pressKey(66);
     });
     this.typing = h('div', { class: 'typing' }, this.textInput);
-    this.kbBtn = ib('keyboard', '输入文字', () => this.toggleTyping());
+    this.kbBtn = ib('keyboard', t('输入文字'), () => this.toggleTyping());
     this.fileInput = h('input', { type: 'file', multiple: true, hidden: true, onchange: () => { this.upload([...this.fileInput.files]); this.fileInput.value = ''; } });
-    this.moreBtn = ib('more', '更多', () => this.moreMenu());
-    this.logBtn = ib('logs', '日志', () => this.toggleLog());
+    this.moreBtn = ib('more', t('更多'), () => this.moreMenu());
+    this.logBtn = ib('logs', t('日志'), () => this.toggleLog());
     this.vlog = h('div', { class: 'vlog' });
     this.root = h('div', { class: 'viewer' },
       h('div', { class: 'vhead' }, this.dot, this.nameEl, h('span', { class: 'sub' }, this.host.remote ? this.host.name : ''), this.statEl,
-        ib('max', '全屏', () => this.fullscreen()), ib('x', '关闭', () => this.close())),
+        ib('max', t('全屏'), () => this.fullscreen()), ib('x', t('关闭'), () => this.close())),
       h('div', { class: 'vmain' },
       h('div', { class: 'vbody' },
         h('div', { class: 'vcol' },
-          h('div', { class: 'screen' }, this.canvas, this.overlay, h('div', { class: 'drop' }, '松开以安装 APK 或传到手机')),
-          h('div', { class: 'nav' }, ib('back', '返回', key(AKEY.BACK)), ib('home', '主页', key(AKEY.HOME)), ib('recent', '最近任务', key(AKEY.APP_SWITCH))),
+          h('div', { class: 'screen' }, this.canvas, this.overlay, h('div', { class: 'drop' }, t('松开以安装 APK 或传到手机'))),
+          h('div', { class: 'nav' }, ib('back', t('返回'), key(AKEY.BACK)), ib('home', t('主页'), key(AKEY.HOME)), ib('recent', t('最近任务'), key(AKEY.APP_SWITCH))),
           this.typing),
         h('div', { class: 'vtools' },
-          ib('power', '电源键', key(AKEY.POWER)), ib('volUp', '音量 +', key(AKEY.VOLUME_UP)), ib('volDown', '音量 −', key(AKEY.VOLUME_DOWN)),
-          ib('rotate', '旋转屏幕', () => this.send({ t: 'cmd', name: 'rotate' })),
+          ib('power', t('电源键'), key(AKEY.POWER)), ib('volUp', t('音量 +'), key(AKEY.VOLUME_UP)), ib('volDown', t('音量 −'), key(AKEY.VOLUME_DOWN)),
+          ib('rotate', t('旋转屏幕'), () => this.send({ t: 'cmd', name: 'rotate' })),
           h('div', { class: 'sep' }),
-          ib('camera', '截图', () => this.screenshot()), this.kbBtn, this.logBtn, this.moreBtn)),
+          ib('camera', t('截图'), () => this.screenshot()), this.kbBtn, this.logBtn, this.moreBtn)),
       this.vlog),
       this.fileInput);
     this.bindInput();
@@ -839,28 +999,28 @@ class Viewer {
 
   moreMenu() {
     menu(this.moreBtn, [
-      { icon: 'bell', label: '下拉通知栏', fn: () => this.send({ t: 'cmd', name: 'notif' }) },
-      { icon: 'sliders', label: '快捷设置', fn: () => this.send({ t: 'cmd', name: 'settings' }) },
+      { icon: 'bell', label: t('下拉通知栏'), fn: () => this.send({ t: 'cmd', name: 'notif' }) },
+      { icon: 'sliders', label: t('快捷设置'), fn: () => this.send({ t: 'cmd', name: 'settings' }) },
       '-',
-      { icon: 'moon', label: '关闭手机屏幕（投屏继续）', fn: () => this.send({ t: 'power', on: false }) },
-      { icon: 'sun', label: '打开手机屏幕', fn: () => this.send({ t: 'power', on: true }) },
+      { icon: 'moon', label: t('关闭手机屏幕（投屏继续）'), fn: () => this.send({ t: 'power', on: false }) },
+      { icon: 'sun', label: t('打开手机屏幕'), fn: () => this.send({ t: 'power', on: true }) },
       '-',
-      { icon: 'paste', label: '粘贴电脑剪贴板', fn: () => this.paste() },
-      { icon: 'upload', label: '安装 APK / 传文件…', fn: () => this.fileInput.click() },
+      { icon: 'paste', label: t('粘贴电脑剪贴板'), fn: () => this.paste() },
+      { icon: 'upload', label: t('安装 APK / 传文件…'), fn: () => this.fileInput.click() },
       '-',
-      { icon: 'refresh', label: '重新连接', fn: () => this.reconnect() },
+      { icon: 'refresh', label: t('重新连接'), fn: () => this.reconnect() },
     ]);
   }
 
   wsUrl() {
-    const p = new URLSearchParams({ serial: this.dev.serial, peer: this.host.id, max_size: q('size'), bit_rate: q('rate'), max_fps: q('fps'), stay_awake: pref.get('awake', '1') });
-    const t = pref.get('token', ''); if (t) p.set('token', t);
+    const p = new URLSearchParams({ serial: this.dev.serial, peer: this.host.id, lang: LANG, max_size: q('size'), bit_rate: q('rate'), max_fps: q('fps'), stay_awake: pref.get('awake', '1') });
+    const tk = pref.get('token', ''); if (tk) p.set('token', tk);
     return (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws/stream?' + p;
   }
 
   connect() {
     this.closed = false; this.gotFrame = false; this.pendingConfig = null; this.needKey = true; this.errorShown = false;
-    this.showOverlay('正在连接…', { spin: true });
+    this.showOverlay(t('正在连接…'), { spin: true });
     this.setDot('warn');
     const ws = this.ws = new WebSocket(this.wsUrl());
     ws.binaryType = 'arraybuffer';
@@ -868,7 +1028,7 @@ class Viewer {
     ws.onclose = () => {
       if (this.ws !== ws) return;
       this.setDot('bad');
-      if (!this.closed && !this.errorShown) this.showOverlay('连接已断开', { retry: true });
+      if (!this.closed && !this.errorShown) this.showOverlay(t('连接已断开'), { retry: true });
     };
   }
   reconnect() { this.teardown(); this.connect(); if (this.log) this.log.connect(); }
@@ -892,7 +1052,7 @@ class Viewer {
   setDot(c) { this.dot.className = 'dot ' + c; }
   showOverlay(text, { spin, retry } = {}) {
     this.overlay.replaceChildren(...[spin ? h('div', { class: 'spin' }) : null, h('div', {}, text),
-      retry ? h('button', { class: 'btn', type: 'button', onclick: () => this.reconnect() }, '重新连接') : null].filter(Boolean));
+      retry ? h('button', { class: 'btn', type: 'button', onclick: () => this.reconnect() }, t('重新连接')) : null].filter(Boolean));
     this.overlay.classList.remove('hide');
   }
 
@@ -929,7 +1089,7 @@ class Viewer {
   onText(m) {
     switch (m.type) {
       case 'status': if (!this.gotFrame) this.showOverlay(m.msg, { spin: true }); break;
-      case 'meta': if (m.device_name) this.nameEl.textContent = m.device_name; this.showOverlay('等待画面…', { spin: true }); break;
+      case 'meta': if (m.device_name) this.nameEl.textContent = m.device_name; this.showOverlay(t('等待画面…'), { spin: true }); break;
       case 'session':
         this.vw = m.width; this.vh = m.height;
         if (this.canvas.width !== m.width || this.canvas.height !== m.height) { this.canvas.width = m.width; this.canvas.height = m.height; }
@@ -938,7 +1098,7 @@ class Viewer {
       case 'error': this.errorShown = true; this.setDot('bad'); this.showOverlay(m.msg, { retry: true }); break;
       case 'log': console.log('[' + this.dev.serial + ']', m.msg); break;
       case 'clipboard':
-        if (navigator.clipboard && isSecureContext) navigator.clipboard.writeText(m.text).then(() => toast('已同步手机剪贴板'), () => {});
+        if (navigator.clipboard && isSecureContext) navigator.clipboard.writeText(m.text).then(() => toast(t('已同步手机剪贴板')), () => {});
         break;
     }
   }
@@ -967,7 +1127,7 @@ class Viewer {
       this.pendingConfig = data.slice();
       this.ensureDecoder();
       try { this.decoder.configure({ codec: avcCodecString(data) || 'avc1.42E01F', optimizeForLatency: true }); this.decoderReady = true; }
-      catch (e) { this.showOverlay('解码器不支持此视频：' + e.message, { retry: true }); }
+      catch (e) { this.showOverlay(t('解码器不支持此视频：') + e.message, { retry: true }); }
       return;
     }
     let isKey = !!(flags & 2);
@@ -1018,7 +1178,7 @@ class Viewer {
   async paste() {
     let text = null;
     try { if (navigator.clipboard && isSecureContext) text = await navigator.clipboard.readText(); } catch {}
-    if (text === null) text = await promptDialog('粘贴到手机', '浏览器无法读取剪贴板，请在这里粘贴内容。', { okText: '发送' });
+    if (text === null) text = await promptDialog(t('粘贴到手机'), t('浏览器无法读取剪贴板，请在这里粘贴内容。'), { okText: t('发送') });
     if (text) this.send({ t: 'clipboard', text, paste: true });
   }
   screenshot() {
@@ -1027,7 +1187,7 @@ class Viewer {
       if (!b) return;
       const a = h('a', { href: URL.createObjectURL(b), download: `${(this.dev.model || this.dev.serial).replace(/[^\w.-]/g, '_')}-${new Date().toISOString().replace(/\D/g, '').slice(0, 14)}.png` });
       a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 5000);
-      toast('截图已保存');
+      toast(t('截图已保存'));
     }, 'image/png');
   }
   fullscreen() {
@@ -1038,15 +1198,15 @@ class Viewer {
   async upload(files) {
     for (const f of files) {
       const apk = /\.apk$/i.test(f.name);
-      const t = toast((apk ? '正在安装 ' : '正在传输 ') + f.name + '…', { sticky: true });
+      const tt = toast((apk ? t('正在安装 ') : t('正在传输 ')) + f.name + '…', { sticky: true });
       try {
-        const qs = new URLSearchParams({ serial: this.dev.serial, peer: this.host.id, name: f.name });
+        const qs = new URLSearchParams({ serial: this.dev.serial, peer: this.host.id, name: f.name, lang: LANG });
         const r = await fetch(withToken('/api/push?' + qs), { method: 'POST', body: f });
         const j = await r.json().catch(() => ({}));
         if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
-        t.set(j.msg || '完成', 'ok');
-      } catch (e) { t.set((apk ? '安装失败：' : '传输失败：') + e.message, 'bad'); }
-      t.close(4500);
+        tt.set(j.msg || t('完成'), 'ok');
+      } catch (e) { tt.set((apk ? t('安装失败：') : t('传输失败：')) + e.message, 'bad'); }
+      tt.close(4500);
     }
   }
   bindDrop() {
@@ -1119,7 +1279,7 @@ function openViewer(hst, dev) {
   const key = hst.id + '|' + dev.serial;
   if (isMobile()) document.body.classList.add('viewing');
   if (viewers.has(key)) { viewers.get(key).root.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); return; }
-  if (!window.VideoDecoder) { showNotice(); toast('当前浏览器无法解码视频'); document.body.classList.remove('viewing'); return; }
+  if (!window.VideoDecoder) { showNotice(); toast(t('当前浏览器无法解码视频')); document.body.classList.remove('viewing'); return; }
   const v = new Viewer(hst, dev);
   viewers.set(key, v);
   $('#grid').append(v.root);
@@ -1136,34 +1296,34 @@ function afterViewersChange() {
 
 function showNotice() {
   const text = !isSecureContext
-    ? ['当前通过 HTTP 访问，浏览器不允许解码视频。请改用 ', (() => {
+    ? [t('当前通过 HTTP 访问，浏览器不允许解码视频。请改用 '), (() => {
         const port = (INFO && INFO.https_port) || 8731;
         const host = location.hostname.includes(':') ? '[' + location.hostname + ']' : location.hostname;
         const url = `https://${host}:${port}/`;
         return h('a', { href: url }, url);
-      })(), '（首次需在浏览器中选择继续访问）。']
-    : ['当前浏览器不支持视频解码，请使用新版 Chrome、Edge 或 Safari。'];
+      })(), t('（首次需在浏览器中选择继续访问）。')]
+    : [t('当前浏览器不支持视频解码，请使用新版 Chrome、Edge 或 Safari。')];
   $('#notice').replaceChildren(h('div', { class: 'notice' }, h('span', { html: svg('alert') }).firstChild, h('div', {}, text)));
-  if (isMobile()) $('#noticeSide').replaceChildren(h('div', { class: 'notice' }, h('span', { html: svg('alert') }).firstChild, h('div', {}, text.map(t => typeof t === 'string' ? t : t.cloneNode(true)))));
+  if (isMobile()) $('#noticeSide').replaceChildren(h('div', { class: 'notice' }, h('span', { html: svg('alert') }).firstChild, h('div', {}, text.map(x => typeof x === 'string' ? x : x.cloneNode(true)))));
 }
 
 // ---------------- 初始化 ----------------
 $('#logo').innerHTML = svg('phone');
 $('#mLogo').innerHTML = svg('phone');
-$('#gear').replaceWith(ib('gear', '设置', settingsDialog));
-$('#mGear').replaceWith(ib('gear', '设置', settingsDialog, 'gear'));
+$('#gear').replaceWith(ib('gear', t('设置'), settingsDialog));
+$('#mGear').replaceWith(ib('gear', t('设置'), settingsDialog, 'gear'));
 $('#mBack').innerHTML = svg('chevLeft');
 $('#mBack').onclick = () => document.body.classList.remove('viewing');
-$('#placeholder').append(h('span', { html: svg('phone') }).firstChild, h('div', {}, '选择设备开始投屏'), '设备需开启 USB 调试并连接到电脑');
+$('#placeholder').append(h('span', { html: svg('phone') }).firstChild, h('div', {}, t('选择设备开始投屏')), t('设备需开启 USB 调试并连接到电脑'));
 addEventListener('resize', () => { for (const v of viewers.values()) v.fit(); });
 addEventListener('dragover', e => e.preventDefault());
-addEventListener('drop', e => { e.preventDefault(); if (e.dataTransfer && e.dataTransfer.files.length) toast('把文件拖到设备画面上即可安装或传输'); });
+addEventListener('drop', e => { e.preventDefault(); if (e.dataTransfer && e.dataTransfer.files.length) toast(t('把文件拖到设备画面上即可安装或传输')); });
 
 (async function init() {
   try {
     INFO = await api('/api/info');
     document.title = 'DroidBridge · ' + INFO.name;
-  } catch (e) { toast('无法连接 DroidBridge：' + e.message, { kind: 'bad', ms: 5000 }); }
+  } catch (e) { toast(t('无法连接 DroidBridge：') + e.message, { kind: 'bad', ms: 5000 }); }
   if (!window.VideoDecoder || !isSecureContext) showNotice();
   await refreshAll();
   const m = location.hash.match(/^#open=([^|]+)\|(.+)$/);

@@ -1,4 +1,4 @@
-# 下载打包所需的第三方组件（不纳入 Git）：
+﻿# 下载打包所需的第三方组件（不纳入 Git）：
 #   third_party/platform-tools   Google Android SDK Platform-Tools（adb），Windows 安装包随附
 # 并校验仓库内置的 scrcpy-server 与官方发布一致。
 $ErrorActionPreference = 'Stop'

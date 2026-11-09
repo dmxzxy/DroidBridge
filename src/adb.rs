@@ -22,13 +22,14 @@ pub async fn run(adb: &Path, args: &[&str]) -> Result<String, String> {
         .args(args)
         .output()
         .await
-        .map_err(|e| format!("无法执行 adb（{}）：{e}", adb.display()))?;
+        .map_err(|e| { let p = adb.display(); tr!("无法执行 adb（{p}）：{e}", "Cannot run adb ({p}): {e}") })?;
     let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
     if out.status.success() {
         Ok(stdout)
     } else {
         let stderr = String::from_utf8_lossy(&out.stderr);
-        Err(format!("adb {} 失败：{}{}", args.join(" "), stderr.trim(), stdout.trim()))
+        let (a, e, o) = (args.join(" "), stderr.trim(), stdout.trim());
+        Err(tr!("adb {a} 失败：{e}{o}", "adb {a} failed: {e}{o}"))
     }
 }
 
@@ -104,6 +105,8 @@ pub fn find_adb(cli: Option<PathBuf>) -> PathBuf {
         if let Some(dir) = exe.parent() {
             candidates.push(dir.join("platform-tools").join(exe_name));
             candidates.push(dir.join(exe_name));
+            // macOS 应用包：Contents/MacOS/程序 → Contents/Resources/platform-tools
+            candidates.push(dir.join("../Resources/platform-tools").join(exe_name));
         }
     }
     // 仅开发版：仓库内 third_party（发布版不把构建机器的绝对路径编译进程序）

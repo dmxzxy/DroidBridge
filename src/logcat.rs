@@ -65,13 +65,13 @@ pub async fn run(st: Arc<AppState>, serial: String, socket: WebSocket) {
                 match foreground(&adb, &serial).await {
                     Some(p) => name = p,
                     None => {
-                        send(&out, json!({"type":"notice","msg":"没有识别到前台应用"})).await;
+                        send(&out, json!({"type":"notice","msg":tr!("没有识别到前台应用", "No foreground app found")})).await;
                         continue;
                     }
                 }
             }
             if !name.is_empty() && !valid_pkg(&name) {
-                send(&out, json!({"type":"notice","msg":"包名格式不正确"})).await;
+                send(&out, json!({"type":"notice","msg":tr!("包名格式不正确", "Invalid package name")})).await;
                 continue;
             }
             let _ = pkg_tx.send(name);
@@ -101,7 +101,7 @@ async fn stream_logcat(adb_path: PathBuf, serial: String, out: Out) {
         {
             Ok(c) => c,
             Err(e) => {
-                send(&out, json!({"type":"end","msg":format!("无法启动 adb logcat：{e}")})).await;
+                send(&out, json!({"type":"end","msg":tr!("无法启动 adb logcat：{e}", "Cannot start adb logcat: {e}")})).await;
                 return;
             }
         };
@@ -142,7 +142,7 @@ async fn stream_logcat(adb_path: PathBuf, serial: String, out: Out) {
         if got == 0 && i == 0 && !stderr.contains("not found") {
             continue;
         }
-        let msg = if stderr.is_empty() { "日志已结束（设备可能已断开）".to_string() } else { stderr };
+        let msg = if stderr.is_empty() { tr!("日志已结束（设备可能已断开）", "Log ended (device may be disconnected)") } else { stderr };
         send(&out, json!({"type":"end","msg":msg})).await;
         return;
     }

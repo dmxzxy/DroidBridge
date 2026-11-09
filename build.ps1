@@ -1,4 +1,6 @@
-# 打包：生成 dist\DroidBridge（桌面版 + 服务版 + platform-tools），可直接拷到其他电脑使用
+﻿# 打包：生成 dist\DroidBridge（桌面版 + 服务版 + platform-tools），可直接拷到其他电脑使用
+#   powershell -File build.ps1 [-Version 0.2.0]
+param([string]$Version = '')
 $ErrorActionPreference = 'Stop'
 Set-Location $PSScriptRoot
 & (Join-Path $PSScriptRoot 'tools\fetch-deps.ps1')
@@ -17,10 +19,11 @@ Get-ChildItem $dist | Where-Object { $_.Name -ne 'data' } | Remove-Item -Recurse
 Copy-Item target\release\droidbridge-desktop.exe (Join-Path $dist 'DroidBridge.exe')
 Copy-Item target\release\droidbridge.exe (Join-Path $dist 'droidbridge-server.exe')
 Copy-Item third_party\platform-tools (Join-Path $dist 'platform-tools') -Recurse
-Copy-Item start-server.bat, README.md $dist
+Copy-Item start-server.bat, README.md, LICENSE $dist
 Copy-Item third_party\scrcpy-LICENSE (Join-Path $dist 'scrcpy-LICENSE.txt')
 
-$zip = Join-Path $PSScriptRoot 'dist\DroidBridge-win64.zip'
+$zipName = if ($Version) { "DroidBridge-$Version-windows-x64.zip" } else { 'DroidBridge-win64.zip' }
+$zip = Join-Path $PSScriptRoot "dist\$zipName"
 if (Test-Path $zip) { Remove-Item $zip }
 Compress-Archive -Path (Get-ChildItem $dist | Where-Object { $_.Name -ne 'data' }).FullName -DestinationPath $zip
 Write-Host "完成：$dist"

@@ -70,11 +70,11 @@ pub async fn run_session(state: Arc<AppState>, serial: String, opts: StreamOpts,
         let _ = ws_tx.close().await;
     });
 
-    tracing::info!("[{serial}] 会话开始 {opts:?}");
+    tracing::info!("[{serial}] session start {opts:?}");
     match session(&state, &serial, &opts, &out_tx, &mut ws_rx).await {
-        Ok(()) => tracing::info!("[{serial}] 会话结束（客户端关闭）"),
+        Ok(()) => tracing::info!("[{serial}] session end (client closed)"),
         Err(e) => {
-            tracing::warn!("[{serial}] 会话结束：{e}");
+            tracing::warn!("[{serial}] session end: {e}");
             let _ = out_tx.send(text(json!({"type":"error","msg":e}))).await;
         }
     }
@@ -95,22 +95,22 @@ async fn session(
     // 启动阶段串行化，避免并发推送同一个 jar
     let start_guard = state.start_lock.lock().await;
 
-    status(out, "推送 scrcpy-server…").await;
+    status(out, &tr!("推送 scrcpy-server…", "Pushing scrcpy-server…")).await;
     adb::run(adb, &["-s", serial, "push", &jar, DEVICE_JAR])
         .await
-        .map_err(|e| format!("推送 scrcpy-server 失败：{e}"))?;
+        .map_err(|e| tr!("推送 scrcpy-server 失败：{e}", "Failed to push scrcpy-server: {e}"))?;
 
     let scid = crate::util::random_scid();
     let local = format!("localabstract:scrcpy_{scid:08x}");
     let port: u16 = adb::run(adb, &["-s", serial, "forward", "tcp:0", &local])
         .await
-        .map_err(|e| format!("adb forward 失败：{e}"))?
+        .map_err(|e| tr!("adb forward 失败：{e}", "adb forward failed: {e}"))?
         .trim()
         .parse()
-        .map_err(|_| "adb forward 未返回端口（adb 版本过旧？）".to_string())?;
+        .map_err(|_| tr!("adb forward 未返回端口（adb 版本过旧？）", "adb forward returned no port (adb too old?)"))?;
     let _forward = Forward { adb: adb.clone(), serial: serial.to_string(), port };
 
-    status(out, "启动 scrcpy-server…").await;
+    status(out, &tr!("启动 scrcpy-server…", "Starting scrcpy-server…")).await;
     let mut args: Vec<String> = [
         "-s",
         serial,
@@ -151,7 +151,7 @@ async fn session(
         .stderr(Stdio::piped())
         .kill_on_drop(true)
         .spawn()
-        .map_err(|e| format!("启动 adb shell 失败：{e}"))?;
+        .map_err(|e| tr!("启动 adb shell 失败：{e}", "Failed to start adb shell: {e}"))?;
 
     // 设备端日志：写入本地日志，错误行同时推给客户端
     for pipe in [
@@ -178,7 +178,7 @@ async fn session(
     let mut video = None;
     for _ in 0..100 {
         if let Ok(Some(st)) = child.try_wait() {
-            return Err(format!("scrcpy-server 启动失败并退出（{st}），请检查设备是否已授权 USB 调试"));
+            return Err(tr!("scrcpy-server 启动失败并退出（{st}），请检查设备是否已授权 USB 调试", "scrcpy-server exited ({st}); make sure USB debugging is authorized on the device"));
         }
         if let Ok(mut s) = TcpStream::connect(("127.0.0.1", port)).await {
             let mut b = [0u8; 1];
@@ -189,26 +189,26 @@ async fn session(
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
-    let mut video = video.ok_or("连接 scrcpy-server 超时")?;
+    let mut video = video.ok_or_else(|| tr!("连接 scrcpy-server 超时", "Timed out connecting to scrcpy-server"))?;
     let control = TcpStream::connect(("127.0.0.1", port))
         .await
-        .map_err(|e| format!("连接控制通道失败：{e}"))?;
+        .map_err(|e| tr!("连接控制通道失败：{e}", "Failed to open control channel: {e}"))?;
     let _ = video.set_nodelay(true);
     let _ = control.set_nodelay(true);
     drop(start_guard);
 
     // 设备名（64 字节，\0 结尾）+ 视频编码 ID
     let mut name = [0u8; 64];
-    video.read_exact(&mut name).await.map_err(|e| format!("读取设备信息失败：{e}"))?;
+    video.read_exact(&mut name).await.map_err(|e| tr!("读取设备信息失败：{e}", "Failed to read device info: {e}"))?;
     let end = name.iter().position(|&b| b == 0).unwrap_or(64);
     let device_name = String::from_utf8_lossy(&name[..end]).into_owned();
 
     let mut cid = [0u8; 4];
-    video.read_exact(&mut cid).await.map_err(|e| format!("读取编码信息失败：{e}"))?;
+    video.read_exact(&mut cid).await.map_err(|e| tr!("读取编码信息失败：{e}", "Failed to read codec info: {e}"))?;
     let codec_id = u32::from_be_bytes(cid);
     match codec_id {
-        0 => return Err("设备禁用了视频流".into()),
-        1 => return Err("设备端视频配置错误（可尝试降低分辨率）".into()),
+        0 => return Err(tr!("设备禁用了视频流", "The device disabled the video stream")),
+        1 => return Err(tr!("设备端视频配置错误（可尝试降低分辨率）", "Video configuration error on the device (try a lower resolution)")),
         _ => {}
     }
     let codec = String::from_utf8_lossy(&cid).trim_matches('\0').to_string();
@@ -223,10 +223,10 @@ async fn session(
     let result = tokio::select! {
         r = &mut video_task => match r {
             Ok(Err(e)) => Err(e),
-            _ => Err("视频流已结束".to_string()),
+            _ => Err(tr!("视频流已结束", "Video stream ended")),
         },
         r = forward_input(ws_rx, &mut ctl_w, out) => r,
-        st = child.wait() => Err(format!("scrcpy-server 已退出（{}）", st.map(|s| s.to_string()).unwrap_or_default())),
+        st = child.wait() => { let st = st.map(|s| s.to_string()).unwrap_or_default(); Err(tr!("scrcpy-server 已退出（{st}）", "scrcpy-server exited ({st})")) },
     };
 
     video_task.abort();
@@ -238,7 +238,7 @@ async fn session(
 async fn read_video(mut s: TcpStream, out: Out) -> Result<(), String> {
     let mut hdr = [0u8; 12];
     loop {
-        s.read_exact(&mut hdr).await.map_err(|_| "视频流已断开".to_string())?;
+        s.read_exact(&mut hdr).await.map_err(|_| tr!("视频流已断开", "Video stream disconnected"))?;
         if hdr[0] & 0x80 != 0 {
             // session 包：视频尺寸变化（旋转等）
             let w = u32::from_be_bytes(hdr[4..8].try_into().unwrap());
@@ -251,7 +251,7 @@ async fn read_video(mut s: TcpStream, out: Out) -> Result<(), String> {
         let pts_flags = u64::from_be_bytes(hdr[0..8].try_into().unwrap());
         let len = u32::from_be_bytes(hdr[8..12].try_into().unwrap()) as usize;
         if len == 0 || len > 64 * 1024 * 1024 {
-            return Err(format!("无效的视频包长度：{len}"));
+            return Err(tr!("无效的视频包长度：{len}", "Invalid video packet length: {len}"));
         }
         let config = pts_flags & (1 << 62) != 0;
         let key = pts_flags & (1 << 61) != 0;
@@ -259,7 +259,7 @@ async fn read_video(mut s: TcpStream, out: Out) -> Result<(), String> {
         let mut buf = vec![0u8; 9 + len];
         buf[0] = u8::from(config) | (u8::from(key) << 1);
         buf[1..9].copy_from_slice(&pts.to_be_bytes());
-        s.read_exact(&mut buf[9..]).await.map_err(|_| "视频流已断开".to_string())?;
+        s.read_exact(&mut buf[9..]).await.map_err(|_| tr!("视频流已断开", "Video stream disconnected"))?;
         if out.send(Message::Binary(Bytes::from(buf))).await.is_err() {
             return Ok(());
         }
@@ -298,7 +298,7 @@ async fn read_device_msgs(r: OwnedReadHalf, out: Out) {
                 }
             }
             other => {
-                tracing::warn!("未知设备消息类型 {other}，停止解析");
+                tracing::warn!("unknown device message type {other}; stop parsing");
                 // 继续读空，避免设备端写阻塞
                 let mut sink = [0u8; 4096];
                 while let Ok(n) = r.read(&mut sink).await {
@@ -327,14 +327,14 @@ async fn forward_input(
                 let ctl: control::Ctl = match serde_json::from_str(t.as_str()) {
                     Ok(c) => c,
                     Err(e) => {
-                        let _ = out.send(text(json!({"type":"log","msg":format!("无效控制指令：{e}")}))).await;
+                        let _ = out.send(text(json!({"type":"log","msg":tr!("无效控制指令：{e}", "Invalid control message: {e}")}))).await;
                         continue;
                     }
                 };
                 match control::encode(&ctl) {
                     Ok(parts) => {
                         for p in parts {
-                            ctl_w.write_all(&p).await.map_err(|e| format!("写入控制通道失败：{e}"))?;
+                            ctl_w.write_all(&p).await.map_err(|e| tr!("写入控制通道失败：{e}", "Failed to write control channel: {e}"))?;
                         }
                     }
                     Err(e) => {

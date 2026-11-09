@@ -19,7 +19,7 @@
     if (u.pathname === '/api/peers') return json(PEERS);
     if (u.pathname === '/api/devices') {
       const peer = u.searchParams.get('peer') || 'local';
-      if (peer === 'pC') return json({ error: '无法访问 192.168.1.30:8730：由于目标计算机积极拒绝，无法连接。 (os error 10061)' }, 502);
+      if (peer === 'pC') return json({ error: (LANG === "en" ? "Cannot reach 192.168.1.30:8730: connection refused (os error 111)" : "无法访问 192.168.1.30:8730：由于目标计算机积极拒绝，无法连接。 (os error 10061)") }, 502);
       return json(DEV[peer] || []);
     }
     return json({ error: 'not found' }, 404);
@@ -42,8 +42,8 @@
       this.readyState = 1;
       const kind = KIND[this.serial] || 'home';
       if (kind === 'error') {
-        this.emit({ type: 'status', msg: '推送 scrcpy-server…' });
-        setTimeout(() => this.emit({ type: 'error', msg: 'scrcpy-server 启动失败并退出（exit code: 1），请检查设备是否已授权 USB 调试' }), 100);
+        this.emit({ type: 'status', msg: (LANG === "en" ? "Pushing scrcpy-server…" : "推送 scrcpy-server…") });
+        setTimeout(() => this.emit({ type: 'error', msg: (LANG === "en" ? "scrcpy-server exited (exit code: 1); make sure USB debugging is authorized on the device" : "scrcpy-server 启动失败并退出（exit code: 1），请检查设备是否已授权 USB 调试") }), 100);
         return;
       }
       this.emit({ type: 'meta', device_name: NAME[this.serial] || this.serial, codec: 'h264', serial: this.serial });
@@ -61,7 +61,7 @@
     const g = c.getContext('2d');
     kind === 'home' ? drawHome(g, W, H) : drawSettings(g, W, H);
     g.font = '22px sans-serif'; g.textAlign = 'center'; g.fillStyle = kind === 'home' ? 'rgba(255,255,255,.55)' : 'rgba(0,0,0,.35)';
-    g.fillText('示意画面 · 非真实设备', W / 2, H - 40);
+    g.fillText((LANG === "en" ? "Mock screen · not a real device" : "示意画面 · 非真实设备"), W / 2, H - 40);
     v.gotFrame = true; v.overlay.classList.add('hide'); v.setDot('ok'); v.fit();
     v.updateStat = () => {}; v.statEl.textContent = '60 fps';
   }
@@ -75,7 +75,8 @@
     g.fillStyle = gr; g.fillRect(0, 0, W, H);
     statusBar(g, W, '#fff');
     g.fillStyle = '#fff'; g.textAlign = 'center'; g.font = '200 150px sans-serif'; g.fillText('10:24', W / 2, 300);
-    g.font = '30px sans-serif'; g.fillText('11月7日 星期六  ☀ 18°C', W / 2, 360);
+    g.font = '30px sans-serif'; g.fillText((LANG === "en" ? "Sat, Nov 7  ☀ 18°C" : "11月7日 星期六  ☀ 18°C"), W / 2, 360);
+    const EN_APPS = {"电话":"Phone","信息":"Messages","相机":"Camera","相册":"Photos","设置":"Settings","浏览器":"Browser","日历":"Calendar","时钟":"Clock","天气":"Weather","音乐":"Music","视频":"Videos","文件":"Files","应用商店":"Store","地图":"Maps","计算器":"Calculator","备忘录":"Notes"};
     const apps = [['电话', '#34c759'], ['信息', '#30b0ff'], ['相机', '#8e8e93'], ['相册', '#ff9f0a'], ['设置', '#636366'], ['浏览器', '#0a84ff'], ['日历', '#ff453a'], ['时钟', '#1c1c1e'],
       ['天气', '#64d2ff'], ['音乐', '#ff375f'], ['视频', '#bf5af2'], ['文件', '#ffd60a'], ['应用商店', '#0a84ff'], ['地图', '#30d158'], ['计算器', '#ff9f0a'], ['备忘录', '#ffcc00']];
     const cols = 4, size = 112, gapX = (W - cols * size) / (cols + 1);
@@ -83,21 +84,22 @@
       const x = gapX + (i % cols) * (size + gapX), y = 520 + Math.floor(i / cols) * 200;
       g.fillStyle = col; rr(g, x, y, size, size, 30);
       g.fillStyle = 'rgba(255,255,255,.9)'; g.beginPath(); g.arc(x + size / 2, y + size / 2, 24, 0, 7); g.fill();
-      g.fillStyle = '#fff'; g.font = '26px sans-serif'; g.textAlign = 'center'; g.fillText(n, x + size / 2, y + size + 38);
+      g.fillStyle = '#fff'; g.font = '26px sans-serif'; g.textAlign = 'center'; g.fillText(LANG === "en" ? EN_APPS[n] : n, x + size / 2, y + size + 38);
     });
     g.fillStyle = 'rgba(255,255,255,.22)'; rr(g, 40, 1340, W - 80, 90, 45);
-    g.fillStyle = 'rgba(255,255,255,.85)'; g.font = '30px sans-serif'; g.textAlign = 'left'; g.fillText('🔍  搜索', 90, 1396);
+    g.fillStyle = 'rgba(255,255,255,.85)'; g.font = '30px sans-serif'; g.textAlign = 'left'; g.fillText((LANG === "en" ? "🔍  Search" : "🔍  搜索"), 90, 1396);
     g.fillStyle = 'rgba(255,255,255,.8)'; rr(g, W / 2 - 90, H - 24, 180, 8, 4);
   }
   function drawSettings(g, W, H) {
     g.fillStyle = '#f2f2f7'; g.fillRect(0, 0, W, H);
     statusBar(g, W, '#111');
-    g.fillStyle = '#111'; g.font = '600 64px sans-serif'; g.textAlign = 'left'; g.fillText('设置', 40, 180);
+    g.fillStyle = '#111'; g.font = '600 64px sans-serif'; g.textAlign = 'left'; g.fillText((LANG === "en" ? "Settings" : "设置"), 40, 180);
     g.fillStyle = '#e3e3e8'; rr(g, 40, 220, W - 80, 80, 40);
-    g.fillStyle = '#888'; g.font = '30px sans-serif'; g.fillText('🔍  搜索设置', 80, 272);
+    g.fillStyle = '#888'; g.font = '30px sans-serif'; g.fillText((LANG === "en" ? "🔍  Search settings" : "🔍  搜索设置"), 80, 272);
     const items = [['WLAN', '已连接 Office-5G', '#0a84ff'], ['蓝牙', '已开启', '#0a84ff'], ['移动网络', '中国移动 5G', '#34c759'], ['已连接的设备', 'USB 调试已连接', '#5e5ce6'],
       ['应用', '最近打开：DroidBridge', '#ff9f0a'], ['通知', '3 个应用已关闭通知', '#ff453a'], ['电池', '87% · 约剩 1 天', '#30d158'], ['存储', '已使用 64%', '#bf5af2'],
       ['显示', '深色模式 · 自动亮度', '#ffcc00'], ['开发者选项', 'USB 调试已开启', '#636366']];
+    if (LANG === "en") items.splice(0, items.length, ["Wi-Fi","Office-5G","#0a84ff"],["Bluetooth","On","#0a84ff"],["Mobile network","5G","#34c759"],["Connected devices","USB debugging connected","#5e5ce6"],["Apps","Recently opened: DroidBridge","#ff9f0a"],["Notifications","3 apps muted","#ff453a"],["Battery","87% · about 1 day left","#30d158"],["Storage","64% used","#bf5af2"],["Display","Dark mode · auto brightness","#ffcc00"],["Developer options","USB debugging on","#636366"]);
     let y = 350;
     g.fillStyle = '#fff'; rr(g, 30, y - 10, W - 60, items.length * 112 + 20, 28);
     items.forEach(([t, s, col], i) => {

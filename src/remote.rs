@@ -22,10 +22,13 @@ macro_rules! src {
 const SOURCES: &[(&str, &[u8])] = &[
     src!("Cargo.toml"),
     src!("Cargo.lock"),
+    src!("build.rs"),
     src!("src/lib.rs"),
     src!("src/main.rs"),
     src!("src/adb.rs"),
     src!("src/control.rs"),
+    src!("src/i18n.rs"),
+    src!("src/icon.rs"),
     src!("src/logcat.rs"),
     src!("src/peers.rs"),
     src!("src/remote.rs"),
@@ -123,17 +126,18 @@ pub fn start(st: Arc<AppState>, req: InstallReq) -> Result<String, String> {
     let addr = peers::normalize_addr(&req.addr)?;
     let (host, _) = split_host_port(&addr);
     if !valid_host(&host) {
-        return Err("地址格式不正确".into());
+        return Err(tr!("地址格式不正确", "Invalid address"));
     }
     if let Some(u) = req.user.as_deref().filter(|u| !u.is_empty()) {
         if u.starts_with('-') || !u.chars().all(|c| c.is_ascii_alphanumeric() || "._-".contains(c)) {
-            return Err("SSH 用户名格式不正确".into());
+            return Err(tr!("SSH 用户名格式不正确", "Invalid SSH user name"));
         }
     }
     let id = format!("j{:08x}", crate::util::random_scid());
     st.jobs.lock().unwrap().insert(id.clone(), Job { state: "running".into(), ..Default::default() });
     let ctx = Ctx { st, id: id.clone() };
-    tokio::spawn(async move {
+    let en = crate::i18n::is_en();
+    tokio::spawn(crate::i18n::REQUEST_EN.scope(en, async move {
         let r = install(&ctx, &req, &addr).await;
         ctx.with(|j| match r {
             Ok(p) => {
@@ -145,7 +149,7 @@ pub fn start(st: Arc<AppState>, req: InstallReq) -> Result<String, String> {
                 j.error = Some(e);
             }
         });
-    });
+    }));
     Ok(id)
 }
 
@@ -179,7 +183,7 @@ async fn install(ctx: &Ctx, req: &InstallReq, addr: &str) -> Result<serde_json::
     };
     let token = req.token.clone().filter(|t| !t.is_empty());
 
-    ctx.step("连接 SSH");
+    ctx.step(&tr!("连接 SSH", "Connecting over SSH"));
     let probe = ssh_run(
         ctx,
         &t,
@@ -191,12 +195,12 @@ async fn install(ctx: &Ctx, req: &InstallReq, addr: &str) -> Result<serde_json::
     .await?;
     let lines: Vec<&str> = probe.lines().map(str::trim).filter(|l| !l.is_empty()).collect();
     if lines.len() < 3 {
-        return Err(format!("无法识别对方系统：{probe}"));
+        return Err(tr!("无法识别对方系统：{probe}", "Cannot detect the remote system: {probe}"));
     }
     let (os, arch, home) = (lines[0], lines[1], lines[2]);
     let remote_name = lines.get(3).copied().unwrap_or(&host).to_string();
     if os != "Darwin" && os != "Linux" {
-        return Err(format!("暂只支持通过 SSH 安装到 macOS / Linux（对方系统：{os}）。Windows 电脑请直接运行安装包"));
+        return Err(tr!("暂只支持通过 SSH 安装到 macOS / Linux（对方系统：{os}）。Windows 电脑请直接运行安装包", "SSH install supports macOS / Linux only (remote: {os}). On Windows, run the installer package instead"));
     }
     ctx.log(&format!("{remote_name}：{os} {arch}"));
     let dir = format!("{home}/.droidbridge");
@@ -209,7 +213,7 @@ async fn install(ctx: &Ctx, req: &InstallReq, addr: &str) -> Result<serde_json::
     };
 
     if same && token.is_none() {
-        ctx.log("对方已在运行相同版本，跳过安装");
+        ctx.log(&tr!("对方已在运行相同版本，跳过安装", "Same version already running; skipping install"));
     } else {
         let cache = ctx
             .st
@@ -219,8 +223,9 @@ async fn install(ctx: &Ctx, req: &InstallReq, addr: &str) -> Result<serde_json::
             .join(format!("{}-{}-{}", os.to_lowercase(), arch, build_id()))
             .join("droidbridge");
         if let Ok(bin) = tokio::fs::read(&cache).await {
-            ctx.step("上传程序");
-            ctx.log(&format!("使用已编译的 {os} {arch} 程序（{} KB）", bin.len() / 1024));
+            ctx.step(&tr!("上传程序", "Uploading program"));
+            let kb = bin.len() / 1024;
+            ctx.log(&tr!("使用已编译的 {os} {arch} 程序（{kb} KB）", "Using cached {os} {arch} build ({kb} KB)"));
             ssh_run(
                 ctx,
                 &t,
@@ -231,12 +236,12 @@ async fn install(ctx: &Ctx, req: &InstallReq, addr: &str) -> Result<serde_json::
             )
             .await?;
         } else {
-            ctx.step("上传源码");
+            ctx.step(&tr!("上传源码", "Uploading source"));
             ssh_run(ctx, &t, "sh -s", Some(upload_script().into_bytes()), Duration::from_secs(300), true).await?;
-            ctx.step("在对方电脑上编译（首次约 2–5 分钟）");
+            ctx.step(&tr!("在对方电脑上编译（首次约 2–5 分钟）", "Building on the remote computer (2–5 min the first time)"));
             ssh_run(ctx, &t, "sh -s", Some(BUILD_SCRIPT.as_bytes().to_vec()), Duration::from_secs(40 * 60), true)
                 .await
-                .map_err(|e| format!("编译失败：{e}"))?;
+                .map_err(|e| tr!("编译失败：{e}", "Build failed: {e}"))?;
             // 取回二进制缓存，下次安装到同平台电脑时无需再编译
             match ssh_bytes(&t, "cat \"$HOME/.droidbridge/bin/droidbridge\"").await {
                 Ok(b) if b.len() > 100_000 => {
@@ -250,7 +255,7 @@ async fn install(ctx: &Ctx, req: &InstallReq, addr: &str) -> Result<serde_json::
         }
     }
 
-    ctx.step("配置 adb");
+    ctx.step(&tr!("配置 adb", "Setting up adb"));
     let out = ssh_run(ctx, &t, "sh -s", Some(ADB_SCRIPT.as_bytes().to_vec()), Duration::from_secs(600), true).await?;
     let adb = out
         .lines()
@@ -260,12 +265,12 @@ async fn install(ctx: &Ctx, req: &InstallReq, addr: &str) -> Result<serde_json::
         .unwrap_or("")
         .to_string();
     if adb.is_empty() {
-        ctx.log("警告：对方电脑没有找到 adb，服务会启动，但无法列出设备。请安装 Android platform-tools");
+        ctx.log(&tr!("警告：对方电脑没有找到 adb，服务会启动，但无法列出设备。请安装 Android platform-tools", "Warning: adb not found on the remote computer; the server will start but cannot list devices. Please install Android platform-tools"));
     } else {
         ctx.log(&format!("adb：{adb}"));
     }
 
-    ctx.step("启动服务");
+    ctx.step(&tr!("启动服务", "Starting service"));
     let name = if req.name.trim().is_empty() { remote_name.clone() } else { req.name.trim().to_string() };
     let mut args = vec![
         format!("{dir}/bin/droidbridge"),
@@ -287,7 +292,7 @@ async fn install(ctx: &Ctx, req: &InstallReq, addr: &str) -> Result<serde_json::
     let script = if os == "Darwin" { mac_start_script(&dir, &args) } else { linux_start_script(&dir, &args) };
     ssh_run(ctx, &t, "sh -s", Some(script.into_bytes()), Duration::from_secs(60), true).await?;
 
-    ctx.step("等待服务就绪");
+    ctx.step(&tr!("等待服务就绪", "Waiting for service"));
     let mut ready = false;
     for _ in 0..30 {
         if let Ok(v) = peers::get_json(&probe_peer, "/api/info").await {
@@ -299,12 +304,13 @@ async fn install(ctx: &Ctx, req: &InstallReq, addr: &str) -> Result<serde_json::
         tokio::time::sleep(Duration::from_secs(1)).await;
     }
     if !ready {
-        return Err(format!(
-            "服务已启动但无法从本机访问 {addr}。请检查对方防火墙是否允许 droidbridge 接收连接（macOS：系统设置 → 网络 → 防火墙）"
+        return Err(tr!(
+            "服务已启动但无法从本机访问 {addr}。请检查对方防火墙是否允许 droidbridge 接收连接（macOS：系统设置 → 网络 → 防火墙）",
+            "The service started but {addr} is not reachable from here. Check that the remote firewall allows incoming connections for droidbridge"
         ));
     }
 
-    ctx.step("添加到列表");
+    ctx.step(&tr!("添加到列表", "Adding to list"));
     crate::save_peer(&ctx.st, None, addr, &req.name, token).await
 }
 
@@ -337,13 +343,13 @@ fn ssh_cmd(t: &Target, remote: &str) -> Command {
 fn explain_ssh_error(stderr: &str) -> Option<String> {
     let s = stderr.to_ascii_lowercase();
     if s.contains("permission denied") {
-        Some("SSH 认证失败：本机 ~/.ssh 中的密钥未被对方接受。请把本机公钥（~/.ssh/id_rsa.pub 等）加入对方的 ~/.ssh/authorized_keys，或填写正确的 SSH 用户名".into())
+        Some(tr!("SSH 认证失败：本机 ~/.ssh 中的密钥未被对方接受。请把本机公钥（~/.ssh/id_rsa.pub 等）加入对方的 ~/.ssh/authorized_keys，或填写正确的 SSH 用户名", "SSH authentication failed: no key in ~/.ssh was accepted. Add your public key (~/.ssh/id_rsa.pub etc.) to the remote ~/.ssh/authorized_keys, or set the right SSH user"))
     } else if s.contains("connection refused") {
-        Some("对方没有开启 SSH。macOS：系统设置 → 通用 → 共享 → 打开“远程登录”；Linux：安装并启动 openssh-server".into())
+        Some(tr!("对方没有开启 SSH。macOS：系统设置 → 通用 → 共享 → 打开“远程登录”；Linux：安装并启动 openssh-server", "SSH is not enabled on the remote computer. macOS: System Settings → General → Sharing → Remote Login; Linux: install and start openssh-server"))
     } else if s.contains("timed out") || s.contains("no route to host") || s.contains("could not resolve") {
-        Some("无法通过 SSH 连接对方，请确认地址正确且在同一局域网".into())
+        Some(tr!("无法通过 SSH 连接对方，请确认地址正确且在同一局域网", "Cannot reach the remote computer over SSH; check the address and network"))
     } else if s.contains("host key verification failed") || s.contains("remote host identification has changed") {
-        Some("对方的 SSH 主机密钥与本机记录不一致（~/.ssh/known_hosts），请确认后删除旧记录再试".into())
+        Some(tr!("对方的 SSH 主机密钥与本机记录不一致（~/.ssh/known_hosts），请确认后删除旧记录再试", "The remote SSH host key does not match ~/.ssh/known_hosts; verify it and remove the old entry"))
     } else {
         None
     }
@@ -363,7 +369,7 @@ async fn ssh_run(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .map_err(|e| format!("无法执行 ssh（本机需要 OpenSSH 客户端）：{e}"))?;
+        .map_err(|e| tr!("无法执行 ssh（本机需要 OpenSSH 客户端）：{e}", "Cannot run ssh (an OpenSSH client is required): {e}"))?;
 
     if let (Some(data), Some(mut w)) = (stdin, child.stdin.take()) {
         tokio::spawn(async move {
@@ -404,7 +410,7 @@ async fn ssh_run(
         let status = child.wait().await;
         (out, status)
     };
-    let (out, status) = tokio::time::timeout(timeout, run).await.map_err(|_| "远程命令超时".to_string())?;
+    let (out, status) = tokio::time::timeout(timeout, run).await.map_err(|_| tr!("远程命令超时", "Remote command timed out"))?;
     let status = status.map_err(|e| e.to_string())?;
     if status.success() {
         return Ok(out);
@@ -416,7 +422,8 @@ async fn ssh_run(
         }
     }
     let last = err.lines().chain(out.lines()).filter(|l| !l.trim().is_empty()).last().unwrap_or("").to_string();
-    Err(format!("远程命令失败（{status}）{}", if last.is_empty() { String::new() } else { format!("：{last}") }))
+    let tail = if last.is_empty() { String::new() } else { format!(": {last}") };
+    Err(tr!("远程命令失败（{status}）{tail}", "Remote command failed ({status}){tail}"))
 }
 
 async fn ssh_bytes(t: &Target, remote: &str) -> Result<Vec<u8>, String> {
@@ -462,7 +469,7 @@ fn upload_script() -> String {
         s.push_str(&base64(data));
         s.push_str("__DB_EOF__\n");
     }
-    s.push_str(&format!("echo \"已上传 {} 个文件\"\n", SOURCES.len()));
+    s.push_str(&format!("echo \"Uploaded {} files\"\n", SOURCES.len()));
     s
 }
 
@@ -471,15 +478,15 @@ export PATH="$HOME/.cargo/bin:/usr/local/bin:/opt/homebrew/bin:$PATH"
 [ -f "$HOME/.cargo/env" ] && . "$HOME/.cargo/env"
 D="$HOME/.droidbridge"
 if [ "$(uname -s)" = Darwin ] && ! xcrun -f cc >/dev/null 2>&1; then
-  echo "缺少 Xcode 命令行工具，请在对方电脑运行 xcode-select --install 后重试" >&2; exit 3
+  echo "Xcode command line tools are missing; run xcode-select --install on that Mac and retry" >&2; exit 3
 fi
 if ! command -v cargo >/dev/null 2>&1; then
-  echo "未找到 Rust，正在为当前用户安装 rustup…"
+  echo "Rust not found; installing rustup for the current user…"
   curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --no-modify-path
   . "$HOME/.cargo/env"
 fi
 v=$(rustc --version | awk '{print $2}' | cut -d. -f2)
-if [ "${v:-0}" -lt 85 ]; then echo "Rust 版本过旧（$(rustc --version)），正在更新…"; rustup update stable --no-self-update; fi
+if [ "${v:-0}" -lt 85 ]; then echo "Rust is too old ($(rustc --version)); updating…"; rustup update stable --no-self-update; fi
 echo "$(rustc --version)"
 cd "$D/src"
 CARGO_TARGET_DIR="$D/target" cargo build --release --bin droidbridge --color never 2>&1
@@ -487,7 +494,7 @@ mkdir -p "$D/bin"
 cp "$D/target/release/droidbridge" "$D/bin/droidbridge.new"
 chmod +x "$D/bin/droidbridge.new"
 mv -f "$D/bin/droidbridge.new" "$D/bin/droidbridge"
-echo "编译完成"
+echo "Build finished"
 "#;
 
 const ADB_SCRIPT: &str = r#"export PATH="/usr/local/bin:/opt/homebrew/bin:$PATH"
@@ -497,7 +504,7 @@ for p in "$ANDROID_HOME/platform-tools/adb" "$ANDROID_SDK_ROOT/platform-tools/ad
   if [ -n "$p" ] && [ -x "$p" ]; then echo "ADB=$p"; exit 0; fi
 done
 if command -v brew >/dev/null 2>&1; then
-  echo "未找到 adb，正在通过 Homebrew 安装 android-platform-tools…"
+  echo "adb not found; installing android-platform-tools with Homebrew…"
   brew install --cask android-platform-tools >/dev/null 2>&1 || brew install android-platform-tools >/dev/null 2>&1 || true
   p=$(command -v adb 2>/dev/null)
   if [ -n "$p" ]; then echo "ADB=$p"; exit 0; fi
@@ -548,10 +555,10 @@ sleep 1
 cat > "$P" <<'__DB_PLIST__'
 {plist}__DB_PLIST__
 if launchctl bootstrap "gui/$U" "$P" 2>/dev/null; then
-  echo "已注册为 launchd 登录服务（{LABEL}），开机登录后自动运行"
+  echo "Registered launchd agent {LABEL}; it starts automatically at login"
 else
   nohup {cmd} > "$D/server.log" 2>&1 &
-  echo "当前没有图形界面登录会话，已在后台临时启动（重启后需重新安装）"
+  echo "No GUI login session; started in background for now (reinstall after reboot)"
 fi
 "#,
         cmd = cmdline.join(" ")
@@ -582,10 +589,10 @@ __DB_UNIT__
   systemctl --user daemon-reload
   systemctl --user enable droidbridge.service >/dev/null 2>&1 || true
   systemctl --user restart droidbridge.service
-  echo "已注册为 systemd 用户服务（droidbridge.service）"
+  echo "Registered systemd user service droidbridge.service"
 else
   nohup setsid {cmd} > "$D/server.log" 2>&1 < /dev/null &
-  echo "已在后台启动"
+  echo "Started in background"
 fi
 "#,
         exec = exec.join(" "),

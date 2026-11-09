@@ -1,4 +1,4 @@
-﻿# 生成界面截图（用模拟数据，无需真机）：输出到 docs\screenshots
+﻿# 生成界面截图（用模拟数据，无需真机）：输出到 docs\screenshots\en 与 docs\screenshots\zh
 $ErrorActionPreference = 'Continue'
 $root = Split-Path (Split-Path $PSScriptRoot)
 $work = Join-Path $root 'tmp\demo'; New-Item -ItemType Directory -Force $work | Out-Null
@@ -21,23 +21,26 @@ function Crop($file, $w) {
   $bmp = $img.Clone([Drawing.Rectangle]::new(0, 0, [Math]::Min($w, $img.Width), $img.Height), $img.PixelFormat)
   $img.Dispose(); $bmp.Save($file, [Drawing.Imaging.ImageFormat]::Png); $bmp.Dispose()
 }
-function Mobile($s, $h, $file) {
+function Mobile($s, $h, $file, $lang) {
   $wrap = Join-Path $work "m_$s.html"
-  $src = 'file:///' + ((Join-Path $work 'demo.html') -replace '\\', '/') + "?s=$s"
+  $src = 'file:///' + ((Join-Path $work 'demo.html') -replace '\\', '/') + "?s=$s&lang=$lang"
   [IO.File]::WriteAllText($wrap, "<html><body style='margin:0;background:#000'><iframe src='$src' style='width:390px;height:${h}px;border:0;display:block'></iframe></body></html>")
   Shot ('file:///' + ($wrap -replace '\\', '/')) 600 $h $file
   Crop $file 780
 }
 
-Get-ChildItem $out -Filter *.png | Remove-Item
+Get-ChildItem $out -Recurse -Filter *.png | Remove-Item
 $demo = 'file:///' + ((Join-Path $work 'demo.html') -replace '\\', '/')
-Shot "$demo`?s=desk" 1440 900 (Join-Path $out '1-desktop-dark.png')
-Shot "$demo`?s=desk" 1440 900 (Join-Path $out '2-desktop-light.png') -Light
-Shot "$demo`?s=add" 1280 760 (Join-Path $out '3-add-computer.png')
-Shot "$demo`?s=menu" 1280 900 (Join-Path $out '4-device-menu.png')
-Shot "$demo`?s=settings" 1280 900 (Join-Path $out '5-settings.png')
-Shot "$demo`?s=log" 1440 900 (Join-Path $out '8-logcat.png')
-Mobile 'mlist' 844 (Join-Path $out '6-mobile-list.png')
-Mobile 'mview' 844 (Join-Path $out '7-mobile-view.png')
+foreach ($lang in 'en', 'zh') {
+  $o = Join-Path $out $lang; New-Item -ItemType Directory -Force $o | Out-Null
+  Shot "$demo`?s=desk&lang=$lang" 1440 900 (Join-Path $o '1-desktop-dark.png')
+  Shot "$demo`?s=desk&lang=$lang" 1440 900 (Join-Path $o '2-desktop-light.png') -Light
+  Shot "$demo`?s=add&lang=$lang" 1280 760 (Join-Path $o '3-add-computer.png')
+  Shot "$demo`?s=menu&lang=$lang" 1280 900 (Join-Path $o '4-device-menu.png')
+  Shot "$demo`?s=settings&lang=$lang" 1280 900 (Join-Path $o '5-settings.png')
+  Shot "$demo`?s=log&lang=$lang" 1440 900 (Join-Path $o '8-logcat.png')
+  Mobile 'mlist' 844 (Join-Path $o '6-mobile-list.png') $lang
+  Mobile 'mview' 844 (Join-Path $o '7-mobile-view.png') $lang
+}
 Remove-Item -Recurse -Force (Join-Path $root 'tmp') -ErrorAction SilentlyContinue
-Get-ChildItem $out | Select-Object Name, Length
+Get-ChildItem $out -Recurse -File | Select-Object @{n='File';e={$_.Directory.Name + '/' + $_.Name}}, Length

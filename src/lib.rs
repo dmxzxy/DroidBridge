@@ -1,8 +1,11 @@
 //! DroidBridge 核心：HTTP/WebSocket 服务、adb/scrcpy 会话、远程节点中转。
 //! 命令行版（src/main.rs）与桌面版（src/bin/desktop.rs）共用。
 
+#[macro_use]
+pub mod i18n;
 pub mod adb;
 pub mod control;
+pub mod icon;
 pub mod logcat;
 pub mod peers;
 pub mod remote;
@@ -43,7 +46,7 @@ pub struct Config {
     pub server_jar: PathBuf,
 }
 
-pub const HELP: &str = "DroidBridge — 安卓设备投屏与远程操作
+const HELP_ZH: &str = "DroidBridge — 安卓设备投屏与远程操作
 
 用法: droidbridge [选项]
 
@@ -53,9 +56,30 @@ pub const HELP: &str = "DroidBridge — 安卓设备投屏与远程操作
   --token <令牌>        访问令牌；设置后所有接口都需要令牌
   --name <名称>         本机显示名称（默认计算机名）
   --adb <路径>          adb 可执行文件路径（默认自动查找）
-  --data <目录>         数据目录（默认 exe 同目录下 data）
+  --data <目录>         数据目录
+  --lang <zh|en>        界面与提示语言（默认跟随系统）
   -h, --help            显示帮助
 ";
+
+const HELP_EN: &str = "DroidBridge — mirror and control Android devices
+
+Usage: droidbridge [options]
+
+  --port <port>         HTTP port (default 8730)
+  --https-port <port>   HTTPS port (default 8731, 0 to disable; browsers on other devices need HTTPS)
+  --bind <addr>         Listen address (default 0.0.0.0)
+  --token <token>       Access token; required by all APIs when set
+  --name <name>         Display name of this computer (default: host name)
+  --adb <path>          Path to adb (found automatically by default)
+  --data <dir>          Data directory
+  --lang <zh|en>        UI and message language (default: system)
+  -h, --help            Show help
+";
+
+/// 命令行帮助（按当前语言）
+pub fn help() -> &'static str {
+    if i18n::is_en() { HELP_EN } else { HELP_ZH }
+}
 
 impl Config {
     /// 从命令行参数解析（不含程序名）。返回 Ok(None) 表示用户请求了帮助。
@@ -68,19 +92,27 @@ impl Config {
         let mut adb = None;
         let mut data = None;
 
+        let args: Vec<String> = args.into_iter().collect();
+        i18n::init_from_args(&args);
         let mut it = args.into_iter();
         while let Some(a) = it.next() {
-            let mut val = |n: &str| it.next().ok_or(format!("{n} 需要一个参数值"));
+            let mut val = |n: &str| it.next().ok_or_else(|| tr!("{n} 需要一个参数值", "{n} requires a value"));
             match a.as_str() {
-                "--port" => port = val("--port")?.parse().map_err(|_| "--port 无效")?,
-                "--https-port" => https_port = val("--https-port")?.parse().map_err(|_| "--https-port 无效")?,
+                "--port" => port = val("--port")?.parse().map_err(|_| tr!("--port 无效", "Invalid --port"))?,
+                "--https-port" => https_port = val("--https-port")?.parse().map_err(|_| tr!("--https-port 无效", "Invalid --https-port"))?,
                 "--bind" => bind = val("--bind")?,
                 "--token" => token = Some(val("--token")?).filter(|t| !t.is_empty()),
                 "--name" => name = Some(val("--name")?),
                 "--adb" => adb = Some(PathBuf::from(val("--adb")?)),
                 "--data" => data = Some(PathBuf::from(val("--data")?)),
+                "--lang" => {
+                    val("--lang")?;
+                }
                 "-h" | "--help" => return Ok(None),
-                other => return Err(format!("未知参数：{other}\n\n{HELP}")),
+                other => {
+                    let help = help();
+                    return Err(tr!("未知参数：{other}\n\n{help}", "Unknown option: {other}\n\n{help}"));
+                }
             }
         }
 
@@ -88,7 +120,8 @@ impl Config {
         let name = name
             .or_else(|| std::env::var("COMPUTERNAME").ok())
             .or_else(|| std::env::var("HOSTNAME").ok())
-            .unwrap_or_else(|| "本机".into());
+            .or_else(util::hostname)
+            .unwrap_or_else(|| tr!("本机", "This computer"));
         Ok(Some(Config {
             bind,
             port,
@@ -102,7 +135,22 @@ impl Config {
     }
 }
 
+/// 默认数据目录：Windows 为程序目录下 data（便携）；macOS 为 ~/Library/Application Support/DroidBridge；
+/// 其他系统为 $XDG_DATA_HOME/droidbridge 或 ~/.local/share/droidbridge
 pub fn default_data_dir() -> PathBuf {
+    #[cfg(not(windows))]
+    {
+        let home = std::env::var_os("HOME").map(PathBuf::from);
+        if cfg!(target_os = "macos") {
+            if let Some(h) = home {
+                return h.join("Library/Application Support/DroidBridge");
+            }
+        } else if let Some(x) = std::env::var_os("XDG_DATA_HOME").filter(|x| !x.is_empty()) {
+            return PathBuf::from(x).join("droidbridge");
+        } else if let Some(h) = home {
+            return h.join(".local/share/droidbridge");
+        }
+    }
     std::env::current_exe()
         .ok()
         .and_then(|p| p.parent().map(|d| d.join("data")))
@@ -134,7 +182,7 @@ pub enum StartError {
 impl std::fmt::Display for StartError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            StartError::AddrInUse(a) => write!(f, "端口 {a} 已被占用（可用 --port 修改）"),
+            StartError::AddrInUse(a) => f.write_str(&tr!("端口 {a} 已被占用（可用 --port 修改）", "Port {a} is already in use (change it with --port)")),
             StartError::Other(s) => f.write_str(s),
         }
     }
@@ -143,25 +191,25 @@ impl std::fmt::Display for StartError {
 /// 准备数据目录与 scrcpy-server，绑定端口并在后台启动 HTTP/HTTPS 服务。
 pub async fn start(cfg: Config) -> Result<Started, StartError> {
     std::fs::create_dir_all(&cfg.data_dir)
-        .map_err(|e| StartError::Other(format!("无法创建数据目录 {}：{e}", cfg.data_dir.display())))?;
+        .map_err(|e| { let d = cfg.data_dir.display(); StartError::Other(tr!("无法创建数据目录 {d}：{e}", "Cannot create data directory {d}: {e}")) })?;
     std::fs::write(&cfg.server_jar, SCRCPY_SERVER)
-        .map_err(|e| StartError::Other(format!("无法写出 scrcpy-server：{e}")))?;
+        .map_err(|e| StartError::Other(tr!("无法写出 scrcpy-server：{e}", "Cannot write scrcpy-server: {e}")))?;
 
     let http_addr: SocketAddr = format!("{}:{}", cfg.bind, cfg.port)
         .parse()
-        .map_err(|e| StartError::Other(format!("监听地址无效：{e}")))?;
+        .map_err(|e| StartError::Other(tr!("监听地址无效：{e}", "Invalid listen address: {e}")))?;
     let listener = tokio::net::TcpListener::bind(http_addr).await.map_err(|e| {
         if e.kind() == std::io::ErrorKind::AddrInUse {
             StartError::AddrInUse(http_addr)
         } else {
-            StartError::Other(format!("无法监听 {http_addr}：{e}"))
+            StartError::Other(tr!("无法监听 {http_addr}：{e}", "Cannot listen on {http_addr}: {e}"))
         }
     })?;
     let port = listener.local_addr().map(|a| a.port()).unwrap_or(cfg.port);
 
     match adb::run(&cfg.adb, &["start-server"]).await {
         Ok(_) => tracing::info!("adb: {}", cfg.adb.display()),
-        Err(e) => tracing::error!("adb 不可用：{e}（可用 --adb 指定路径）"),
+        Err(e) => tracing::error!("adb unavailable: {e} (use --adb to set its path)"),
     }
 
     let state = Arc::new(AppState {
@@ -183,15 +231,15 @@ pub async fn start(cfg: Config) -> Result<Started, StartError> {
                     match tls_config(&data_dir, &util::local_ips(), &name).await {
                         Ok(tls) => {
                             if let Err(e) = axum_server::bind_rustls(https_addr, tls).serve(app2.into_make_service()).await {
-                                tracing::error!("HTTPS 服务退出：{e}");
+                                tracing::error!("HTTPS server stopped: {e}");
                             }
                         }
-                        Err(e) => tracing::error!("HTTPS 初始化失败：{e}"),
+                        Err(e) => tracing::error!("HTTPS setup failed: {e}"),
                     }
                 });
             }
             Err(e) => {
-                tracing::error!("HTTPS 地址无效：{e}");
+                tracing::error!("Invalid HTTPS address: {e}");
                 https_port = 0;
             }
         }
@@ -203,7 +251,7 @@ pub async fn start(cfg: Config) -> Result<Started, StartError> {
     });
     tokio::spawn(async move {
         if let Err(e) = axum::serve(listener, app).await {
-            tracing::error!("HTTP 服务退出：{e}");
+            tracing::error!("HTTP server stopped: {e}");
         }
     });
 
@@ -262,7 +310,19 @@ fn err(code: StatusCode, msg: impl Into<String>) -> Response {
     (code, Json(json!({"error": msg.into()}))).into_response()
 }
 
+/// 中间件：按请求语言（?lang=、X-Lang、Accept-Language）输出提示，并校验访问令牌
 async fn auth(State(st): State<Shared>, req: Request, next: Next) -> Response {
+    let q = util::parse_query(req.uri().query());
+    let lang_en = q
+        .get("lang")
+        .filter(|l| !l.is_empty())
+        .map(|l| !l.to_ascii_lowercase().starts_with("zh"))
+        .or_else(|| i18n::from_headers(req.headers()))
+        .unwrap_or_else(i18n::is_en);
+    i18n::REQUEST_EN.scope(lang_en, auth_inner(st, req, next)).await
+}
+
+async fn auth_inner(st: Shared, req: Request, next: Next) -> Response {
     let path = req.uri().path();
     let protected = (path.starts_with("/api/") && path != "/api/info") || path.starts_with("/ws/");
     if let (true, Some(expected)) = (protected, st.cfg.token.as_deref()) {
@@ -272,7 +332,7 @@ async fn auth(State(st): State<Shared>, req: Request, next: Next) -> Response {
             .cloned()
             .or_else(|| req.headers().get("x-token").and_then(|v| v.to_str().ok()).map(String::from));
         if given.as_deref() != Some(expected) {
-            return err(StatusCode::UNAUTHORIZED, "需要访问令牌");
+            return err(StatusCode::UNAUTHORIZED, tr!("需要访问令牌", "Access token required"));
         }
     }
     next.run(req).await
@@ -291,6 +351,7 @@ async fn info(State(st): State<Shared>) -> Json<serde_json::Value> {
         "version": env!("CARGO_PKG_VERSION"),
         "build": remote::build_id(),
         "os": std::env::consts::OS,
+        "lang": i18n::code(),
         "scrcpy": scrcpy_version(),
         "auth": st.cfg.token.is_some(),
         "ips": util::local_ips(),
@@ -311,7 +372,7 @@ async fn devices(State(st): State<Shared>, Query(q): Query<HashMap<String, Strin
         },
         Some(id) => {
             let Some(peer) = st.peers.get(id).await else {
-                return err(StatusCode::NOT_FOUND, "远程电脑不存在");
+                return err(StatusCode::NOT_FOUND, tr!("远程电脑不存在", "Remote computer not found"));
             };
             match peers::get_json(&peer, "/api/devices").await {
                 Ok(v) => Json(v).into_response(),
@@ -347,7 +408,7 @@ pub async fn save_peer(
     let token = token.filter(|t| !t.is_empty());
     let mut peer = match &id {
         Some(id) => {
-            let old = st.peers.get(id).await.ok_or("远程电脑不存在")?;
+            let old = st.peers.get(id).await.ok_or_else(|| tr!("远程电脑不存在", "Remote computer not found"))?;
             peers::Peer { id: id.clone(), name: name.trim().to_string(), addr, token: token.or(old.token) }
         }
         None => peers::Peer {
@@ -359,9 +420,9 @@ pub async fn save_peer(
     };
     let info = peers::get_json(&peer, "/api/info")
         .await
-        .map_err(|e| format!("无法访问 {}：{e}", peer.addr))?;
+        .map_err(|e| { let a = &peer.addr; tr!("无法访问 {a}：{e}", "Cannot reach {a}: {e}") })?;
     if info.get("app").and_then(|v| v.as_str()) != Some("droidbridge") {
-        return Err("对端不是 DroidBridge".into());
+        return Err(tr!("对端不是 DroidBridge", "The other side is not DroidBridge"));
     }
     peers::get_json(&peer, "/api/devices").await?;
     if peer.name.is_empty() {
@@ -404,14 +465,14 @@ async fn install_status(
     let since = q.get("since").and_then(|s| s.parse().ok()).unwrap_or(0);
     match remote::get(&st, &id, since) {
         Some(v) => Json(v).into_response(),
-        None => err(StatusCode::NOT_FOUND, "任务不存在"),
+        None => err(StatusCode::NOT_FOUND, tr!("任务不存在", "Job not found")),
     }
 }
 
 async fn remove_peer(State(st): State<Shared>, Path(id): Path<String>) -> Response {
     match st.peers.remove(&id).await {
         Ok(true) => Json(json!({"ok": true})).into_response(),
-        Ok(false) => err(StatusCode::NOT_FOUND, "远程电脑不存在"),
+        Ok(false) => err(StatusCode::NOT_FOUND, tr!("远程电脑不存在", "Remote computer not found")),
         Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, e),
     }
 }
@@ -419,7 +480,7 @@ async fn remove_peer(State(st): State<Shared>, Path(id): Path<String>) -> Respon
 /// 上传文件到设备：.apk 安装，其它文件推送到 /sdcard/Download/
 async fn push_file(State(st): State<Shared>, Query(q): Query<HashMap<String, String>>, body: Bytes) -> Response {
     let Some(serial) = q.get("serial").filter(|s| !s.is_empty()) else {
-        return err(StatusCode::BAD_REQUEST, "缺少 serial 参数");
+        return err(StatusCode::BAD_REQUEST, tr!("缺少 serial 参数", "Missing serial parameter"));
     };
     let raw_name = q.get("name").map(String::as_str).unwrap_or("file");
     let name: String = raw_name
@@ -431,12 +492,12 @@ async fn push_file(State(st): State<Shared>, Query(q): Query<HashMap<String, Str
         .collect();
     let name = if name.trim().is_empty() { "file".to_string() } else { name };
     if body.is_empty() {
-        return err(StatusCode::BAD_REQUEST, "文件为空");
+        return err(StatusCode::BAD_REQUEST, tr!("文件为空", "File is empty"));
     }
 
     if let Some(id) = remote_id(&q) {
         let Some(peer) = st.peers.get(id).await else {
-            return err(StatusCode::NOT_FOUND, "远程电脑不存在");
+            return err(StatusCode::NOT_FOUND, tr!("远程电脑不存在", "Remote computer not found"));
         };
         let query = format!("serial={}&name={}", util::url_encode(serial), util::url_encode(&name));
         return match peers::post_file(&peer, &query, &body).await {
@@ -450,18 +511,18 @@ async fn push_file(State(st): State<Shared>, Query(q): Query<HashMap<String, Str
     let _ = tokio::fs::create_dir_all(&dir).await;
     let tmp = dir.join(format!("{:08x}{}", util::random_scid(), if is_apk { ".apk" } else { ".bin" }));
     if let Err(e) = tokio::fs::write(&tmp, &body).await {
-        return err(StatusCode::INTERNAL_SERVER_ERROR, format!("保存文件失败：{e}"));
+        return err(StatusCode::INTERNAL_SERVER_ERROR, tr!("保存文件失败：{e}", "Failed to save file: {e}"));
     }
     let tmp_s = tmp.to_string_lossy().into_owned();
     let result = if is_apk {
         adb::run(&st.cfg.adb, &["-s", serial, "install", "-r", "-t", &tmp_s])
             .await
-            .map(|_| format!("已安装 {name}"))
+            .map(|_| tr!("已安装 {name}", "Installed {name}"))
     } else {
         let dest = format!("/sdcard/Download/{name}");
         adb::run(&st.cfg.adb, &["-s", serial, "push", &tmp_s, &dest])
             .await
-            .map(|_| format!("已传到手机 Download/{name}"))
+            .map(|_| tr!("已传到手机 Download/{name}", "Copied to Download/{name} on the device"))
     };
     let _ = tokio::fs::remove_file(&tmp).await;
     match result {
@@ -474,28 +535,29 @@ async fn ws_logcat(State(st): State<Shared>, ws: WebSocketUpgrade, req_uri: axum
     let raw_query = req_uri.query().map(String::from);
     let q = util::parse_query(raw_query.as_deref());
     let Some(serial) = q.get("serial").cloned().filter(|s| !s.is_empty()) else {
-        return err(StatusCode::BAD_REQUEST, "缺少 serial 参数");
+        return err(StatusCode::BAD_REQUEST, tr!("缺少 serial 参数", "Missing serial parameter"));
     };
     if let Some(id) = remote_id(&q) {
         let Some(peer) = st.peers.get(id).await else {
-            return err(StatusCode::NOT_FOUND, "远程电脑不存在");
+            return err(StatusCode::NOT_FOUND, tr!("远程电脑不存在", "Remote computer not found"));
         };
         return ws.on_upgrade(move |socket| peers::proxy_ws(socket, peer, "/ws/logcat", raw_query));
     }
-    ws.on_upgrade(move |socket| logcat::run(st, serial, socket))
+    let en = i18n::is_en();
+    ws.on_upgrade(move |socket| i18n::REQUEST_EN.scope(en, logcat::run(st, serial, socket)))
 }
 
 async fn ws_stream(State(st): State<Shared>, ws: WebSocketUpgrade, req_uri: axum::http::Uri) -> Response {
     let raw_query = req_uri.query().map(String::from);
     let q = util::parse_query(raw_query.as_deref());
     let Some(serial) = q.get("serial").cloned().filter(|s| !s.is_empty()) else {
-        return err(StatusCode::BAD_REQUEST, "缺少 serial 参数");
+        return err(StatusCode::BAD_REQUEST, tr!("缺少 serial 参数", "Missing serial parameter"));
     };
     let ws = ws.max_message_size(64 << 20).max_frame_size(64 << 20);
 
     if let Some(id) = remote_id(&q) {
         let Some(peer) = st.peers.get(id).await else {
-            return err(StatusCode::NOT_FOUND, "远程电脑不存在");
+            return err(StatusCode::NOT_FOUND, tr!("远程电脑不存在", "Remote computer not found"));
         };
         return ws.on_upgrade(move |socket| peers::proxy_ws(socket, peer, "/ws/stream", raw_query));
     }
@@ -507,5 +569,6 @@ async fn ws_stream(State(st): State<Shared>, ws: WebSocketUpgrade, req_uri: axum
         max_fps: num("max_fps", 60),
         stay_awake: q.get("stay_awake").map(|v| v == "1" || v == "true").unwrap_or(true),
     };
-    ws.on_upgrade(move |socket| scrcpy::run_session(st, serial, opts, socket))
+    let en = i18n::is_en();
+    ws.on_upgrade(move |socket| i18n::REQUEST_EN.scope(en, scrcpy::run_session(st, serial, opts, socket)))
 }

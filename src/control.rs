@@ -163,7 +163,7 @@ pub fn encode(ctl: &Ctl) -> Result<Vec<Vec<u8>>, String> {
         Ctl::Clipboard { text, paste, seq } => {
             let bytes = text.as_bytes();
             if bytes.len() > (1 << 18) - 14 {
-                return Err("剪贴板文本过长".into());
+                return Err(tr!("剪贴板文本过长", "Clipboard text is too long"));
             }
             let mut b = Vec::with_capacity(14 + bytes.len());
             b.push(TYPE_SET_CLIPBOARD);
@@ -188,7 +188,7 @@ pub fn encode(ctl: &Ctl) -> Result<Vec<Vec<u8>>, String> {
                 "rotate" => TYPE_ROTATE_DEVICE,
                 "reset_video" => TYPE_RESET_VIDEO,
                 "keyboard_settings" => TYPE_OPEN_HARD_KEYBOARD_SETTINGS,
-                other => return Err(format!("未知命令：{other}")),
+                other => return Err(tr!("未知命令：{other}", "Unknown command: {other}")),
             };
             msgs.push(vec![t]);
         }
