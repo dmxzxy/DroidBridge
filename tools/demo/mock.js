@@ -12,6 +12,29 @@
     pB: [d('2A281FDH3000XY', 'device', 'Pixel 7'), d('192.168.1.31:5555', 'device', '23013RK75C'), d('emulator-5554', 'offline', '')],
   };
   window.__DEV = DEV;
+
+  // 相册模拟：用 canvas 生成几张假缩略图
+  function thumb(seed, label) {
+    const c = document.createElement('canvas'); c.width = 320; c.height = 320;
+    const g = c.getContext('2d');
+    const colors = [['#1d3b7a', '#a8426b'], ['#0b6e4f', '#1b4332'], ['#5a2d82', '#2a1b3d'], ['#b05a2c', '#7a3b1d']];
+    const [c1, c2] = colors[seed % colors.length];
+    const gr = g.createLinearGradient(0, 0, 320, 320); gr.addColorStop(0, c1); gr.addColorStop(1, c2);
+    g.fillStyle = gr; g.fillRect(0, 0, 320, 320);
+    g.fillStyle = 'rgba(255,255,255,.85)'; g.font = '600 20px sans-serif'; g.textAlign = 'center';
+    g.fillText(label, 160, 160);
+    g.fillStyle = 'rgba(255,255,255,.5)'; g.font = '14px sans-serif';
+    g.fillText((LANG === 'en' ? 'Screenshot' : '截图') + ' · ' + seed, 160, 190);
+    return c.toDataURL('image/png');
+  }
+  const SHOTS = [
+    { name: 'Pixel_7_20261107-102400.png', kind: 'shot', device: 'Pixel 7', size: 182000, time: Math.floor(Date.now() / 1000) - 3600, url: null },
+    { name: 'SM-S9180_20261107-101500.png', kind: 'shot', device: 'SM-S9180', size: 201000, time: Math.floor(Date.now() / 1000) - 86400, url: null },
+    { name: 'Pixel_7_20261106-093000.png', kind: 'shot', device: 'Pixel 7', size: 175000, time: Math.floor(Date.now() / 1000) - 2 * 86400, url: null },
+    { name: 'SM-S9180_20261107-104500.webm', kind: 'rec', device: 'SM-S9180', size: 4200000, time: Math.floor(Date.now() / 1000) - 1800, url: null },
+  ];
+  // 缩略图懒生成：不能在顶层调用 thumb()，因为本脚本在 <head> 先于页面脚本执行，
+  // 此时页面里的 LANG（let）还不存在，会 ReferenceError 导致整个 mock 失效。
   const json = (b, status = 200) => new Response(JSON.stringify(b), { status, headers: { 'content-type': 'application/json' } });
   window.fetch = async (url) => {
     const u = new URL(url, 'http://x');
@@ -25,6 +48,11 @@
       if (peer === 'pC') return json({ error: (LANG === "en" ? "Cannot reach 192.168.1.30:8730: connection refused (os error 111)" : "无法访问 192.168.1.30:8730：由于目标计算机积极拒绝，无法连接。 (os error 10061)") }, 502);
       return json(DEV[peer] || []);
     }
+    if (u.pathname === '/api/media') {
+      SHOTS.forEach((s, i) => { if (!s.url) s.url = thumb(i, s.device); });
+      return json({ dir: 'C:\\DroidBridge\\data\\media', items: SHOTS });
+    }
+    if (u.pathname === '/api/settings') return json({ media_dir: 'C:\\DroidBridge\\data\\media' });
     return json({ error: 'not found' }, 404);
   };
   if (!window.VideoDecoder) window.VideoDecoder = function () {};
@@ -131,6 +159,7 @@
     if (S === 'log') setTimeout(() => [...viewers.values()][0].toggleLog(true), 300);
     if (S === 'add') peerDialog();
     if (S === 'wireless') wirelessDialog(L);
+    if (S === 'gallery') setTimeout(() => openGallery(), 300);
     if (S === 'settings') setTimeout(settingsDialog, 300);
     if (S === 'menu') { removeEventListener('scroll', closeMenu, true); window.closeMenu = () => {}; setTimeout(() => [...viewers.values()][0].moreMenu(), 200); }
     if (S === 'mview' || S === 'desk') window.scrollTo(0, 0);

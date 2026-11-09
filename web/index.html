@@ -90,6 +90,11 @@ main{flex:1;min-width:0;min-height:100vh;padding:16px;display:flex;flex-directio
 .vhead .name{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
 .vhead .sub{color:var(--faint);font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;flex:1}
 .vhead .fps{color:var(--faint);font-size:11px;font-variant-numeric:tabular-nums;flex:none}
+.vhead .rec{color:var(--bad);font-size:12px;font-weight:600;flex:none;display:flex;align-items:center;gap:4px}
+.vhead .rec[hidden]{display:none}
+.vhead .rec::before{content:"";width:8px;height:8px;border-radius:50%;background:var(--bad);flex:none}
+.ib.rec{color:var(--bad)}
+.ib.rec:hover{color:var(--bad)}
 .vbody{display:flex}
 .vmain{display:flex;min-width:0}
 .vmain>.vbody{flex:1;min-width:0}
@@ -181,6 +186,45 @@ dialog::backdrop{background:rgba(0,0,0,.45)}
 .found .meta{color:var(--faint);flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .found .ib{width:24px;height:24px}
 dialog.wide{width:min(440px,calc(100vw - 32px))}
+dialog.gallery{width:min(1000px,calc(100vw - 32px));height:80vh;display:flex;flex-direction:column}
+dialog.gallery .dlg-h{flex:none}
+dialog.gallery form{display:flex;flex-direction:column;height:100%;min-height:0}
+dialog.gallery .dlg-d{flex:none}
+.gal-bar{display:flex;align-items:center;gap:8px;padding:8px 20px 4px;flex-wrap:wrap;flex:none}
+.gal-bar .seg{width:auto;flex:none}
+.gal-bar .seg button{width:auto;padding:0 12px}
+.gal-bar .select{width:auto;flex:none;height:30px}
+.gal-dir{display:flex;align-items:center;gap:4px;color:var(--faint);font-size:11px;cursor:pointer;max-width:100%;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;flex:1;min-width:0}
+.gal-dir:hover{color:var(--sub)}
+.gal-body{flex:1;min-height:0;overflow:auto;padding:0 20px 20px}
+.gal-group{margin-top:16px}
+.gal-group-t{color:var(--sub);font-size:12px;font-weight:600;margin-bottom:8px}
+.gal-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px}
+.gal-card{position:relative;border-radius:8px;overflow:hidden;border:1px solid var(--line);background:var(--bg);cursor:pointer}
+.gal-card:hover{border-color:var(--line2)}
+.gal-card .thumb{width:100%;aspect-ratio:1;object-fit:cover;display:block;background:#000}
+.gal-card .vid-flag{position:absolute;top:8px;right:8px;display:flex;align-items:center;gap:4px;color:#fff;background:rgba(0,0,0,.55);border-radius:10px;padding:2px 8px;font-size:11px}
+.gal-card .vid-flag svg{width:12px;height:12px}
+.gal-card .meta{padding:6px 8px;font-size:11px;color:var(--sub);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.gal-card .meta .dev{font-weight:600;color:var(--text)}
+.gal-card .meta .time{color:var(--faint)}
+.gal-empty{padding:40px 0;text-align:center;color:var(--faint)}
+.gal-prev{position:absolute;inset:0;background:var(--bg);display:flex;flex-direction:column;z-index:5}
+.gal-prev .phead{display:flex;align-items:center;gap:8px;padding:8px 12px;flex:none}
+.gal-prev .pbody{flex:1;min-height:0;display:flex;align-items:center;justify-content:center;padding:0 12px}
+.gal-prev img,.gal-prev video{max-width:100%;max-height:100%;border-radius:8px}
+.gal-prev .pfoot{display:flex;align-items:center;gap:8px;padding:8px 12px;flex:none;flex-wrap:wrap}
+.gal-prev .pname{flex:1;min-width:0;color:var(--sub);font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.gal-nav{position:absolute;top:50%;transform:translateY(-50%);width:36px;height:36px;border:0;border-radius:50%;background:var(--raised);color:var(--text);box-shadow:var(--shadow);cursor:pointer;display:grid;place-items:center}
+.gal-nav:hover{background:var(--hover)}
+.gal-nav svg{width:18px;height:18px}
+.gal-prev .prev-btn{left:12px}
+.gal-prev .next-btn{right:12px}
+@media (max-width:720px){
+  .gal-grid{grid-template-columns:repeat(2,1fr)}
+  dialog.gallery{width:100vw;height:100dvh;max-width:none;border:0;border-radius:0}
+  .gal-prev{position:fixed;inset:0;z-index:70}
+}
 .seg{display:flex;gap:2px;padding:2px;border-radius:8px;background:var(--bg);border:1px solid var(--line)}
 .seg button{flex:1;height:28px;border:0;border-radius:6px;background:none;color:var(--sub)}
 .seg button.on{background:var(--raised);color:var(--text);box-shadow:0 1px 2px rgba(0,0,0,.2)}
@@ -253,10 +297,11 @@ dialog.wide{width:min(440px,calc(100vw - 32px))}
 <div class="topbar">
   <button class="ib back" id="mBack"></button>
   <span class="logo" id="mLogo"></span><span id="mTitle">DroidBridge</span>
+  <button class="ib" id="mGallery"></button>
   <button class="ib gear" id="mGear"></button>
 </div>
 <aside>
-  <div class="brand"><span class="logo" id="logo"></span>DroidBridge<button class="ib" id="gear"></button></div>
+  <div class="brand"><span class="logo" id="logo"></span>DroidBridge<button class="ib" id="gallery"></button><button class="ib" id="gear"></button></div>
   <div id="noticeSide"></div>
   <div class="lists" id="lists"></div>
 </aside>
@@ -308,6 +353,7 @@ const EN = {"分辨率":"Resolution",
   "编辑远程电脑":"Edit remote computer",
   "正在连接…":"Connecting…",
   "已保存 ":"Saved ",
+  "已保存":"Saved",
   "已添加 ":"Added ",
   "查看日志":"Show log",
   "收起日志":"Hide log",
@@ -357,7 +403,9 @@ const EN = {"分辨率":"Resolution",
   "松开以安装 APK 或传到手机":"Drop to install the APK or copy to the device",
   "电源键":"Power",
   "音量 +":"Volume up",
-  "截图":"Screenshot",
+  "截图":"Screenshots",
+  "截取屏幕":"Take screenshot",
+  "录制屏幕":"Record screen",
   "下拉通知栏":"Open notifications",
   "快捷设置":"Quick settings",
   "粘贴电脑剪贴板":"Paste computer clipboard",
@@ -463,7 +511,29 @@ const EN = {"分辨率":"Resolution",
   "改为通过 SSH 安装":"Install over SSH instead",
   "SSH 端口不正确":"Invalid SSH port",
   "请填写 SSH 密码":"Please enter the SSH password",
-  "修改后重试":"Edit and retry"};
+  "修改后重试":"Edit and retry",
+  "录屏":"Recordings",
+  "停止录屏":"Stop recording",
+  "开始录屏":"Recording started",
+  "录屏已保存":"Recording saved",
+  "当前浏览器不支持录屏":"This browser cannot record",
+  "录屏保存失败：":"Failed to save recording: ",
+  "录屏上传失败，已保存已上传的部分":"Upload failed; saved the uploaded part",
+  "已保存到相册":"Saved to gallery",
+  "查看":"View",
+  "相册":"Gallery",
+  "今天":"Today",
+  "昨天":"Yesterday",
+  "还没有截图或录屏":"No screenshots or recordings yet",
+  "打开文件夹":"Open folder",
+  "打开所在文件夹":"Show in folder",
+  "下载":"Download",
+  "删除":"Delete",
+  "确定要删除这个文件吗？":"Delete this file?",
+  "媒体目录":"Media folder",
+  "修改":"Change",
+  "点击复制":"Click to copy",
+  "截图失败：":"Failed to save screenshot: "};
 // 界面语言：?lang= > 手动选择 > 服务端语言（桌面版通过 ?lang= 传入）> 浏览器语言
 let LANG = (() => {
   const q = new URLSearchParams(location.search).get('lang');
@@ -503,6 +573,9 @@ const P = {
   volDown: '<path d="M11 5 6 9H2v6h4l5 4z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/>',
   rotate: '<path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/>',
   camera: '<path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3z"/><circle cx="12" cy="13" r="3"/>',
+  record: '<circle cx="12" cy="12" r="6" fill="currentColor" stroke="none"/>',
+  stop: '<rect x="7" y="7" width="10" height="10" rx="1.5"/>',
+  images: '<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15.5-4.5-4.5L5 21"/>',
   keyboard: '<rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/>',
   paste: '<rect x="8" y="2" width="8" height="4" rx="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/>',
   bell: '<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/>',
@@ -1057,6 +1130,23 @@ function settingsDialog() {
   lang.value = LANG;
   const copyRow = (text) => h('div', { class: 'addr' }, text, ib('copy', t('复制'), () => copyText(text)));
   const addrs = INFO ? (INFO.ips || []).map(ip => copyRow(`${ip}:${INFO.port}`)) : [];
+  // 媒体目录
+  const mediaDirHint = h('div', { class: 'hint' }, '');
+  const mediaDirField = h('div', { class: 'field' }, h('label', {}, t('媒体目录')), mediaDirHint);
+  api('/api/settings').then(r => { mediaDirHint.textContent = r.media_dir || ''; }).catch(() => {});
+  if (isLocalHost()) {
+    const mediaDirInput = h('input', { class: 'input', spellcheck: 'false' });
+    const mediaSave = h('button', { class: 'btn', type: 'button', onclick: async () => {
+      const v = mediaDirInput.value.trim();
+      if (!v) return;
+      try {
+        await api('/api/settings', { method: 'PUT', body: JSON.stringify({ media_dir: v }) });
+        mediaDirHint.textContent = v; toast(t('已保存'), { kind: 'ok' });
+      } catch (e) { toast(e.message, { kind: 'bad', ms: 4000 }); }
+    } }, t('修改'));
+    api('/api/settings').then(r => { mediaDirInput.value = r.media_dir || ''; }).catch(() => {});
+    mediaDirField.append(h('div', { style: 'display:flex;gap:8px;margin-top:8px' }, mediaDirInput, mediaSave));
+  }
   const body = [
     h('div', { class: 'group' }, h('div', { class: 'group-t' }, t('画面')), sel('size'), sel('rate'), sel('fps'),
       h('label', { class: 'row' }, h('span', {}, t('投屏时保持屏幕常亮')), h('span', { class: 'switch' }, awake, h('i')))),
@@ -1067,7 +1157,8 @@ function settingsDialog() {
       h('label', { class: 'row' }, h('span', {}, 'Language / 语言'), lang)),
     h('div', { class: 'group' }, h('div', { class: 'group-t' }, t('本机')),
       h('div', { class: 'row' }, h('span', {}, t('名称')), h('span', {}, INFO ? INFO.name : '—')),
-      h('div', { class: 'row' }, h('span', {}, t('局域网地址')), h('div', {}, addrs.length ? addrs : '—'))),
+      h('div', { class: 'row' }, h('span', {}, t('局域网地址')), h('div', {}, addrs.length ? addrs : '—')),
+      mediaDirField),
     h('div', { class: 'foot' }, t('其他电脑添加本机时填写局域网地址；画面设置对之后打开的投屏生效。'),
       INFO ? h('div', {}, `DroidBridge ${INFO.version} · scrcpy-server ${INFO.scrcpy}`) : null),
   ];
@@ -1269,6 +1360,9 @@ class AudioOut {
   constructor(codec) {
     this.codec = codec; this.ctx = audioCtx(); this.next = 0;
     this.gain = this.ctx.createGain(); this.gain.connect(this.ctx.destination);
+    // 录屏用：声音同时送到这个目的节点
+    this.capture = this.ctx.createMediaStreamDestination();
+    this.gain.connect(this.capture);
     if (codec !== 'raw') this.dec = new AudioDecoder({ output: a => this.onData(a), error: e => console.warn('audio decoder', e) });
   }
   packet(config, pts, data) {
@@ -1314,6 +1408,9 @@ class Viewer {
     this.audioOn = pref.get('audio', '0') === '1'; this.fails = 0;
     this.vw = 0; this.vh = 0; this.bytes = 0; this.frames = 0; this.lastKeyReq = 0;
     this.pointers = new Map();
+    this.recording = false; this.recorder = null; this.recStream = null;
+    this.recId = null; this.recExt = 'webm'; this.recQueue = Promise.resolve(); this.recSeq = 0;
+    this.recTimer = null; this.recStart = 0; this.recFinishing = false;
     this.build();
     this.connect();
     this.statTimer = setInterval(() => this.updateStat(), 1000);
@@ -1341,9 +1438,11 @@ class Viewer {
     this.logBtn = ib('logs', t('日志'), () => this.toggleLog());
     this.audioBtn = ib('headphones', t('转发声音'), () => this.toggleAudio());
     this.audioBtn.classList.toggle('on', this.audioOn);
+    this.recBtn = ib('record', t('录制屏幕'), () => this.toggleRecord());
+    this.recEl = h('span', { class: 'rec', hidden: true });
     this.vlog = h('div', { class: 'vlog' });
     this.root = h('div', { class: 'viewer' },
-      h('div', { class: 'vhead' }, this.dot, this.nameEl, h('span', { class: 'sub' }, this.host.remote ? this.host.name : ''), this.statEl,
+      h('div', { class: 'vhead' }, this.dot, this.nameEl, this.recEl, h('span', { class: 'sub' }, this.host.remote ? this.host.name : ''), this.statEl,
         ib('max', t('全屏'), () => this.fullscreen()), ib('x', t('关闭'), () => this.close())),
       h('div', { class: 'vmain' },
       h('div', { class: 'vbody' },
@@ -1355,7 +1454,7 @@ class Viewer {
           ib('power', t('电源键'), key(AKEY.POWER)), ib('volUp', t('音量 +'), key(AKEY.VOLUME_UP)), ib('volDown', t('音量 −'), key(AKEY.VOLUME_DOWN)),
           ib('rotate', t('旋转屏幕'), () => this.send({ t: 'cmd', name: 'rotate' })),
           h('div', { class: 'sep' }),
-          ib('camera', t('截图'), () => this.screenshot()), this.kbBtn, this.audioBtn, this.logBtn, this.moreBtn)),
+          ib('camera', t('截取屏幕'), () => this.screenshot()), this.recBtn, this.kbBtn, this.audioBtn, this.logBtn, this.moreBtn)),
       this.vlog),
       this.fileInput);
     this.bindInput();
@@ -1407,6 +1506,7 @@ class Viewer {
   /** 连接断开后自动恢复：设备在线就重连（失败多次后停止），设备不在就等它回来 */
   async onLost() {
     if (this.recovering) return;
+    if (this.recording) this.stopRecord();
     if (!this.gotFrame) this.fails++; else this.fails = 0;
     this.teardown();
     this.recovering = true;
@@ -1449,6 +1549,7 @@ class Viewer {
   }
   close() {
     this.closed = true; this.recovering = false;
+    if (this.recording) this.stopRecord();
     if (this.log) this.log.destroy();
     this.teardown();
     clearInterval(this.statTimer);
@@ -1595,18 +1696,137 @@ class Viewer {
     if (text === null) text = await promptDialog(t('粘贴到手机'), t('浏览器无法读取剪贴板，请在这里粘贴内容。'), { okText: t('发送') });
     if (text) this.send({ t: 'clipboard', text, paste: true });
   }
-  screenshot() {
+  async screenshot() {
     if (!this.gotFrame) return;
-    this.canvas.toBlob(b => {
+    this.canvas.toBlob(async b => {
       if (!b) return;
-      const a = h('a', { href: URL.createObjectURL(b), download: `${(this.dev.model || this.dev.serial).replace(/[^\w.-]/g, '_')}-${new Date().toISOString().replace(/\D/g, '').slice(0, 14)}.png` });
-      a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 5000);
-      toast(t('截图已保存'));
+      try {
+        const device = this.dev.model || this.dev.serial;
+        const item = await api('/api/media/shot?device=' + encodeURIComponent(device), { method: 'POST', headers: { 'content-type': 'image/png' }, body: b });
+        // 只保留一条带“查看”按钮的提示
+        galleryHint(item);
+      } catch (e) { toast(t('截图失败：') + e.message, { kind: 'bad', ms: 4000 }); }
     }, 'image/png');
   }
   fullscreen() {
     if (document.fullscreenElement) document.exitFullscreen();
     else if (this.root.requestFullscreen) this.root.requestFullscreen().catch(() => {});
+  }
+
+  // ---------------- 录屏 ----------------
+  toggleRecord() {
+    if (this.recording) this.stopRecord();
+    else this.startRecord();
+  }
+
+  async startRecord() {
+    if (!this.gotFrame || this.recording || this.recFinishing) return;
+    if (!window.MediaRecorder) { toast(t('当前浏览器不支持录屏')); return; }
+    let mime = null, ext = 'webm';
+    const cands = [
+      ['video/mp4;codecs=avc1', 'mp4'], ['video/mp4', 'mp4'],
+      ['video/webm;codecs=vp9,opus', 'webm'], ['video/webm', 'webm'],
+    ];
+    for (const [m, e] of cands) { if (MediaRecorder.isTypeSupported(m)) { mime = m; ext = e; break; } }
+    if (!mime) { toast(t('当前浏览器不支持录屏')); return; }
+
+    let recId;
+    try {
+      const device = this.dev.model || this.dev.serial;
+      const r = await api('/api/media/rec/start?device=' + encodeURIComponent(device) + '&ext=' + ext, { method: 'POST', body: '{}' });
+      recId = r.id;
+    } catch (e) { toast(e.message, { kind: 'bad' }); return; }
+
+    const stream = this.canvas.captureStream(30);
+    if (this.audioOut && this.audioOut.capture) {
+      this.audioOut.capture.stream.getAudioTracks().forEach(tr => stream.addTrack(tr));
+    }
+    this.recStream = stream;
+    this.recId = recId; this.recExt = ext;
+    this.recQueue = Promise.resolve(); this.recSeq = 0;
+    this.recFinishing = false;
+    this.recFailed = false;
+
+    this.recorder = new MediaRecorder(stream, { mimeType: mime });
+    this.recorder.ondataavailable = e => {
+      if (e.data && e.data.size) {
+        const seq = this.recSeq++;
+        this.recQueue = this.recQueue.then(() => this.uploadChunk(seq, e.data)).catch(err => {
+          // 任一分块失败就停止，保存已上传的部分
+          if (!this.recFailed) {
+            this.recFailed = true;
+            this.stopRecord();
+          }
+        });
+      }
+    };
+    this.recorder.onerror = () => { this.abortRecord(); };
+    this.recorder.start(1000);
+
+    this.recording = true;
+    this.recBtn.classList.add('rec');
+    this.recBtn.innerHTML = svg('stop');
+    this.recBtn.title = t('停止录屏');
+    this.recStart = Date.now();
+    this.updateRecTimer();
+    this.recTimer = setInterval(() => this.updateRecTimer(), 1000);
+    toast(t('开始录屏'));
+  }
+
+  uploadChunk(seq, blob) {
+    return api('/api/media/rec/' + encodeURIComponent(this.recId) + '?seq=' + seq, {
+      method: 'POST', headers: { 'content-type': 'application/octet-stream' }, body: blob,
+    });
+  }
+
+  updateRecTimer() {
+    if (!this.recording) return;
+    const s = Math.floor((Date.now() - this.recStart) / 1000);
+    const mm = String(Math.floor(s / 60)).padStart(2, '0');
+    const ss = String(s % 60).padStart(2, '0');
+    this.recEl.textContent = mm + ':' + ss;
+    this.recEl.hidden = false;
+  }
+
+  async stopRecord() {
+    if (!this.recording && !this.recFinishing) return;
+    this.recording = false;
+    clearInterval(this.recTimer); this.recTimer = null;
+    this.recBtn.classList.remove('rec');
+    this.recBtn.innerHTML = svg('record');
+    this.recBtn.title = t('录制屏幕');
+    this.recEl.hidden = true;
+    const rec = this.recorder;
+    if (!rec) { this.recFinishing = false; return; }
+    this.recFinishing = true;
+    await new Promise(res => { rec.onstop = res; try { rec.stop(); } catch { res(); } });
+    // 等所有分块上传完
+    await this.recQueue;
+    const id = this.recId;
+    this.recorder = null; this.recId = null;
+    if (this.recStream) { this.recStream.getTracks().forEach(t => t.stop()); this.recStream = null; }
+    const failed = this.recFailed;
+    this.recFailed = false;
+    try {
+      const item = await api('/api/media/rec/' + encodeURIComponent(id) + '/finish', { method: 'POST', body: '{}' });
+      if (failed) toast(t('录屏上传失败，已保存已上传的部分'), { kind: 'bad', ms: 5000 });
+      else galleryHint(item);
+    } catch (e) { toast(t('录屏保存失败：') + e.message, { kind: 'bad', ms: 4000 }); }
+    this.recFinishing = false;
+  }
+
+  abortRecord() {
+    if (!this.recId) return;
+    const id = this.recId; this.recId = null;
+    this.recording = false; this.recFinishing = false;
+    clearInterval(this.recTimer); this.recTimer = null;
+    this.recBtn.classList.remove('rec');
+    this.recBtn.innerHTML = svg('record');
+    this.recBtn.title = t('录制屏幕');
+    this.recEl.hidden = true;
+    if (this.recorder) { try { this.recorder.stop(); } catch {} this.recorder = null; }
+    if (this.recStream) { this.recStream.getTracks().forEach(t => t.stop()); this.recStream = null; }
+    api('/api/media/rec/' + encodeURIComponent(id), { method: 'DELETE' }).catch(() => {});
   }
 
   async upload(files) {
@@ -1722,17 +1942,236 @@ function showNotice() {
   if (isMobile()) $('#noticeSide').replaceChildren(h('div', { class: 'notice' }, h('span', { html: svg('alert') }).firstChild, h('div', {}, text.map(x => typeof x === 'string' ? x : x.cloneNode(true)))));
 }
 
+// ---------------- 相册 ----------------
+function isLocalHost() {
+  const h = location.hostname;
+  return h === '127.0.0.1' || h === 'localhost' || h === '::1' || h === '[::1]';
+}
+
+// 截图 / 录屏完成后的提示：带“查看”按钮，打开相册并定位到该文件
+function galleryHint(item) {
+  const msg = item.kind === 'rec' ? t('录屏已保存') : t('已保存到相册');
+  toast(msg, { kind: 'ok', sticky: true });
+  const el = $('#toasts').lastElementChild;
+  if (el) {
+    el.append(h('button', { class: 'linkbtn', type: 'button', onclick: () => { el.remove(); openGallery(item.name); } }, t('查看')));
+    setTimeout(() => el.remove(), 6000);
+  }
+}
+
+async function openGallery(locate) {
+  if (document.querySelector('dialog.gallery')) return;
+  const dlg = h('dialog', { class: 'gallery' });
+  let items = [];
+  let dir = '';
+  let filter = 'all';        // all | shot | rec
+  let device = 'all';
+  let previewIndex = -1;
+  let prevLayer = null;
+
+  const title = h('div', { class: 'dlg-h', style: 'display:flex;align-items:center;justify-content:space-between' },
+    h('span', {}, t('相册')), ib('x', t('关闭'), () => dlg.close()));
+  const bar = h('div', { class: 'gal-bar' });
+  const body = h('div', { class: 'gal-body' });
+
+  // 筛选：全部 / 截图 / 录屏
+  const segBtns = {};
+  const seg = h('div', { class: 'seg' },
+    [['all', t('全部')], ['shot', t('截图')], ['rec', t('录屏')]].map(([k, l]) =>
+      (segBtns[k] = h('button', { type: 'button', onclick: () => setFilter(k) }, l))));
+
+  // 设备下拉
+  const devSel = h('select', { class: 'select', onchange: () => { device = devSel.value; render(); } });
+
+  // 媒体目录路径（点击复制）
+  const dirEl = h('span', { class: 'gal-dir', title: t('点击复制') }, '');
+  dirEl.onclick = () => { if (dir) copyText(dir); };
+
+  // 打开文件夹（仅本机）
+  const openBtn = h('button', { class: 'btn', type: 'button', hidden: !isLocalHost(), onclick: () => {
+    api('/api/media/reveal', { method: 'POST', body: '{}' }).catch(e => toast(e.message, { kind: 'bad' }));
+  } }, t('打开文件夹'));
+
+  bar.append(seg, devSel, dirEl, openBtn);
+
+  const form = h('form', { method: 'dialog' }, title, bar, body);
+  dlg.append(form);
+  dlg.addEventListener('close', () => { dlg.remove(); });
+  // 预览层打开时，Esc 只关闭预览层而不是整个相册
+  dlg.addEventListener('cancel', (e) => {
+    if (previewIndex >= 0) { e.preventDefault(); closePreview(); }
+  });
+  // 键盘：← / → 切换上一张 / 下一张（预览打开时）
+  dlg.addEventListener('keydown', (e) => {
+    if (previewIndex < 0) return;
+    const list = filtered();
+    if (list.length <= 1) return;
+    if (e.key === 'ArrowLeft') { e.preventDefault(); const ni = (previewIndex - 1 + list.length) % list.length; closePreview(); openPreview(ni); }
+    else if (e.key === 'ArrowRight') { e.preventDefault(); const ni = (previewIndex + 1) % list.length; closePreview(); openPreview(ni); }
+  });
+  document.body.append(dlg);
+
+  function setFilter(k) {
+    filter = k;
+    for (const key in segBtns) segBtns[key].classList.toggle('on', key === k);
+    render();
+  }
+
+  function filtered() {
+    return items.filter(it => (filter === 'all' || it.kind === filter) && (device === 'all' || it.device === device));
+  }
+
+  function fmtDate(ts) {
+    const d = new Date(ts * 1000);
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const yest = new Date(today); yest.setDate(yest.getDate() - 1);
+    const day = new Date(d); day.setHours(0, 0, 0, 0);
+    if (day.getTime() === today.getTime()) return t('今天');
+    if (day.getTime() === yest.getTime()) return t('昨天');
+    const mo = d.getMonth() + 1, dd = d.getDate();
+    return d.getFullYear() + '-' + String(mo).padStart(2, '0') + '-' + String(dd).padStart(2, '0');
+  }
+
+  function fmtTime(ts) {
+    const d = new Date(ts * 1000);
+    return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+  }
+
+  function fmtDur(secs) {
+    secs = Math.max(0, Math.round(secs));
+    const m = Math.floor(secs / 60), s = secs % 60;
+    return String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0');
+  }
+
+  function openPreview(i) {
+    previewIndex = i;
+    renderPreview();
+  }
+
+  function closePreview() {
+    if (prevLayer) { prevLayer.remove(); prevLayer = null; }
+    previewIndex = -1;
+  }
+
+  function renderPreview() {
+    const list = filtered();
+    if (previewIndex < 0 || previewIndex >= list.length) return;
+    const it = list[previewIndex];
+    const url = withToken(it.url) + (it.kind === 'rec' && !it.url.startsWith('data:') ? '#t=0.1' : '');
+    const prev = h('div', { class: 'gal-prev' });
+    prevLayer = prev;
+    const closeBtn = ib('x', t('关闭'), () => closePreview());
+    const media = it.kind === 'shot'
+      ? h('img', { src: url })
+      : h('video', { src: url, controls: true, autoplay: true });
+    const nameEl = h('span', { class: 'pname' }, it.name);
+    const dl = h('button', { class: 'btn', type: 'button', onclick: () => { const a = h('a', { href: url, download: it.name }); a.click(); } }, t('下载'));
+    const revealBtn = h('button', { class: 'btn', type: 'button', hidden: !isLocalHost(), onclick: () => api('/api/media/reveal?name=' + encodeURIComponent(it.name), { method: 'POST', body: '{}' }).catch(e => toast(e.message, { kind: 'bad' })) }, t('打开所在文件夹'));
+    const delBtn = h('button', { class: 'btn danger', type: 'button', onclick: async () => {
+      if (!await confirmDialog(t('删除'), t('确定要删除这个文件吗？'), t('删除'), true)) return;
+      try { await api('/api/media/' + encodeURIComponent(it.name), { method: 'DELETE' }); closePreview(); await load(); } catch (e) { toast(e.message, { kind: 'bad' }); }
+    } }, t('删除'));
+    prev.append(
+      h('div', { class: 'phead' }, closeBtn, nameEl),
+      h('div', { class: 'pbody' }, media),
+      h('div', { class: 'pfoot' }, dl, revealBtn, delBtn, h('span', { class: 'pname' }, it.device + ' · ' + fmtDate(it.time) + ' ' + fmtTime(it.time))));
+    if (list.length > 1) {
+      const prevBtn = h('button', { class: 'gal-nav prev-btn', type: 'button', html: svg('chevLeft') });
+      prevBtn.onclick = () => { const ni = (previewIndex - 1 + list.length) % list.length; closePreview(); openPreview(ni); };
+      const nextBtn = h('button', { class: 'gal-nav next-btn', type: 'button', html: svg('chevLeft') });
+      nextBtn.style.transform = 'translateY(-50%) rotate(180deg)';
+      nextBtn.onclick = () => { const ni = (previewIndex + 1) % list.length; closePreview(); openPreview(ni); };
+      prev.append(prevBtn, nextBtn);
+    }
+    dlg.append(prev);
+  }
+
+  function render() {
+    // 更新设备下拉
+    const devices = [...new Set(items.map(it => it.device))].sort();
+    const cur = device;
+    devSel.replaceChildren(h('option', { value: 'all' }, t('全部')), ...devices.map(d => h('option', { value: d }, d)));
+    devSel.value = devices.includes(cur) ? cur : 'all';
+    device = devSel.value;
+    dirEl.textContent = dir;
+
+    const list = filtered();
+    if (!list.length) { body.replaceChildren(h('div', { class: 'gal-empty' }, t('还没有截图或录屏'))); return; }
+    const groups = new Map();
+    for (const it of list) {
+      const key = fmtDate(it.time);
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(it);
+    }
+    const frag = document.createDocumentFragment();
+    for (const [key, arr] of groups) {
+      const grid = h('div', { class: 'gal-grid' });
+      for (const it of arr) {
+        const url = withToken(it.url) + (it.kind === 'rec' && !it.url.startsWith('data:') ? '#t=0.1' : '');
+        let thumb;
+        // 录屏用 <video> 显示首帧；演示里 mock 的 dataURL 是静态图，用 <img> 显示
+        if (it.kind === 'shot' || it.url.startsWith('data:')) thumb = h('img', { class: 'thumb', src: url, loading: 'lazy' });
+        else thumb = h('video', { class: 'thumb', src: url, preload: 'metadata', muted: true });
+        const idx = list.indexOf(it);
+        const card = h('div', { class: 'gal-card', onclick: () => openPreview(idx) }, thumb,
+          h('div', { class: 'meta' }, h('span', { class: 'dev' }, it.device), h('div', { class: 'time' }, fmtTime(it.time))));
+        // 录屏：在卡片右上角叠播放标记 + 时长（video 子元素不渲染，需放在卡片上）
+        if (it.kind === 'rec') {
+          const flag = h('span', { class: 'vid-flag' }, h('span', { html: svg('play') }).firstChild, h('span', { class: 'dur' }, ''));
+          card.append(flag);
+          thumb.addEventListener('loadedmetadata', () => {
+            let d = thumb.duration;
+            if (!isFinite(d)) {
+              // 时长未知（某些分段流为 Infinity）：seek 到很大再读，或干脆不显示
+              const old = thumb.currentTime;
+              thumb.currentTime = 1e9;
+              thumb.addEventListener('seeked', () => { flag.querySelector('.dur').textContent = fmtDur(thumb.duration); }, { once: true });
+              thumb.currentTime = old;
+            } else {
+              flag.querySelector('.dur').textContent = fmtDur(d);
+            }
+          });
+        }
+        grid.append(card);
+      }
+      frag.append(h('div', { class: 'gal-group' }, h('div', { class: 'gal-group-t' }, key), grid));
+    }
+    body.replaceChildren(frag);
+
+    // 定位到指定文件
+    if (locate) {
+      const i = list.findIndex(it => it.name === locate);
+      if (i >= 0) { openPreview(i); locate = null; }
+    }
+  }
+
+  async function load() {
+    const r = await api('/api/media');
+    items = r.items || [];
+    dir = r.dir || '';
+    previewIndex = -1;
+    render();
+  }
+
+  segBtns.all.classList.add('on');
+  dlg.showModal();
+  try { await load(); } catch (e) { body.replaceChildren(h('div', { class: 'gal-empty' }, e.message)); }
+}
+
 // ---------------- 初始化 ----------------
 $('#logo').innerHTML = svg('phone');
 $('#mLogo').innerHTML = svg('phone');
 $('#gear').replaceWith(ib('gear', t('设置'), settingsDialog));
-$('#mGear').replaceWith(ib('gear', t('设置'), settingsDialog, 'gear'));
+$('#gallery').replaceWith(ib('images', t('相册'), () => openGallery()));
+$('#mGear').replaceWith(ib('gear', t('设置'), settingsDialog));
+$('#mGallery').replaceWith(ib('images', t('相册'), () => openGallery(), 'gear'));
 $('#mBack').innerHTML = svg('chevLeft');
 $('#mBack').onclick = () => document.body.classList.remove('viewing');
 $('#placeholder').append(h('span', { html: svg('phone') }).firstChild, h('div', {}, t('选择设备开始投屏')), t('设备需开启 USB 调试并连接到电脑'));
 addEventListener('resize', () => { for (const v of viewers.values()) v.fit(); });
 addEventListener('dragover', e => e.preventDefault());
 addEventListener('drop', e => { e.preventDefault(); if (e.dataTransfer && e.dataTransfer.files.length) toast(t('把文件拖到设备画面上即可安装或传输')); });
+addEventListener('beforeunload', () => { for (const v of viewers.values()) if (v.recording) v.stopRecord(); });
 
 (async function init() {
   try {

@@ -6,7 +6,7 @@
 
 ![DroidBridge](docs/screenshots/zh/1-desktop-dark.png)
 
-- **投屏与操作**：基于 [scrcpy](https://github.com/Genymobile/scrcpy) 的设备端硬件编码，低延迟；支持点击、多指触控、滚轮、键盘、剪贴板、截图
+- **投屏与操作**：基于 [scrcpy](https://github.com/Genymobile/scrcpy) 的设备端硬件编码，低延迟；支持点击、多指触控、滚轮、键盘、剪贴板、截图、录屏
 - **多电脑统一管理**：每台插着手机的电脑运行一个 DroidBridge；同一局域网内的电脑会被自动发现，点一下即可添加
 - **无线 adb**：扫码或配对码配对（Android 11+）、按 IP 连接，或把 USB 设备切换为无线
 - **断线自动重连**：重新插拔、手机重启或 Wi-Fi 断开后自动恢复投屏；同一台手机另有 USB / 无线连接时会自动切换过去
@@ -14,11 +14,13 @@
 - **SSH 一键部署**：添加 macOS / Linux 电脑时可通过 SSH 自动安装并注册为开机服务
 - **设备日志**：在画面旁实时查看 logcat，可按级别、关键字、应用过滤
 - **安装 APK / 传文件**：把文件拖到设备画面上即可
+- **相册**：截图与录屏保存在节点上，可在相册中浏览（按类型/设备筛选、预览、下载、在文件管理器中显示）
 - **桌面版 + 浏览器访问**：Windows、macOS、Linux 桌面客户端；手机或其他电脑也可以直接用浏览器打开
 
 | 设备日志 | 无线配对 | 手机浏览器 |
 |---|---|---|
 | ![](docs/screenshots/zh/8-logcat.png) | ![](docs/screenshots/zh/9-wireless.png) | ![](docs/screenshots/zh/7-mobile-view.png) |
+| ![](docs/screenshots/zh/10-gallery.png) | ![](docs/screenshots/zh/5-settings.png) | ![](docs/screenshots/zh/6-mobile-list.png) |
 
 > 截图使用的是模拟数据，手机画面为示意图（`tools/demo/shots.ps1` 生成）。
 
@@ -73,7 +75,7 @@
 | 滚轮 | 滚动 |
 | 聚焦画面后打字 | 输入字符；回车、退格、方向键可用 |
 | Ctrl+V | 粘贴本机剪贴板到设备 |
-| 右侧图标栏 | 电源、音量、旋转、截图、输入文字（中文等）、日志；“…”里是通知栏、熄屏投屏、安装 APK、重连 |
+| 右侧图标栏 | 电源、音量、旋转、截图、录屏、输入文字（中文等）、日志；“…”里是通知栏、熄屏投屏、安装 APK、重连 |
 | 拖文件到画面 | APK 安装，其他文件传到 `/sdcard/Download` |
 
 ### 无线连接
@@ -90,6 +92,12 @@
 ### 声音
 
 点右侧图标栏的耳机图标，或在 **设置 → 声音** 中打开“默认转发声音”。需要 Android 11+（Android 11 开始投屏时需解锁屏幕）。声音使用 Opus 编码，浏览器不支持 Opus 解码时改用原始 PCM。“同时在手机上播放”需要 Android 13+。
+
+### 截图、录屏与相册
+
+点**相机**图标保存当前画面，点**录屏**图标（红点）开始/停止录屏。截图保存为 PNG，录屏保存为 WebM / MP4（开启声音转发时含声音）。文件保存在所连接节点的**媒体目录**（默认 `<data>/media`，可在“设置”中修改或用 `--media-dir` 指定）。若录屏中途关闭应用或刷新页面，未完成的文件会被自动恢复（超过 2 分钟没有写入的录屏会自动转成可播放的正式文件）。
+
+点侧栏齿轮旁的**相册**图标浏览全部内容：按类型或设备筛选，点缩略图预览（左右键/按钮切换，Esc 关闭），可下载、在文件管理器中显示或删除。
 
 ### 设备日志
 
@@ -129,6 +137,7 @@ DroidBridge 能完全控制连接的设备，默认**不需要认证**，请只�
 --name <名称>         本机显示名称（默认计算机名）
 --adb <路径>          adb 路径（默认依次查找：随附的 platform-tools、ANDROID_HOME、常见安装位置、PATH）
 --data <目录>         数据目录（见下）
+--media-dir <目录>    截图与录屏保存目录（默认 <data>/media）
 --lang <zh|en>        界面与提示语言（默认跟随系统，也可用 DROIDBRIDGE_LANG）
 --no-discovery        不参与局域网自动发现
 ```
@@ -159,7 +168,6 @@ sh tools/package-linux.sh 0.2.0             # Linux
 
 ## 计划
 
-- 录屏
 - 一个 APK 装到多台设备、多设备同步操作
 - 崩溃 / ANR 捕获、性能浮层
 - iOS 设备（基于 WebDriverAgent）

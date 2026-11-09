@@ -32,6 +32,7 @@ const SOURCES: &[(&str, &[u8])] = &[
     src!("src/i18n.rs"),
     src!("src/icon.rs"),
     src!("src/logcat.rs"),
+    src!("src/media.rs"),
     src!("src/peers.rs"),
     src!("src/remote.rs"),
     src!("src/scrcpy.rs"),

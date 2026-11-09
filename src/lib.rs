@@ -8,6 +8,7 @@ pub mod control;
 pub mod discovery;
 pub mod icon;
 pub mod logcat;
+pub mod media;
 pub mod peers;
 pub mod remote;
 pub mod scrcpy;
@@ -48,6 +49,8 @@ pub struct Config {
     pub server_jar: PathBuf,
     /// 局域网自动发现
     pub discovery: bool,
+    /// 命令行指定的媒体目录（优先于 settings.json 与默认值）
+    pub media_dir: Option<PathBuf>,
 }
 
 const HELP_ZH: &str = "DroidBridge — 安卓设备投屏与远程操作
@@ -61,6 +64,7 @@ const HELP_ZH: &str = "DroidBridge — 安卓设备投屏与远程操作
   --name <名称>         本机显示名称（默认计算机名）
   --adb <路径>          adb 可执行文件路径（默认自动查找）
   --data <目录>         数据目录
+  --media-dir <目录>    截图与录屏保存目录（默认 <data>/media）
   --lang <zh|en>        界面与提示语言（默认跟随系统）
   --no-discovery        不参与局域网自动发现
   -h, --help            显示帮助
@@ -77,6 +81,7 @@ Usage: droidbridge [options]
   --name <name>         Display name of this computer (default: host name)
   --adb <path>          Path to adb (found automatically by default)
   --data <dir>          Data directory
+  --media-dir <dir>     Where to save screenshots and recordings (default: <data>/media)
   --lang <zh|en>        UI and message language (default: system)
   --no-discovery        Do not take part in LAN discovery
   -h, --help            Show help
@@ -97,6 +102,7 @@ impl Config {
         let mut name = None;
         let mut adb = None;
         let mut data = None;
+        let mut media_dir = None;
         let mut discovery = true;
 
         let args: Vec<String> = args.into_iter().collect();
@@ -112,6 +118,7 @@ impl Config {
                 "--name" => name = Some(val("--name")?),
                 "--adb" => adb = Some(PathBuf::from(val("--adb")?)),
                 "--data" => data = Some(PathBuf::from(val("--data")?)),
+                "--media-dir" => media_dir = Some(PathBuf::from(val("--media-dir")?)),
                 "--no-discovery" => discovery = false,
                 "--lang" => {
                     val("--lang")?;
@@ -141,6 +148,7 @@ impl Config {
             adb: adb::find_adb(adb),
             server_jar: data_dir.join("scrcpy-server.jar"),
             data_dir,
+            media_dir,
         }))
     }
 }
@@ -176,6 +184,8 @@ pub struct AppState {
     pub wireless: wireless::Wireless,
     /// 无线设备 serial → ro.serialno
     pub uids: std::sync::Mutex<HashMap<String, String>>,
+    /// 命令行 `--media-dir` 指定的媒体目录（优先）
+    pub media_dir_override: Option<PathBuf>,
 }
 
 type Shared = Arc<AppState>;
@@ -226,6 +236,7 @@ pub async fn start(cfg: Config) -> Result<Started, StartError> {
         Err(e) => tracing::error!("adb unavailable: {e} (use --adb to set its path)"),
     }
 
+    let media_dir_override = cfg.media_dir.clone();
     let state = Arc::new(AppState {
         peers: peers::PeerStore::load(cfg.data_dir.join("peers.json")),
         start_lock: tokio::sync::Mutex::new(()),
@@ -233,6 +244,7 @@ pub async fn start(cfg: Config) -> Result<Started, StartError> {
         discovery: discovery::Discovery::new(),
         wireless: wireless::Wireless::load(cfg.data_dir.join("wireless.json")),
         uids: std::sync::Mutex::new(HashMap::new()),
+        media_dir_override,
         cfg,
     });
     let app = router(state.clone());
@@ -240,6 +252,8 @@ pub async fn start(cfg: Config) -> Result<Started, StartError> {
         tokio::spawn(discovery::run(state.clone(), port));
     }
     tokio::spawn(wireless::keeper(state.clone()));
+    let cleanup_state = state.clone();
+    tokio::spawn(async move { media::recover_parts_loop(cleanup_state).await; });
 
     let mut https_port = state.cfg.https_port;
     if https_port != 0 {
@@ -251,7 +265,7 @@ pub async fn start(cfg: Config) -> Result<Started, StartError> {
                 tokio::spawn(async move {
                     match tls_config(&data_dir, &util::local_ips(), &name).await {
                         Ok(tls) => {
-                            if let Err(e) = axum_server::bind_rustls(https_addr, tls).serve(app2.into_make_service()).await {
+                            if let Err(e) = axum_server::bind_rustls(https_addr, tls).serve(app2.into_make_service_with_connect_info::<SocketAddr>()).await {
                                 tracing::error!("HTTPS server stopped: {e}");
                             }
                         }
@@ -271,7 +285,7 @@ pub async fn start(cfg: Config) -> Result<Started, StartError> {
         let _ = tcp.set_nodelay(true);
     });
     tokio::spawn(async move {
-        if let Err(e) = axum::serve(listener, app).await {
+        if let Err(e) = axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>()).await {
             tracing::error!("HTTP server stopped: {e}");
         }
     });
@@ -297,6 +311,15 @@ fn router(state: Shared) -> Router {
         .route("/api/adb/qr", post(adb_qr_start))
         .route("/api/adb/qr/{id}", get(adb_qr_status).delete(adb_qr_cancel))
         .route("/api/push", post(push_file).layer(DefaultBodyLimit::max(4usize << 30)))
+        .route("/api/media", get(media::media_list_handler))
+        .route("/api/media/shot", post(media::media_shot_handler).layer(DefaultBodyLimit::max(64usize << 20)))
+        .route("/api/media/file/{name}", get(media::media_file_handler))
+        .route("/api/media/rec/start", post(media::media_rec_start_handler))
+        .route("/api/media/rec/{id}/finish", post(media::media_rec_finish_handler))
+        .route("/api/media/rec/{id}", axum::routing::post(media::media_rec_chunk_handler).delete(media::media_rec_abort_handler).layer(DefaultBodyLimit::max(64usize << 20)))
+        .route("/api/media/{name}", axum::routing::delete(media::media_delete_handler))
+        .route("/api/media/reveal", post(media::media_reveal_handler))
+        .route("/api/settings", axum::routing::get(media::settings_get_handler).put(media::settings_put_handler))
         .route("/ws/stream", get(ws_stream))
         .route("/ws/logcat", get(ws_logcat))
         .layer(middleware::from_fn_with_state(state.clone(), auth))
@@ -717,4 +740,41 @@ async fn adb_qr_cancel(State(st): State<Shared>, Path(id): Path<String>, Query(q
 /// 本机 ~/.ssh 下可用的私钥文件
 async fn ssh_keys() -> Json<serde_json::Value> {
     Json(json!({ "keys": remote::list_keys() }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_state() -> Shared {
+        let cfg = Config {
+            bind: "127.0.0.1".into(),
+            port: 0,
+            https_port: 0,
+            token: None,
+            name: "test".into(),
+            adb: PathBuf::from("adb"),
+            data_dir: std::env::temp_dir().join("droidbridge-test-media"),
+            server_jar: PathBuf::new(),
+            discovery: false,
+            media_dir: None,
+        };
+        Arc::new(AppState {
+            peers: peers::PeerStore::load(cfg.data_dir.join("peers.json")),
+            start_lock: tokio::sync::Mutex::new(()),
+            jobs: std::sync::Mutex::new(HashMap::new()),
+            discovery: discovery::Discovery::new(),
+            wireless: wireless::Wireless::load(cfg.data_dir.join("wireless.json")),
+            uids: std::sync::Mutex::new(HashMap::new()),
+            media_dir_override: None,
+            cfg,
+        })
+    }
+
+    /// 构建 router 不应 panic（重复 path 会在 .route 时 panic）
+    #[test]
+    fn media_routes_register_without_panic() {
+        let st = test_state();
+        let _app = router(st);
+    }
 }
