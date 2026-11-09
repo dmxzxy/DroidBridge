@@ -1,0 +1,1178 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>DroidBridge</title>
+<style>
+:root{
+  color-scheme:dark;
+  --bg:#0e1013;--side:#121418;--surface:#16191e;--raised:#1c1f25;--hover:rgba(255,255,255,.05);--active:rgba(91,141,239,.13);
+  --line:rgba(255,255,255,.07);--line2:rgba(255,255,255,.13);--text:#e6e8ec;--sub:#9aa1ad;--faint:#636a76;
+  --accent:#5b8def;--ok:#3fb27f;--warn:#d6a03c;--bad:#e5534b;--shadow:0 10px 32px rgba(0,0,0,.5);
+}
+@media (prefers-color-scheme:light){:root{
+  color-scheme:light;
+  --bg:#f6f7f9;--side:#eef0f3;--surface:#fff;--raised:#fff;--hover:rgba(0,0,0,.045);--active:rgba(59,111,224,.10);
+  --line:rgba(0,0,0,.07);--line2:rgba(0,0,0,.14);--text:#1d2129;--sub:#5d6470;--faint:#9ba1ab;
+  --accent:#3b6fe0;--ok:#2e9e6b;--warn:#c28a1f;--bad:#d64541;--shadow:0 10px 32px rgba(0,0,0,.14);
+}}
+*{box-sizing:border-box}
+html,body{margin:0;min-height:100%;background:var(--bg);color:var(--text);font:13px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;-webkit-font-smoothing:antialiased}
+button,input,select{font:inherit;color:inherit}
+button{cursor:pointer}
+a{color:var(--accent);text-decoration:none}
+svg{display:block;flex:none}
+body{display:flex}
+
+/* 图标按钮 */
+.ib{width:28px;height:28px;display:inline-grid;place-items:center;border:0;border-radius:6px;background:transparent;color:var(--sub);padding:0;flex:none}
+.ib:hover{background:var(--hover);color:var(--text)}
+.ib svg{width:16px;height:16px}
+.ib.on{color:var(--accent);background:var(--active)}
+.ib:disabled{opacity:.35;cursor:default;background:none}
+
+/* 按钮与表单 */
+.btn{height:32px;padding:0 14px;border-radius:6px;border:1px solid var(--line2);background:transparent;color:var(--text)}
+.btn:hover{background:var(--hover)}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+.btn.primary:hover{filter:brightness(1.08)}
+.btn.danger{background:var(--bad);border-color:var(--bad);color:#fff}
+.btn:disabled{opacity:.6;cursor:default}
+.input,.select{width:100%;height:34px;padding:0 10px;border-radius:6px;border:1px solid var(--line2);background:var(--bg);color:var(--text);outline:none}
+.input:focus,.select:focus{border-color:var(--accent)}
+.input::placeholder{color:var(--faint)}
+
+/* 侧栏 */
+aside{width:252px;flex:none;height:100vh;position:sticky;top:0;display:flex;flex-direction:column;background:var(--side);border-right:1px solid var(--line)}
+.brand{display:flex;align-items:center;gap:8px;height:52px;padding:0 10px 0 16px;font-weight:600;font-size:14px}
+.brand .logo{color:var(--accent)}
+.brand .logo svg{width:18px;height:18px}
+.brand .ib{margin-left:auto}
+.lists{flex:1;overflow:auto;padding:0 8px 16px}
+.sec{display:flex;align-items:center;height:28px;margin-top:14px;padding:0 4px 0 8px;color:var(--faint);font-size:11px;font-weight:600;letter-spacing:.08em}
+.sec:first-child{margin-top:4px}
+.sec .ib{margin-left:auto;width:24px;height:24px}
+.sec .ib svg{width:15px;height:15px}
+.host{display:flex;align-items:center;gap:6px;height:30px;margin-top:4px;padding:0 4px 0 8px;font-size:12px}
+.host .hn{color:var(--sub);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:60%}
+.host .meta{color:var(--faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;min-width:0}
+.host .meta.err{color:var(--bad)}
+.host .ib{width:24px;height:24px;opacity:0}
+.host:hover .ib,.host .ib[aria-expanded=true]{opacity:1}
+@media (hover:none){.host .ib{opacity:1}}
+.dev{position:relative;display:flex;align-items:center;gap:10px;padding:6px 8px;border-radius:6px;cursor:pointer;user-select:none}
+.dev:hover{background:var(--hover)}
+.dev.open{background:var(--active)}
+.dev.open::before{content:"";position:absolute;left:0;top:9px;bottom:9px;width:2px;border-radius:2px;background:var(--accent)}
+.dev .t{flex:1;min-width:0}
+.dev b{display:block;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dev small{display:block;font-size:11px;color:var(--faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dev.na b{color:var(--sub)}
+.dev .st{font-size:11px;color:var(--warn);flex:none}
+.dot{width:6px;height:6px;border-radius:50%;background:var(--faint);flex:none}
+.dot.ok{background:var(--ok)}.dot.warn{background:var(--warn)}.dot.bad{background:var(--bad)}
+.empty{padding:4px 8px;color:var(--faint);font-size:12px}
+.empty.err{color:var(--bad)}
+
+/* 主区域 */
+main{flex:1;min-width:0;min-height:100vh;padding:16px;display:flex;flex-direction:column}
+.grid{display:flex;flex-wrap:wrap;gap:16px;align-items:flex-start}
+.placeholder{margin:auto;text-align:center;color:var(--faint);padding:40px 16px}
+.placeholder svg{width:36px;height:36px;margin:0 auto 12px;stroke-width:1.25}
+.placeholder div{color:var(--sub);font-size:14px;margin-bottom:4px}
+.notice{display:flex;gap:10px;align-items:flex-start;padding:10px 12px;margin-bottom:16px;border:1px solid var(--line);border-radius:8px;background:var(--surface);color:var(--sub);font-size:12px}
+.notice svg{width:16px;height:16px;color:var(--warn);margin-top:1px}
+
+/* 查看器 */
+.viewer{width:320px;max-width:100%;display:flex;flex-direction:column;background:var(--surface);border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.vhead{display:flex;align-items:center;gap:8px;height:40px;padding:0 6px 0 12px;border-bottom:1px solid var(--line)}
+.vhead .name{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.vhead .sub{color:var(--faint);font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;flex:1}
+.vhead .fps{color:var(--faint);font-size:11px;font-variant-numeric:tabular-nums;flex:none}
+.vbody{display:flex}
+.vmain{display:flex;min-width:0}
+.vmain>.vbody{flex:1;min-width:0}
+.vlog{display:none;position:relative;flex:none;min-width:0;border-left:1px solid var(--line)}
+.viewer.with-log .vlog{display:block}
+.viewer.log-bottom .vmain{flex-direction:column}
+.viewer.log-bottom .vlog{width:auto !important;height:38vh;border-left:0;border-top:1px solid var(--line)}
+.viewer.log-bottom .screen canvas{max-height:calc(62vh - 150px)}
+.lpanel{position:absolute;inset:0;display:flex;flex-direction:column;background:var(--surface)}
+.lhead{display:flex;align-items:center;gap:2px;height:36px;padding:0 4px 0 12px;border-bottom:1px solid var(--line);flex:none}
+.ltitle{font-weight:600;font-size:12px}
+.lstate{flex:1;min-width:0;margin-left:8px;color:var(--faint);font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.lbar{display:flex;gap:6px;padding:6px 8px;border-bottom:1px solid var(--line);flex:none}
+.lbar .input,.lbar .select{height:28px;padding:0 8px;font-size:12px}
+.lbar .select{width:auto;flex:none;padding-right:4px}
+.lbar .q{flex:1.3;min-width:0}
+.lapp{position:relative;flex:1;min-width:0}
+.lapp .input{padding-right:30px}
+.lapp .ib{position:absolute;top:1px;right:1px;width:26px;height:26px}
+.lbody{flex:1;min-height:0;overflow:auto;padding:4px 0;background:var(--bg);font:11px/1.55 Consolas,"SF Mono",Menlo,monospace}
+.ll{padding:0 10px;white-space:pre-wrap;word-break:break-all;color:var(--text)}
+.ll .lt{color:var(--faint)}
+.ll b{font-weight:700}
+.ll.l0,.ll.l1{color:var(--sub)}
+.ll.l3{color:var(--warn)}
+.ll.l4,.ll.l5{color:var(--bad)}
+.ll.lm{color:var(--faint)}
+.ljump{position:absolute;right:14px;bottom:12px;height:26px;padding:0 10px;border:1px solid var(--line2);border-radius:13px;background:var(--raised);color:var(--text);font-size:11px;box-shadow:var(--shadow)}
+.vcol{flex:1;min-width:0;display:flex;flex-direction:column}
+.screen{position:relative;display:flex;justify-content:center;align-items:center;min-height:260px;background:#000}
+.screen canvas{display:block;width:auto;height:auto;max-width:100%;max-height:calc(100vh - 150px);touch-action:none;outline:none;cursor:default;user-select:none;-webkit-user-select:none}
+.overlay{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:24px;text-align:center;color:#c4c9d1;font-size:12px;background:rgba(0,0,0,.6);word-break:break-word}
+.overlay.hide{display:none}
+.overlay .btn{color:#fff;border-color:rgba(255,255,255,.25)}
+.spin{width:18px;height:18px;border:2px solid rgba(255,255,255,.2);border-top-color:#fff;border-radius:50%;animation:spin .8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.drop{position:absolute;inset:8px;display:none;align-items:center;justify-content:center;border:1.5px dashed var(--accent);border-radius:8px;background:rgba(91,141,239,.16);color:#fff;font-size:13px;pointer-events:none}
+.viewer.dropping .drop{display:flex}
+.nav{display:flex;justify-content:space-evenly;align-items:center;height:40px;border-top:1px solid var(--line)}
+.nav .ib{width:64px;height:30px}
+.typing{display:none;gap:6px;padding:8px;border-top:1px solid var(--line)}
+.typing.show{display:flex}
+.vtools{width:44px;flex:none;display:flex;flex-direction:column;align-items:center;gap:2px;padding:6px 0;border-left:1px solid var(--line)}
+.vtools .sep{width:18px;height:1px;margin:5px 0;background:var(--line)}
+.viewer:fullscreen{width:100vw !important;border:0;border-radius:0;background:#000;justify-content:center}
+.viewer:fullscreen .vhead,.viewer:fullscreen .vtools,.viewer:fullscreen .typing{display:none}
+.viewer:fullscreen .vbody,.viewer:fullscreen .vcol,.viewer:fullscreen .screen{flex:1}
+.viewer:fullscreen .screen canvas{max-height:calc(100vh - 40px)}
+.viewer:fullscreen .nav{background:var(--surface)}
+
+/* 菜单、对话框、提示 */
+.menu{position:fixed;z-index:50;min-width:176px;padding:4px;background:var(--raised);border:1px solid var(--line);border-radius:8px;box-shadow:var(--shadow)}
+.menu button{display:flex;align-items:center;gap:10px;width:100%;height:32px;padding:0 10px;border:0;border-radius:5px;background:none;text-align:left;white-space:nowrap}
+.menu button:hover{background:var(--hover)}
+.menu button svg{width:15px;height:15px;color:var(--sub)}
+.menu button.danger,.menu button.danger svg{color:var(--bad)}
+.menu .sep{height:1px;margin:4px 6px;background:var(--line)}
+dialog{width:min(400px,calc(100vw - 32px));padding:0;border:1px solid var(--line);border-radius:12px;background:var(--raised);color:var(--text);box-shadow:var(--shadow)}
+dialog::backdrop{background:rgba(0,0,0,.45)}
+.dlg-h{padding:20px 20px 0;font-size:15px;font-weight:600}
+.dlg-d{padding:4px 20px 0;color:var(--sub);font-size:12px}
+.dlg-b{display:grid;gap:14px;padding:16px 20px 4px}
+.dlg-f{display:flex;justify-content:flex-end;gap:8px;padding:16px 20px 20px}
+.field>label{display:block;margin-bottom:6px;color:var(--sub);font-size:12px}
+.field .hint{margin-top:5px;color:var(--faint);font-size:11px}
+.dlg-err{color:var(--bad);font-size:12px;min-height:0}
+.dlg-err:empty{display:none}
+.group{display:grid;gap:2px}
+.group-t{margin:6px 0 4px;color:var(--faint);font-size:11px;font-weight:600;letter-spacing:.08em}
+.row{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:36px}
+.row>span{color:var(--sub)}
+.row .select{width:150px;height:30px}
+.addr{display:flex;align-items:center;gap:6px;font-family:Consolas,"SF Mono",monospace;font-size:12px}
+.switch{position:relative;width:32px;height:18px;flex:none}
+.switch input{position:absolute;opacity:0;inset:0;margin:0;cursor:pointer}
+.switch i{position:absolute;inset:0;border-radius:9px;background:var(--line2);transition:.15s;pointer-events:none}
+.switch i::after{content:"";position:absolute;left:2px;top:2px;width:14px;height:14px;border-radius:50%;background:#fff;transition:.15s}
+.switch input:checked+i{background:var(--accent)}
+.switch input:checked+i::after{transform:translateX(14px)}
+.steps{margin:0;padding-left:18px;color:var(--sub);display:grid;gap:6px}
+.steps b{color:var(--text);font-weight:500}
+.foot{color:var(--faint);font-size:11px}
+.steps2{display:grid;gap:8px}
+.step{display:flex;align-items:center;gap:10px;color:var(--sub)}
+.step.cur{color:var(--text)}
+.step>span:first-child{width:16px;height:16px;display:grid;place-items:center;flex:none}
+.step svg{width:14px;height:14px}
+.st-ok{color:var(--ok)}.st-bad{color:var(--bad)}
+.spin.sm{width:12px;height:12px;border-width:1.5px;border-color:var(--line2);border-top-color:var(--accent)}
+.logline{min-height:16px;color:var(--faint);font:11px/1.4 Consolas,"SF Mono",monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.logbox{margin:0;max-height:220px;overflow:auto;padding:8px 10px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--sub);font:11px/1.5 Consolas,"SF Mono",monospace;white-space:pre-wrap;word-break:break-all}
+.linkbtn{border:0;background:none;padding:0;color:var(--accent);font-size:12px}
+.toasts{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);z-index:60;display:grid;gap:8px;justify-items:center;pointer-events:none}
+.toast{display:flex;align-items:center;gap:8px;max-width:min(480px,calc(100vw - 32px));padding:8px 14px;border:1px solid var(--line);border-radius:8px;background:var(--raised);box-shadow:var(--shadow);font-size:12px}
+.toast .dot{width:6px;height:6px}
+
+/* 顶栏（仅窄屏） */
+.topbar{display:none}
+
+@media (max-width:720px){
+  body{display:block}
+  .topbar{display:flex;align-items:center;gap:6px;position:sticky;top:0;z-index:10;height:48px;padding:0 8px 0 12px;background:var(--side);border-bottom:1px solid var(--line);font-weight:600;font-size:14px}
+  .topbar .logo{color:var(--accent)}
+  .topbar .logo svg{width:18px;height:18px}
+  .topbar .back{display:none;margin-left:-6px}
+  body.viewing .topbar .back{display:inline-grid}
+  body.viewing .topbar .logo{display:none}
+  .topbar .gear{margin-left:auto}
+  aside{width:auto;height:auto;position:static;border-right:0;background:none}
+  aside .brand{display:none}
+  .lists{padding:4px 8px 24px}
+  .dev{padding:9px 8px}
+  main{min-height:0;padding:8px;display:none}
+  body.viewing aside{display:none}
+  body.viewing main{display:flex}
+  .viewer{width:100% !important}
+  .vbody{flex-direction:column}
+  .vmain{flex-direction:column}
+  .vlog{width:auto !important;height:45dvh;border-left:0;border-top:1px solid var(--line)}
+  .vtools{width:auto;flex-direction:row;justify-content:space-between;padding:4px 8px;border-left:0;border-top:1px solid var(--line);overflow-x:auto}
+  .vtools .sep{width:1px;height:18px;margin:0 2px}
+  .screen canvas{max-height:calc(100dvh - 190px)}
+  .notice{margin:8px 8px 0}
+}
+</style>
+</head>
+<body>
+<div class="topbar">
+  <button class="ib back" id="mBack" title="设备列表" aria-label="设备列表"></button>
+  <span class="logo" id="mLogo"></span><span id="mTitle">DroidBridge</span>
+  <button class="ib gear" id="mGear" title="设置" aria-label="设置"></button>
+</div>
+<aside>
+  <div class="brand"><span class="logo" id="logo"></span>DroidBridge<button class="ib" id="gear" title="设置" aria-label="设置"></button></div>
+  <div id="noticeSide"></div>
+  <div class="lists" id="lists"></div>
+</aside>
+<main>
+  <div id="notice"></div>
+  <div class="grid" id="grid"></div>
+  <div class="placeholder" id="placeholder"></div>
+</main>
+<div class="toasts" id="toasts"></div>
+<script>
+'use strict';
+// ---------------- 基础工具 ----------------
+const $ = (s, r = document) => r.querySelector(s);
+function h(tag, attrs, ...kids) {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs || {})) {
+    if (v === undefined || v === null || v === false) continue;
+    if (k === 'class') e.className = v;
+    else if (k === 'html') e.innerHTML = v;
+    else if (k.startsWith('on')) e.addEventListener(k.slice(2), v);
+    else if (k === 'value') e.value = v;
+    else e.setAttribute(k, v === true ? '' : v);
+  }
+  for (const c of kids.flat()) if (c !== null && c !== undefined && c !== false) e.append(c.nodeType ? c : document.createTextNode(c));
+  return e;
+}
+const P = {
+  phone: '<rect x="6" y="2" width="12" height="20" rx="2.5"/><path d="M11 18h2"/>',
+  plus: '<path d="M12 5v14M5 12h14"/>',
+  more: '<circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/>',
+  gear: '<path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/>',
+  x: '<path d="M18 6 6 18M6 6l12 12"/>',
+  max: '<path d="M8 3H5a2 2 0 0 0-2 2v3M21 8V5a2 2 0 0 0-2-2h-3M3 16v3a2 2 0 0 0 2 2h3M16 21h3a2 2 0 0 0 2-2v-3"/>',
+  power: '<path d="M12 2v10"/><path d="M18.4 6.6a9 9 0 1 1-12.77.04"/>',
+  volUp: '<path d="M11 5 6 9H2v6h4l5 4z"/><path d="M15.5 8.5a5 5 0 0 1 0 7M19 5a10 10 0 0 1 0 14"/>',
+  volDown: '<path d="M11 5 6 9H2v6h4l5 4z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/>',
+  rotate: '<path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/>',
+  camera: '<path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3z"/><circle cx="12" cy="13" r="3"/>',
+  keyboard: '<rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/>',
+  paste: '<rect x="8" y="2" width="8" height="4" rx="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/>',
+  bell: '<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/>',
+  sliders: '<path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6"/>',
+  moon: '<path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9z"/>',
+  sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/>',
+  refresh: '<path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/>',
+  upload: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m17 8-5-5-5 5M12 3v12"/>',
+  back: '<path d="M16 5 8 12l8 7z"/>',
+  home: '<circle cx="12" cy="12" r="6.5"/>',
+  recent: '<rect x="6" y="6" width="12" height="12" rx="1.5"/>',
+  chevLeft: '<path d="m15 18-6-6 6-6"/>',
+  copy: '<rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>',
+  edit: '<path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z"/>',
+  trash: '<path d="M3 6h18M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6M10 11v6M14 11v6M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>',
+  check: '<path d="M20 6 9 17l-5-5"/>',
+  download: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5M12 15V3"/>',
+  logs: '<path d="M4 5h16M4 10h16M4 15h10M4 20h6"/>',
+  pause: '<rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/>',
+  play: '<path d="m7 4 13 8-13 8z"/>',
+  target: '<circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="2.5"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/>',
+  alert: '<path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h16.9a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/>',
+};
+const svg = (n) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">${P[n]}</svg>`;
+const ib = (icon, title, onclick, cls) => h('button', { class: 'ib' + (cls ? ' ' + cls : ''), title, 'aria-label': title, type: 'button', onclick, html: svg(icon) });
+const isMobile = () => matchMedia('(max-width:720px)').matches;
+
+// ---------------- 偏好设置 ----------------
+const pref = {
+  get(k, d) { const v = localStorage.getItem('db_' + k); return v === null ? d : v; },
+  set(k, v) { localStorage.setItem('db_' + k, v); },
+};
+const QUALITY = {
+  size: { label: '分辨率', def: '1280', opts: [['720', '720p'], ['1280', '1280p'], ['1920', '1920p'], ['0', '原始']] },
+  rate: { label: '码率', def: '8000000', opts: [['2000000', '2 Mbps'], ['4000000', '4 Mbps'], ['8000000', '8 Mbps'], ['16000000', '16 Mbps'], ['32000000', '32 Mbps']] },
+  fps: { label: '帧率', def: '60', opts: [['30', '30 fps'], ['60', '60 fps'], ['90', '90 fps']] },
+};
+const q = (k) => pref.get(k, QUALITY[k] ? QUALITY[k].def : '');
+
+// ---------------- 提示 ----------------
+function toast(text, opt = {}) {
+  const dot = h('span', { class: 'dot' + (opt.kind ? ' ' + opt.kind : '') });
+  const label = h('span', {}, text);
+  const el = h('div', { class: 'toast' }, opt.kind || opt.sticky ? dot : null, label);
+  $('#toasts').append(el);
+  let timer = null;
+  const api = {
+    set(t, kind) { label.textContent = t; dot.className = 'dot' + (kind ? ' ' + kind : ''); if (!dot.isConnected) el.prepend(dot); return api; },
+    close(ms = 0) { clearTimeout(timer); timer = setTimeout(() => el.remove(), ms); },
+  };
+  if (!opt.sticky) api.close(opt.ms || 2600);
+  return api;
+}
+
+// ---------------- 菜单 ----------------
+let openMenu = null;
+function closeMenu() {
+  if (!openMenu) return;
+  openMenu.anchor.removeAttribute('aria-expanded');
+  openMenu.el.remove();
+  openMenu = null;
+}
+function menu(anchor, items) {
+  const wasOpen = openMenu && openMenu.anchor === anchor;
+  closeMenu();
+  if (wasOpen) return;
+  const el = h('div', { class: 'menu', role: 'menu' });
+  for (const it of items) {
+    if (it === '-') { el.append(h('div', { class: 'sep' })); continue; }
+    el.append(h('button', { class: it.danger ? 'danger' : '', type: 'button', role: 'menuitem', onclick: () => { closeMenu(); it.fn(); } },
+      h('span', { html: svg(it.icon) }).firstChild, it.label));
+  }
+  document.body.append(el);
+  const r = anchor.getBoundingClientRect(), mw = el.offsetWidth, mh = el.offsetHeight;
+  let left = Math.min(r.right - mw, innerWidth - mw - 8); if (left < 8) left = Math.min(r.left, innerWidth - mw - 8);
+  let top = r.bottom + 4; if (top + mh > innerHeight - 8) top = Math.max(8, r.top - mh - 4);
+  el.style.left = left + 'px'; el.style.top = top + 'px';
+  anchor.setAttribute('aria-expanded', 'true');
+  openMenu = { el, anchor, w: innerWidth, h: innerHeight };
+}
+document.addEventListener('pointerdown', e => { if (openMenu && !openMenu.el.contains(e.target) && !openMenu.anchor.contains(e.target)) closeMenu(); }, true);
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeMenu(); });
+addEventListener('resize', () => { if (openMenu && (openMenu.w !== innerWidth || openMenu.h !== innerHeight)) closeMenu(); });
+addEventListener('scroll', closeMenu, true);
+
+// ---------------- 对话框 ----------------
+function dialog({ title, desc, body = [], actions = [], onsubmit, cls }) {
+  const foot = h('div', { class: 'dlg-f' }, actions);
+  const form = h('form', { method: 'dialog', onsubmit: onsubmit ? (e) => { e.preventDefault(); onsubmit(); } : null },
+    h('div', { class: 'dlg-h' }, title), desc ? h('div', { class: 'dlg-d' }, desc) : null,
+    h('div', { class: 'dlg-b' }, body), foot);
+  const dlg = h('dialog', { class: cls }, form);
+  dlg.addEventListener('close', () => dlg.remove());
+  document.body.append(dlg);
+  dlg.showModal();
+  return dlg;
+}
+const field = (label, input, hint) => h('div', { class: 'field' }, h('label', {}, label), input, hint ? h('div', { class: 'hint' }, hint) : null);
+
+function confirmDialog(title, desc, okText, danger) {
+  return new Promise(res => {
+    let ok = false;
+    const dlg = dialog({
+      title, desc,
+      actions: [h('button', { class: 'btn', type: 'button', onclick: () => dlg.close() }, '取消'),
+        h('button', { class: 'btn ' + (danger ? 'danger' : 'primary'), type: 'submit' }, okText)],
+      onsubmit: () => { ok = true; dlg.close(); },
+    });
+    dlg.addEventListener('close', () => res(ok));
+  });
+}
+
+function promptDialog(title, desc, { placeholder = '', value = '', type = 'text', okText = '确定' } = {}) {
+  return new Promise(res => {
+    let result = null;
+    const input = h('input', { class: 'input', type, placeholder, value, autofocus: true });
+    const dlg = dialog({
+      title, desc, body: [input],
+      actions: [h('button', { class: 'btn', type: 'button', onclick: () => dlg.close() }, '取消'), h('button', { class: 'btn primary', type: 'submit' }, okText)],
+      onsubmit: () => { result = input.value; dlg.close(); },
+    });
+    dlg.addEventListener('close', () => res(result));
+  });
+}
+
+// ---------------- API ----------------
+const withToken = (url) => {
+  const t = pref.get('token', '');
+  return t ? url + (url.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(t) : url;
+};
+let tokenAsk = null;
+async function api(path, opts = {}) {
+  const r = await fetch(withToken(path), { ...opts, headers: { 'content-type': 'application/json', ...(opts.headers || {}) } });
+  let body = null;
+  try { body = await r.json(); } catch {}
+  if (r.status === 401) {
+    tokenAsk = tokenAsk || promptDialog('需要访问令牌', '这台 DroidBridge 启用了访问令牌。', { type: 'password', value: pref.get('token', '') }).finally(() => { tokenAsk = null; });
+    const t = await tokenAsk;
+    if (t !== null) { pref.set('token', t.trim()); return api(path, opts); }
+  }
+  if (!r.ok) throw new Error((body && body.error) || ('HTTP ' + r.status));
+  return body;
+}
+
+// ---------------- 电脑与设备 ----------------
+let INFO = null;
+const hosts = new Map();
+const viewers = new Map();
+const STATE_TEXT = { unauthorized: '未授权', offline: '离线', recovery: 'Recovery', sideload: 'Sideload', bootloader: 'Bootloader' };
+const STATE_HINT = { unauthorized: '请在手机上点击“允许 USB 调试”', offline: '设备离线，请重新插拔数据线' };
+
+async function loadPeers() {
+  const peers = await api('/api/peers');
+  const ids = new Set(['local', ...peers.map(p => p.id)]);
+  for (const id of [...hosts.keys()]) if (!ids.has(id)) hosts.delete(id);
+  if (!hosts.has('local')) hosts.set('local', { id: 'local', name: (INFO && INFO.name) || '本机', devices: [] });
+  for (const p of peers) hosts.set(p.id, Object.assign(hosts.get(p.id) || { devices: [] }, p, { remote: true }));
+}
+async function refreshHost(hst) {
+  try { hst.devices = await api('/api/devices?peer=' + encodeURIComponent(hst.id)); hst.error = null; }
+  catch (e) { hst.error = e.message; hst.devices = []; }
+  hst.loaded = true;
+}
+async function refreshAll() {
+  try { await loadPeers(); } catch {}
+  await Promise.all([...hosts.values()].map(refreshHost));
+  renderSide();
+}
+
+function devRows(hst, emptyEl) {
+  if (!hst.loaded) return [h('div', { class: 'empty' }, '正在读取…')];
+  if (hst.error) return [h('div', { class: 'empty err' }, hst.error)];
+  if (!hst.devices.length) return [emptyEl];
+  return hst.devices.map(d => {
+    const key = hst.id + '|' + d.serial, ready = d.state === 'device';
+    return h('div', {
+      class: 'dev' + (viewers.has(key) ? ' open' : '') + (ready ? '' : ' na'), title: d.serial,
+      onclick: () => ready ? openViewer(hst, d) : toast(STATE_HINT[d.state] || ('设备状态：' + d.state)),
+    }, h('span', { class: 'dot ' + (ready ? 'ok' : 'warn') }),
+      h('div', { class: 't' }, h('b', {}, d.model || d.serial), d.model ? h('small', {}, d.serial) : null),
+      ready ? null : h('span', { class: 'st' }, STATE_TEXT[d.state] || d.state));
+  });
+}
+
+function renderSide() {
+  const local = hosts.get('local');
+  const out = [h('div', { class: 'sec' }, '本机')];
+  if (local) out.push(...devRows(local, h('div', { class: 'empty' }, '未检测到设备 · ', h('a', { href: '#', onclick: e => { e.preventDefault(); helpDialog(); } }, '如何连接'))));
+  out.push(h('div', { class: 'sec' }, '远程电脑', ib('plus', '添加远程电脑', () => peerDialog())));
+  const remotes = [...hosts.values()].filter(x => x.remote);
+  if (!remotes.length) out.push(h('div', { class: 'empty' }, '添加局域网内运行 DroidBridge 的电脑'));
+  for (const r of remotes) {
+    const short = r.error ? (/令牌/.test(r.error) ? '令牌错误' : '无法连接') : null;
+    out.push(h('div', { class: 'host', title: r.addr + (r.error ? '\n' + r.error : '') },
+      h('span', { class: 'hn' }, r.name),
+      h('span', { class: 'meta' + (short ? ' err' : '') }, short || r.addr),
+      ib('more', '更多', e => hostMenu(e.currentTarget, r))));
+    if (!r.error) out.push(...devRows(r, h('div', { class: 'empty' }, '没有设备')));
+  }
+  $('#lists').replaceChildren(...out);
+}
+
+function hostMenu(anchor, r) {
+  menu(anchor, [
+    { icon: 'refresh', label: '刷新', fn: async () => { await refreshHost(r); renderSide(); if (r.error) toast(r.error, { kind: 'bad', ms: 4000 }); } },
+    { icon: 'edit', label: '编辑', fn: () => peerDialog(r) },
+    { icon: 'download', label: '通过 SSH 重新安装…', fn: () => peerDialog(r, { install: true }) },
+    '-',
+    { icon: 'trash', label: '移除', danger: true, fn: () => removePeer(r) },
+  ]);
+}
+
+// 添加 / 编辑远程电脑；opts.install=true 时默认打开“通过 SSH 安装”
+function peerDialog(p, opts = {}) {
+  const editing = !!p && !opts.install;
+  const addr = h('input', { class: 'input', value: p ? p.addr : '', placeholder: '192.168.1.20', autofocus: true, required: true, autocomplete: 'off' });
+  const name = h('input', { class: 'input', value: p ? p.name : '', placeholder: '默认使用对方的计算机名', autocomplete: 'off' });
+  const token = h('input', { class: 'input', type: 'password', placeholder: p && p.has_token ? '已设置，留空保持不变' : '对方未设置可不填', autocomplete: 'new-password' });
+  const sshUser = h('input', { class: 'input', placeholder: '默认读取 ~/.ssh/config', autocomplete: 'off' });
+  const sshOn = h('input', { type: 'checkbox' });
+  const sshBox = h('div', { class: 'field', hidden: true }, h('label', {}, 'SSH 用户'), sshUser,
+    h('div', { class: 'hint' }, '使用这台电脑的 SSH 密钥登录，自动上传、编译并注册为开机服务。支持 macOS、Linux。'));
+  const sshRow = h('label', { class: 'row' }, h('span', {}, '对方未安装时，通过 SSH 安装'), h('span', { class: 'switch' }, sshOn, h('i')));
+  const setSsh = (on) => { sshOn.checked = on; sshBox.hidden = !on; ok.textContent = on ? '安装并添加' : (editing ? '保存' : '添加'); };
+  sshOn.onchange = () => setSsh(sshOn.checked);
+  const err = h('div', { class: 'dlg-err' }, p && p.error && !opts.install ? p.error : '');
+  const ok = h('button', { class: 'btn primary', type: 'submit' }, editing ? '保存' : '添加');
+  const cancel = h('button', { class: 'btn', type: 'button', onclick: () => dlg.close() }, '取消');
+  const formBody = [field('地址', addr, '端口默认 8730，可写成 IP:端口'), field('名称', name), field('访问令牌', token)];
+  if (!editing) formBody.push(sshRow, sshBox);
+  formBody.push(err);
+  const dlg = dialog({
+    title: opts.install ? '通过 SSH 重新安装' : editing ? '编辑远程电脑' : '添加远程电脑',
+    desc: opts.install ? '用这台电脑的 SSH 密钥登录对方，安装或更新 DroidBridge 服务。' : editing ? null : '对方电脑需要运行 DroidBridge，并与本机在同一局域网。',
+    body: formBody,
+    actions: [cancel, ok],
+    onsubmit: async () => {
+      err.textContent = '';
+      if (sshOn.checked) return runInstall();
+      ok.disabled = true; ok.textContent = '正在连接…';
+      try {
+        const res = await api(editing ? '/api/peers/' + encodeURIComponent(p.id) : '/api/peers', {
+          method: editing ? 'PUT' : 'POST', body: JSON.stringify({ addr: addr.value, name: name.value, token: token.value }),
+        });
+        dlg.close();
+        toast((editing ? '已保存 ' : '已添加 ') + res.name, { kind: 'ok' });
+        refreshAll();
+      } catch (e) {
+        err.textContent = e.message;
+        ok.disabled = false; setSsh(false);
+        // 对方没有运行 DroidBridge：引导用 SSH 安装
+        if (!editing && /无法连接|拒绝|refused|超时/.test(e.message)) {
+          err.textContent = '对方电脑上没有运行 DroidBridge。可以打开下面的开关，通过 SSH 自动安装。';
+          setSsh(true);
+        }
+      }
+    },
+  });
+  if (opts.install) setSsh(true);
+
+  // ---- SSH 安装：表单替换为步骤进度 ----
+  async function runInstall() {
+    ok.disabled = true;
+    let job;
+    try {
+      job = (await api('/api/install', { method: 'POST', body: JSON.stringify({ addr: addr.value, user: sshUser.value.trim(), name: name.value, token: token.value }) })).job;
+    } catch (e) { err.textContent = e.message; ok.disabled = false; return; }
+    const target = addr.value.trim();
+    const stepsEl = h('div', { class: 'steps2' });
+    const lastEl = h('div', { class: 'logline' });
+    const logEl = h('pre', { class: 'logbox', hidden: true });
+    const logBtn = h('button', { class: 'linkbtn', type: 'button', onclick: () => { logEl.hidden = !logEl.hidden; logBtn.textContent = logEl.hidden ? '查看日志' : '收起日志'; logEl.scrollTop = logEl.scrollHeight; } }, '查看日志');
+    const body = $('.dlg-b', dlg);
+    body.replaceChildren(stepsEl, lastEl, h('div', {}, logBtn), logEl, err);
+    $('.dlg-h', dlg).textContent = '正在安装到 ' + target;
+    const d = $('.dlg-d', dlg); if (d) d.textContent = '可以关闭窗口，安装会在后台继续。';
+    cancel.textContent = '后台运行';
+    ok.hidden = true;
+    let since = 0, lines = [];
+    const t = toast('正在安装到 ' + target + '…', { sticky: true });
+    while (true) {
+      let s;
+      try { s = await api(`/api/install/${job}?since=${since}`); } catch (e) { await new Promise(r => setTimeout(r, 1500)); continue; }
+      since = s.next;
+      if (s.log.length) { lines.push(...s.log); if (lines.length > 500) lines = lines.slice(-500); logEl.textContent = lines.join('\n'); logEl.scrollTop = logEl.scrollHeight; lastEl.textContent = lines[lines.length - 1]; }
+      stepsEl.replaceChildren(...s.steps.map((name, i) => {
+        const last = i === s.steps.length - 1;
+        const icon = !last || s.state === 'done' ? h('span', { class: 'st-ok', html: svg('check') })
+          : s.state === 'failed' ? h('span', { class: 'st-bad', html: svg('x') }) : h('span', { class: 'spin sm' });
+        return h('div', { class: 'step' + (last && s.state === 'running' ? ' cur' : '') }, icon, h('span', {}, name));
+      }));
+      if (s.state === 'running') { t.set('正在安装到 ' + target + '：' + (s.steps[s.steps.length - 1] || '…')); await new Promise(r => setTimeout(r, 800)); continue; }
+      if (s.state === 'done') {
+        t.set('已添加 ' + (s.peer && s.peer.name || target), 'ok'); t.close(3000);
+        refreshAll();
+        if (dlg.open) dlg.close();
+      } else {
+        t.set('安装失败：' + s.error, 'bad'); t.close(6000);
+        err.textContent = s.error;
+        lastEl.textContent = '';
+        cancel.textContent = '关闭';
+      }
+      return;
+    }
+  }
+}
+
+async function removePeer(r) {
+  if (!await confirmDialog('移除远程电脑', `将从列表中移除“${r.name}”，对方电脑不受影响。`, '移除', true)) return;
+  try { await api('/api/peers/' + encodeURIComponent(r.id), { method: 'DELETE' }); } catch (e) { toast(e.message, { kind: 'bad' }); }
+  for (const v of [...viewers.values()]) if (v.host.id === r.id) v.close();
+  refreshAll();
+}
+
+function helpDialog() {
+  const dlg = dialog({
+    title: '连接安卓设备',
+    body: [h('ol', { class: 'steps' },
+      h('li', {}, '在手机上打开 ', h('b', {}, '设置 → 开发者选项 → USB 调试'), '。没有开发者选项时，在“关于手机”里连续点击版本号 7 次。'),
+      h('li', {}, '用数据线连接电脑，在手机弹窗中点击 ', h('b', {}, '允许'), '。'),
+      h('li', {}, '小米、红米等机型还需开启 ', h('b', {}, 'USB 调试（安全设置）'), '，否则无法点击和输入。'),
+      h('li', {}, '设备出现在左侧列表后，点击即可投屏。'))],
+    actions: [h('button', { class: 'btn primary', type: 'button', onclick: () => dlg.close() }, '知道了')],
+  });
+}
+
+function settingsDialog() {
+  const sel = (k) => {
+    const s = h('select', { class: 'select', onchange: () => pref.set(k, s.value) }, QUALITY[k].opts.map(([v, l]) => h('option', { value: v }, l)));
+    s.value = q(k);
+    return h('label', { class: 'row' }, h('span', {}, QUALITY[k].label), s);
+  };
+  const awake = h('input', { type: 'checkbox', onchange: () => pref.set('awake', awake.checked ? '1' : '0') });
+  awake.checked = pref.get('awake', '1') === '1';
+  const copyRow = (text) => h('div', { class: 'addr' }, text, ib('copy', '复制', () => copyText(text)));
+  const addrs = INFO ? (INFO.ips || []).map(ip => copyRow(`${ip}:${INFO.port}`)) : [];
+  const body = [
+    h('div', { class: 'group' }, h('div', { class: 'group-t' }, '画面'), sel('size'), sel('rate'), sel('fps'),
+      h('label', { class: 'row' }, h('span', {}, '投屏时保持屏幕常亮'), h('span', { class: 'switch' }, awake, h('i')))),
+    h('div', { class: 'group' }, h('div', { class: 'group-t' }, '本机'),
+      h('div', { class: 'row' }, h('span', {}, '名称'), h('span', {}, INFO ? INFO.name : '—')),
+      h('div', { class: 'row' }, h('span', {}, '局域网地址'), h('div', {}, addrs.length ? addrs : '—'))),
+    h('div', { class: 'foot' }, '其他电脑添加本机时填写局域网地址；画面设置对之后打开的投屏生效。',
+      INFO ? h('div', {}, `DroidBridge ${INFO.version} · scrcpy-server ${INFO.scrcpy}`) : null),
+  ];
+  const actions = [];
+  if (viewers.size) actions.push(h('button', { class: 'btn', type: 'button', onclick: () => { for (const v of viewers.values()) v.reconnect(); dlg.close(); } }, '重新连接已打开的设备'));
+  actions.push(h('button', { class: 'btn primary', type: 'button', onclick: () => dlg.close() }, '完成'));
+  const dlg = dialog({ title: '设置', body, actions });
+}
+
+function copyText(t) {
+  const done = () => toast('已复制 ' + t);
+  if (navigator.clipboard && isSecureContext) navigator.clipboard.writeText(t).then(done, () => toast(t));
+  else { const i = h('textarea', {}, t); document.body.append(i); i.select(); try { document.execCommand('copy'); done(); } catch { toast(t); } i.remove(); }
+}
+
+// ---------------- 投屏查看器 ----------------
+function avcCodecString(data) {
+  for (let i = 0; i + 4 < data.length; i++) {
+    if (data[i] === 0 && data[i + 1] === 0 && data[i + 2] === 1) {
+      if ((data[i + 3] & 0x1f) === 7 && i + 6 < data.length) {
+        const x = b => b.toString(16).padStart(2, '0');
+        return 'avc1.' + x(data[i + 4]) + x(data[i + 5]) + x(data[i + 6]);
+      }
+      i += 2;
+    }
+  }
+  return null;
+}
+const KEYMAP = { Enter: 66, Backspace: 67, Delete: 112, Tab: 61, ArrowUp: 19, ArrowDown: 20, ArrowLeft: 21, ArrowRight: 22, Home: 122, End: 123, PageUp: 92, PageDown: 93, Insert: 124 };
+const AKEY = { BACK: 4, HOME: 3, APP_SWITCH: 187, POWER: 26, VOLUME_UP: 24, VOLUME_DOWN: 25 };
+
+// ---------------- 设备日志（adb logcat） ----------------
+const LOG_RE = /^\d\d-\d\d\s+(\d\d:\d\d:\d\d\.\d+)\s+(\d+)\s+\d+\s+([VDIWEFA])\s+(.*)$/;
+const LOG_LV = { V: 0, D: 1, I: 2, W: 3, E: 4, F: 5, A: 5 };
+const LOG_MAX = 20000, LOG_DOM = 3000;
+
+class LogPanel {
+  constructor(v) {
+    this.v = v; this.buf = []; this.pkg = ''; this.pids = new Set();
+    this.paused = false; this.pending = 0; this.follow = true; this.queue = []; this.words = [];
+    this.minLv = +pref.get('loglv', '0');
+    const lv = h('select', { class: 'select', title: '级别', onchange: () => { this.minLv = +lv.value; pref.set('loglv', lv.value); this.rerender(); } },
+      [['0', '全部'], ['1', '调试+'], ['2', '信息+'], ['3', '警告+'], ['4', '错误']].map(([val, l]) => h('option', { value: val }, l)));
+    lv.value = String(this.minLv);
+    this.qInput = h('input', { class: 'input q', placeholder: '过滤：关键字或 Tag，-排除', spellcheck: 'false' });
+    let qt = 0;
+    this.qInput.addEventListener('input', () => { clearTimeout(qt); qt = setTimeout(() => { this.setQuery(this.qInput.value); this.rerender(); }, 150); });
+    this.appInput = h('input', { class: 'input', placeholder: '全部应用', title: '只看某个应用：填写包名后回车', spellcheck: 'false' });
+    this.appInput.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); this.sendPkg(this.appInput.value.trim()); } });
+    this.appInput.addEventListener('change', () => this.sendPkg(this.appInput.value.trim()));
+    this.stateEl = h('span', { class: 'lstate' });
+    this.pauseBtn = ib('pause', '暂停', () => this.togglePause());
+    this.list = h('div', { class: 'lbody' });
+    this.jump = h('button', { class: 'ljump', type: 'button', hidden: true, onclick: () => { this.follow = true; this.list.scrollTop = this.list.scrollHeight; this.jump.hidden = true; } }, '跳到最新');
+    this.list.addEventListener('scroll', () => {
+      this.follow = this.list.scrollTop + this.list.clientHeight >= this.list.scrollHeight - 24;
+      this.jump.hidden = this.follow;
+    });
+    this.el = h('div', { class: 'lpanel' },
+      h('div', { class: 'lhead' }, h('span', { class: 'ltitle' }, '日志'), this.stateEl,
+        this.pauseBtn, ib('trash', '清空', () => this.clear()), ib('download', '保存为文件', () => this.save()), ib('x', '关闭日志', () => v.toggleLog(false))),
+      h('div', { class: 'lbar' }, lv, this.qInput,
+        h('div', { class: 'lapp' }, this.appInput, ib('target', '只看当前前台应用', () => this.sendPkg('@top')))),
+      this.list, this.jump);
+    this.connect();
+  }
+
+  connect() {
+    if (this.ws) { const w = this.ws; this.ws = null; try { w.close(); } catch {} }
+    const p = new URLSearchParams({ serial: this.v.dev.serial, peer: this.v.host.id });
+    const t = pref.get('token', ''); if (t) p.set('token', t);
+    const ws = this.ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws/logcat?' + p);
+    this.ended = false;
+    this.setState('正在连接…');
+    ws.onopen = () => { this.setState(''); if (this.pkg) this.sendPkg(this.pkg); };
+    ws.onmessage = e => {
+      const m = JSON.parse(e.data);
+      if (m.type === 'lines') this.add(m.l);
+      else if (m.type === 'filter') this.onFilter(m);
+      else if (m.type === 'notice') toast(m.msg);
+      else if (m.type === 'end') { this.ended = true; this.setState(m.msg, true); }
+    };
+    ws.onclose = () => { if (this.ws === ws && !this.ended) this.setState('日志连接已断开', true); };
+  }
+  destroy() { const w = this.ws; this.ws = null; if (w) try { w.close(); } catch {} }
+
+  setState(text, retry) {
+    this.stateEl.replaceChildren(text, retry ? h('button', { class: 'linkbtn', type: 'button', onclick: () => this.connect() }, ' 重连') : '');
+    this.stateEl.title = text;
+  }
+  updateState() {
+    const parts = [];
+    if (this.pkg) parts.push(this.pids.size ? this.pkg : this.pkg + '（未运行）');
+    if (this.paused) parts.push(`已暂停${this.pending ? ' · 新增 ' + this.pending + ' 行' : ''}`);
+    this.setState(parts.join(' · '));
+  }
+
+  sendPkg(name) {
+    if (this.ws && this.ws.readyState === 1) this.ws.send(JSON.stringify({ t: 'pkg', name }));
+  }
+  onFilter(m) {
+    if (m.pkg !== this.pkg) { this.pkg = m.pkg; this.pids = new Set(); }
+    // 记住应用历次的进程号，重启后之前的日志仍然可见
+    for (const p of m.pids) this.pids.add(p);
+    if (document.activeElement !== this.appInput) this.appInput.value = m.pkg;
+    this.updateState();
+    this.rerender();
+  }
+
+  setQuery(s) {
+    this.words = s.toLowerCase().split(/\s+/).filter(Boolean).map(w => w.startsWith('-') && w.length > 1 ? { neg: true, w: w.slice(1) } : { neg: false, w });
+  }
+  parse(raw) {
+    const m = LOG_RE.exec(raw);
+    return m ? { raw, t: m[1], pid: +m[2], lc: m[3], lv: LOG_LV[m[3]], msg: m[4] } : { raw, t: '', pid: 0, lc: '', lv: -1, msg: raw };
+  }
+  match(e) {
+    if (e.lv >= 0 && e.lv < this.minLv) return false;
+    if (e.lv < 0 && (this.minLv > 0 || this.pkg)) return false;
+    if (this.pkg && !this.pids.has(e.pid) && !e.raw.includes(this.pkg)) return false;
+    if (this.words.length) {
+      const low = e.low || (e.low = e.raw.toLowerCase());
+      for (const { neg, w } of this.words) if (low.includes(w) === neg) return false;
+    }
+    return true;
+  }
+  row(e) {
+    if (e.lv < 0) return h('div', { class: 'll lm' }, e.msg);
+    return h('div', { class: 'll l' + e.lv }, h('span', { class: 'lt' }, e.t), ' ', h('b', {}, e.lc), ' ', e.msg);
+  }
+
+  add(lines) {
+    for (const raw of lines) {
+      const e = this.parse(raw);
+      this.buf.push(e);
+      if (this.match(e)) { if (this.paused) this.pending++; else this.queue.push(e); }
+    }
+    if (this.buf.length > LOG_MAX) this.buf.splice(0, this.buf.length - LOG_MAX);
+    if (this.paused) { this.updateState(); return; }
+    if (!this.raf) this.raf = requestAnimationFrame(() => this.flush());
+  }
+  flush() {
+    this.raf = 0;
+    const q = this.queue.length > LOG_DOM ? this.queue.slice(-LOG_DOM) : this.queue;
+    this.queue = [];
+    if (!q.length) return;
+    const frag = document.createDocumentFragment();
+    for (const e of q) frag.append(this.row(e));
+    this.list.append(frag);
+    let extra = this.list.childElementCount - LOG_DOM;
+    while (extra-- > 0) this.list.firstChild.remove();
+    if (this.follow) this.list.scrollTop = this.list.scrollHeight;
+  }
+  rerender() {
+    this.queue = [];
+    const out = [];
+    for (let i = this.buf.length - 1; i >= 0 && out.length < LOG_DOM; i--) if (this.match(this.buf[i])) out.push(this.buf[i]);
+    const frag = document.createDocumentFragment();
+    for (let i = out.length - 1; i >= 0; i--) frag.append(this.row(out[i]));
+    this.list.replaceChildren(frag);
+    this.follow = true; this.jump.hidden = true;
+    this.list.scrollTop = this.list.scrollHeight;
+  }
+  togglePause() {
+    this.paused = !this.paused;
+    this.pauseBtn.innerHTML = svg(this.paused ? 'play' : 'pause');
+    this.pauseBtn.title = this.paused ? '继续' : '暂停';
+    this.pauseBtn.classList.toggle('on', this.paused);
+    if (!this.paused) { this.pending = 0; this.rerender(); }
+    this.updateState();
+  }
+  clear() { this.buf = []; this.queue = []; this.pending = 0; this.list.replaceChildren(); this.updateState(); }
+  save() {
+    const lines = this.buf.filter(e => this.match(e)).map(e => e.raw);
+    if (!lines.length) { toast('没有可保存的日志'); return; }
+    const name = (this.v.dev.model || this.v.dev.serial).replace(/[^\w.-]/g, '_');
+    const a = h('a', { href: URL.createObjectURL(new Blob([lines.join('\n') + '\n'], { type: 'text/plain' })), download: `${name}-logcat-${new Date().toISOString().replace(/\D/g, '').slice(0, 14)}.txt` });
+    a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+    toast(`已保存 ${lines.length} 行日志`);
+  }
+}
+
+class Viewer {
+  constructor(host, dev) {
+    this.host = host; this.dev = dev; this.key = host.id + '|' + dev.serial;
+    this.vw = 0; this.vh = 0; this.bytes = 0; this.frames = 0; this.lastKeyReq = 0;
+    this.pointers = new Map();
+    this.build();
+    this.connect();
+    this.statTimer = setInterval(() => this.updateStat(), 1000);
+  }
+
+  build() {
+    const key = (code) => () => this.pressKey(code);
+    this.canvas = h('canvas', { tabindex: '0', width: '360', height: '720' });
+    this.ctx = this.canvas.getContext('2d');
+    this.overlay = h('div', { class: 'overlay' });
+    this.dot = h('span', { class: 'dot warn' });
+    this.nameEl = h('span', { class: 'name' }, this.dev.model || this.dev.serial);
+    this.statEl = h('span', { class: 'fps' });
+    this.textInput = h('input', { class: 'input', placeholder: '输入文字，回车发送', enterkeyhint: 'send' });
+    this.textInput.addEventListener('keydown', e => {
+      if (e.key !== 'Enter' || e.isComposing) return;
+      e.preventDefault();
+      const v = this.textInput.value;
+      if (v) { this.send({ t: 'text', text: v }); this.textInput.value = ''; } else this.pressKey(66);
+    });
+    this.typing = h('div', { class: 'typing' }, this.textInput);
+    this.kbBtn = ib('keyboard', '输入文字', () => this.toggleTyping());
+    this.fileInput = h('input', { type: 'file', multiple: true, hidden: true, onchange: () => { this.upload([...this.fileInput.files]); this.fileInput.value = ''; } });
+    this.moreBtn = ib('more', '更多', () => this.moreMenu());
+    this.logBtn = ib('logs', '日志', () => this.toggleLog());
+    this.vlog = h('div', { class: 'vlog' });
+    this.root = h('div', { class: 'viewer' },
+      h('div', { class: 'vhead' }, this.dot, this.nameEl, h('span', { class: 'sub' }, this.host.remote ? this.host.name : ''), this.statEl,
+        ib('max', '全屏', () => this.fullscreen()), ib('x', '关闭', () => this.close())),
+      h('div', { class: 'vmain' },
+      h('div', { class: 'vbody' },
+        h('div', { class: 'vcol' },
+          h('div', { class: 'screen' }, this.canvas, this.overlay, h('div', { class: 'drop' }, '松开以安装 APK 或传到手机')),
+          h('div', { class: 'nav' }, ib('back', '返回', key(AKEY.BACK)), ib('home', '主页', key(AKEY.HOME)), ib('recent', '最近任务', key(AKEY.APP_SWITCH))),
+          this.typing),
+        h('div', { class: 'vtools' },
+          ib('power', '电源键', key(AKEY.POWER)), ib('volUp', '音量 +', key(AKEY.VOLUME_UP)), ib('volDown', '音量 −', key(AKEY.VOLUME_DOWN)),
+          ib('rotate', '旋转屏幕', () => this.send({ t: 'cmd', name: 'rotate' })),
+          h('div', { class: 'sep' }),
+          ib('camera', '截图', () => this.screenshot()), this.kbBtn, this.logBtn, this.moreBtn)),
+      this.vlog),
+      this.fileInput);
+    this.bindInput();
+    this.bindDrop();
+  }
+
+  moreMenu() {
+    menu(this.moreBtn, [
+      { icon: 'bell', label: '下拉通知栏', fn: () => this.send({ t: 'cmd', name: 'notif' }) },
+      { icon: 'sliders', label: '快捷设置', fn: () => this.send({ t: 'cmd', name: 'settings' }) },
+      '-',
+      { icon: 'moon', label: '关闭手机屏幕（投屏继续）', fn: () => this.send({ t: 'power', on: false }) },
+      { icon: 'sun', label: '打开手机屏幕', fn: () => this.send({ t: 'power', on: true }) },
+      '-',
+      { icon: 'paste', label: '粘贴电脑剪贴板', fn: () => this.paste() },
+      { icon: 'upload', label: '安装 APK / 传文件…', fn: () => this.fileInput.click() },
+      '-',
+      { icon: 'refresh', label: '重新连接', fn: () => this.reconnect() },
+    ]);
+  }
+
+  wsUrl() {
+    const p = new URLSearchParams({ serial: this.dev.serial, peer: this.host.id, max_size: q('size'), bit_rate: q('rate'), max_fps: q('fps'), stay_awake: pref.get('awake', '1') });
+    const t = pref.get('token', ''); if (t) p.set('token', t);
+    return (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws/stream?' + p;
+  }
+
+  connect() {
+    this.closed = false; this.gotFrame = false; this.pendingConfig = null; this.needKey = true; this.errorShown = false;
+    this.showOverlay('正在连接…', { spin: true });
+    this.setDot('warn');
+    const ws = this.ws = new WebSocket(this.wsUrl());
+    ws.binaryType = 'arraybuffer';
+    ws.onmessage = e => typeof e.data === 'string' ? this.onText(JSON.parse(e.data)) : this.onBinary(e.data);
+    ws.onclose = () => {
+      if (this.ws !== ws) return;
+      this.setDot('bad');
+      if (!this.closed && !this.errorShown) this.showOverlay('连接已断开', { retry: true });
+    };
+  }
+  reconnect() { this.teardown(); this.connect(); if (this.log) this.log.connect(); }
+  teardown() {
+    if (this.ws) { const w = this.ws; this.ws = null; try { w.close(); } catch {} }
+    if (this.decoder && this.decoder.state !== 'closed') try { this.decoder.close(); } catch {}
+    this.decoder = null; this.decoderReady = false;
+    if (this.pendingFrame) { this.pendingFrame.close(); this.pendingFrame = null; }
+  }
+  close() {
+    this.closed = true;
+    if (this.log) this.log.destroy();
+    this.teardown();
+    clearInterval(this.statTimer);
+    if (document.fullscreenElement === this.root) document.exitFullscreen();
+    this.root.remove();
+    viewers.delete(this.key);
+    afterViewersChange();
+  }
+
+  setDot(c) { this.dot.className = 'dot ' + c; }
+  showOverlay(text, { spin, retry } = {}) {
+    this.overlay.replaceChildren(...[spin ? h('div', { class: 'spin' }) : null, h('div', {}, text),
+      retry ? h('button', { class: 'btn', type: 'button', onclick: () => this.reconnect() }, '重新连接') : null].filter(Boolean));
+    this.overlay.classList.remove('hide');
+  }
+
+  toggleLog(force) {
+    const open = force === undefined ? !this.log : force;
+    if (open && !this.log) { this.log = new LogPanel(this); this.vlog.append(this.log.el); }
+    if (!open && this.log) { this.log.destroy(); this.log = null; this.vlog.replaceChildren(); }
+    this.root.classList.toggle('with-log', !!this.log);
+    this.logBtn.classList.toggle('on', !!this.log);
+    this.fit();
+  }
+
+  // 桌面端布局：窗口宽度跟随画面比例；打开日志时，空间够就放右侧，横屏设备且空间不够时放到画面下方
+  fit() {
+    const r = this.root;
+    if (!this.vw || !this.vh || isMobile()) { r.style.width = ''; this.vlog.style.width = ''; r.classList.remove('log-bottom'); return; }
+    const avail = $('main').clientWidth - 32;
+    const cw = Math.min(this.vw, (innerHeight - 150) * this.vw / this.vh);
+    if (!this.log) { r.classList.remove('log-bottom'); r.style.width = Math.round(Math.max(300, Math.min(cw + 46, avail))) + 'px'; return; }
+    const side = avail - (cw + 46);
+    const portrait = this.vh >= this.vw;
+    if (side >= 360 || portrait || avail - 46 - 400 >= cw * 0.7) {
+      const lw = Math.round(Math.max(side >= 360 ? Math.min(side, 900) : 400, 360));
+      r.classList.remove('log-bottom');
+      this.vlog.style.width = lw + 'px';
+      r.style.width = Math.round(Math.min(avail, cw + 46 + lw)) + 'px';
+    } else {
+      r.classList.add('log-bottom');
+      this.vlog.style.width = '';
+      r.style.width = Math.round(avail) + 'px';
+    }
+  }
+
+  onText(m) {
+    switch (m.type) {
+      case 'status': if (!this.gotFrame) this.showOverlay(m.msg, { spin: true }); break;
+      case 'meta': if (m.device_name) this.nameEl.textContent = m.device_name; this.showOverlay('等待画面…', { spin: true }); break;
+      case 'session':
+        this.vw = m.width; this.vh = m.height;
+        if (this.canvas.width !== m.width || this.canvas.height !== m.height) { this.canvas.width = m.width; this.canvas.height = m.height; }
+        this.fit();
+        break;
+      case 'error': this.errorShown = true; this.setDot('bad'); this.showOverlay(m.msg, { retry: true }); break;
+      case 'log': console.log('[' + this.dev.serial + ']', m.msg); break;
+      case 'clipboard':
+        if (navigator.clipboard && isSecureContext) navigator.clipboard.writeText(m.text).then(() => toast('已同步手机剪贴板'), () => {});
+        break;
+    }
+  }
+
+  ensureDecoder() {
+    if (this.decoder && this.decoder.state !== 'closed') return;
+    this.decoder = new VideoDecoder({
+      output: f => this.onFrame(f),
+      error: () => { this.decoderReady = false; this.needKey = true; this.requestKeyFrame(); },
+    });
+  }
+  requestKeyFrame() {
+    const now = performance.now();
+    if (now - this.lastKeyReq < 1000) return;
+    this.lastKeyReq = now;
+    this.send({ t: 'cmd', name: 'reset_video' });
+  }
+  onBinary(buf) {
+    if (!window.VideoDecoder) return;
+    this.bytes += buf.byteLength;
+    const dv = new DataView(buf);
+    const flags = dv.getUint8(0);
+    const pts = Number(dv.getBigUint64(1));
+    let data = new Uint8Array(buf, 9);
+    if (flags & 1) {
+      this.pendingConfig = data.slice();
+      this.ensureDecoder();
+      try { this.decoder.configure({ codec: avcCodecString(data) || 'avc1.42E01F', optimizeForLatency: true }); this.decoderReady = true; }
+      catch (e) { this.showOverlay('解码器不支持此视频：' + e.message, { retry: true }); }
+      return;
+    }
+    let isKey = !!(flags & 2);
+    if (this.pendingConfig) {
+      const merged = new Uint8Array(this.pendingConfig.length + data.length);
+      merged.set(this.pendingConfig); merged.set(data, this.pendingConfig.length);
+      data = merged; isKey = true; this.pendingConfig = null;
+    }
+    if (!this.decoderReady) { this.requestKeyFrame(); return; }
+    if (this.needKey && !isKey) { this.requestKeyFrame(); return; }
+    if (!isKey && this.decoder.decodeQueueSize > 8) { this.needKey = true; this.requestKeyFrame(); return; }
+    this.needKey = false;
+    try { this.decoder.decode(new EncodedVideoChunk({ type: isKey ? 'key' : 'delta', timestamp: pts, data })); }
+    catch { this.needKey = true; this.requestKeyFrame(); }
+  }
+  onFrame(frame) {
+    if (this.pendingFrame) this.pendingFrame.close();
+    this.pendingFrame = frame;
+    if (!this.raf) this.raf = requestAnimationFrame(() => this.draw());
+  }
+  draw() {
+    this.raf = 0;
+    const f = this.pendingFrame; if (!f) return;
+    this.pendingFrame = null;
+    const w = f.displayWidth, ht = f.displayHeight;
+    if (this.canvas.width !== w || this.canvas.height !== ht) { this.canvas.width = w; this.canvas.height = ht; this.vw = w; this.vh = ht; this.fit(); }
+    if (!this.vw) { this.vw = w; this.vh = ht; }
+    this.ctx.drawImage(f, 0, 0, w, ht);
+    f.close();
+    this.frames++;
+    if (!this.gotFrame) { this.gotFrame = true; this.overlay.classList.add('hide'); this.setDot('ok'); }
+  }
+  updateStat() {
+    if (!this.gotFrame) { this.statEl.textContent = ''; return; }
+    this.statEl.textContent = this.frames + ' fps';
+    this.statEl.title = `${this.vw}×${this.vh} · ${(this.bytes * 8 / 1e6).toFixed(1)} Mbps`;
+    this.frames = 0; this.bytes = 0;
+  }
+
+  send(obj) { if (this.ws && this.ws.readyState === 1) this.ws.send(JSON.stringify(obj)); }
+  pressKey(code, meta = 0) { this.send({ t: 'key', action: 0, code, meta }); this.send({ t: 'key', action: 1, code, meta }); }
+  toggleTyping() {
+    const show = !this.typing.classList.contains('show');
+    this.typing.classList.toggle('show', show);
+    this.kbBtn.classList.toggle('on', show);
+    if (show) this.textInput.focus(); else this.canvas.focus({ preventScroll: true });
+  }
+  async paste() {
+    let text = null;
+    try { if (navigator.clipboard && isSecureContext) text = await navigator.clipboard.readText(); } catch {}
+    if (text === null) text = await promptDialog('粘贴到手机', '浏览器无法读取剪贴板，请在这里粘贴内容。', { okText: '发送' });
+    if (text) this.send({ t: 'clipboard', text, paste: true });
+  }
+  screenshot() {
+    if (!this.gotFrame) return;
+    this.canvas.toBlob(b => {
+      if (!b) return;
+      const a = h('a', { href: URL.createObjectURL(b), download: `${(this.dev.model || this.dev.serial).replace(/[^\w.-]/g, '_')}-${new Date().toISOString().replace(/\D/g, '').slice(0, 14)}.png` });
+      a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+      toast('截图已保存');
+    }, 'image/png');
+  }
+  fullscreen() {
+    if (document.fullscreenElement) document.exitFullscreen();
+    else if (this.root.requestFullscreen) this.root.requestFullscreen().catch(() => {});
+  }
+
+  async upload(files) {
+    for (const f of files) {
+      const apk = /\.apk$/i.test(f.name);
+      const t = toast((apk ? '正在安装 ' : '正在传输 ') + f.name + '…', { sticky: true });
+      try {
+        const qs = new URLSearchParams({ serial: this.dev.serial, peer: this.host.id, name: f.name });
+        const r = await fetch(withToken('/api/push?' + qs), { method: 'POST', body: f });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
+        t.set(j.msg || '完成', 'ok');
+      } catch (e) { t.set((apk ? '安装失败：' : '传输失败：') + e.message, 'bad'); }
+      t.close(4500);
+    }
+  }
+  bindDrop() {
+    let depth = 0;
+    const r = this.root;
+    r.addEventListener('dragenter', e => { if (e.dataTransfer && [...e.dataTransfer.types].includes('Files')) { depth++; r.classList.add('dropping'); } });
+    r.addEventListener('dragleave', () => { if (--depth <= 0) { depth = 0; r.classList.remove('dropping'); } });
+    r.addEventListener('dragover', e => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; });
+    r.addEventListener('drop', e => {
+      e.preventDefault(); e.stopPropagation(); depth = 0; r.classList.remove('dropping');
+      const files = [...(e.dataTransfer.files || [])];
+      if (files.length) this.upload(files);
+    });
+  }
+
+  pos(e) {
+    const r = this.canvas.getBoundingClientRect();
+    const x = Math.round((e.clientX - r.left) / r.width * this.vw);
+    const y = Math.round((e.clientY - r.top) / r.height * this.vh);
+    return { x: Math.max(0, Math.min(this.vw - 1, x)), y: Math.max(0, Math.min(this.vh - 1, y)), w: this.vw, h: this.vh };
+  }
+  bindInput() {
+    const c = this.canvas;
+    const pid = e => e.pointerType === 'mouse' ? -2 : (e.pointerId % 0x7fffffff);
+    const touch = (e, action) => {
+      if (!this.vw) return;
+      this.send({ t: 'touch', action, id: pid(e), ...this.pos(e), p: action === 1 ? 0 : (e.pressure || 1) });
+    };
+    c.addEventListener('pointerdown', e => {
+      if (e.pointerType === 'mouse' && e.button !== 0) return;
+      e.preventDefault(); c.focus({ preventScroll: true });
+      c.setPointerCapture(e.pointerId);
+      this.pointers.set(e.pointerId, true);
+      touch(e, 0);
+    });
+    c.addEventListener('pointermove', e => {
+      if (!this.pointers.has(e.pointerId)) return;
+      e.preventDefault();
+      const evs = e.getCoalescedEvents ? e.getCoalescedEvents() : [];
+      for (const ev of (evs.length ? evs : [e])) touch(ev, 2);
+    });
+    const up = e => { if (!this.pointers.has(e.pointerId)) return; this.pointers.delete(e.pointerId); touch(e, 1); };
+    c.addEventListener('pointerup', up);
+    c.addEventListener('pointercancel', up);
+    c.addEventListener('contextmenu', e => { e.preventDefault(); this.send({ t: 'back', action: 0 }); this.send({ t: 'back', action: 1 }); });
+    c.addEventListener('auxclick', e => { if (e.button === 1) { e.preventDefault(); this.pressKey(AKEY.HOME); } });
+    c.addEventListener('wheel', e => {
+      if (!this.vw) return;
+      e.preventDefault();
+      const k = e.deltaMode === 1 ? 1 / 3 : 1 / 100, cl = v => Math.max(-16, Math.min(16, v));
+      this.send({ t: 'scroll', ...this.pos(e), hs: cl(-e.deltaX * k), vs: cl(-e.deltaY * k) });
+    }, { passive: false });
+    c.addEventListener('keydown', e => {
+      if (e.isComposing) return;
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'v') { e.preventDefault(); this.paste(); return; }
+      if (e.key === 'Escape' && !document.fullscreenElement) { e.preventDefault(); this.pressKey(AKEY.BACK); return; }
+      if (e.ctrlKey && /^[a-z]$/i.test(e.key)) { e.preventDefault(); this.pressKey(29 + e.key.toLowerCase().charCodeAt(0) - 97, 0x3000); return; }
+      const code = KEYMAP[e.key];
+      if (code) { e.preventDefault(); this.send({ t: 'key', action: 0, code, repeat: e.repeat ? 1 : 0, meta: e.shiftKey ? 1 : 0 }); return; }
+      if (e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey) { e.preventDefault(); this.send({ t: 'text', text: e.key }); }
+    });
+    c.addEventListener('keyup', e => {
+      const code = KEYMAP[e.key];
+      if (code) { e.preventDefault(); this.send({ t: 'key', action: 1, code, meta: e.shiftKey ? 1 : 0 }); }
+    });
+  }
+}
+
+function openViewer(hst, dev) {
+  const key = hst.id + '|' + dev.serial;
+  if (isMobile()) document.body.classList.add('viewing');
+  if (viewers.has(key)) { viewers.get(key).root.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); return; }
+  if (!window.VideoDecoder) { showNotice(); toast('当前浏览器无法解码视频'); document.body.classList.remove('viewing'); return; }
+  const v = new Viewer(hst, dev);
+  viewers.set(key, v);
+  $('#grid').append(v.root);
+  afterViewersChange();
+  history.replaceState(null, '', location.search + '#open=' + encodeURIComponent(hst.id) + '|' + encodeURIComponent(dev.serial));
+  if (isMobile()) scrollTo(0, 0);
+}
+
+function afterViewersChange() {
+  $('#placeholder').style.display = viewers.size ? 'none' : '';
+  if (!viewers.size) { document.body.classList.remove('viewing'); history.replaceState(null, '', location.pathname + location.search); }
+  renderSide();
+}
+
+function showNotice() {
+  const text = !isSecureContext
+    ? ['当前通过 HTTP 访问，浏览器不允许解码视频。请改用 ', (() => {
+        const port = (INFO && INFO.https_port) || 8731;
+        const host = location.hostname.includes(':') ? '[' + location.hostname + ']' : location.hostname;
+        const url = `https://${host}:${port}/`;
+        return h('a', { href: url }, url);
+      })(), '（首次需在浏览器中选择继续访问）。']
+    : ['当前浏览器不支持视频解码，请使用新版 Chrome、Edge 或 Safari。'];
+  $('#notice').replaceChildren(h('div', { class: 'notice' }, h('span', { html: svg('alert') }).firstChild, h('div', {}, text)));
+  if (isMobile()) $('#noticeSide').replaceChildren(h('div', { class: 'notice' }, h('span', { html: svg('alert') }).firstChild, h('div', {}, text.map(t => typeof t === 'string' ? t : t.cloneNode(true)))));
+}
+
+// ---------------- 初始化 ----------------
+$('#logo').innerHTML = svg('phone');
+$('#mLogo').innerHTML = svg('phone');
+$('#gear').replaceWith(ib('gear', '设置', settingsDialog));
+$('#mGear').replaceWith(ib('gear', '设置', settingsDialog, 'gear'));
+$('#mBack').innerHTML = svg('chevLeft');
+$('#mBack').onclick = () => document.body.classList.remove('viewing');
+$('#placeholder').append(h('span', { html: svg('phone') }).firstChild, h('div', {}, '选择设备开始投屏'), '设备需开启 USB 调试并连接到电脑');
+addEventListener('resize', () => { for (const v of viewers.values()) v.fit(); });
+addEventListener('dragover', e => e.preventDefault());
+addEventListener('drop', e => { e.preventDefault(); if (e.dataTransfer && e.dataTransfer.files.length) toast('把文件拖到设备画面上即可安装或传输'); });
+
+(async function init() {
+  try {
+    INFO = await api('/api/info');
+    document.title = 'DroidBridge · ' + INFO.name;
+  } catch (e) { toast('无法连接 DroidBridge：' + e.message, { kind: 'bad', ms: 5000 }); }
+  if (!window.VideoDecoder || !isSecureContext) showNotice();
+  await refreshAll();
+  const m = location.hash.match(/^#open=([^|]+)\|(.+)$/);
+  if (m) {
+    const hst = hosts.get(decodeURIComponent(m[1])), serial = decodeURIComponent(m[2]);
+    if (hst) openViewer(hst, (hst.devices || []).find(d => d.serial === serial) || { serial, model: '', state: 'device' });
+  }
+  setInterval(() => { if (!document.hidden) refreshAll(); }, 4000);
+})();
+</script>
+</body>
+</html>

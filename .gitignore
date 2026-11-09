@@ -1,0 +1,9 @@
+/target
+/dist
+/tmp
+/data
+tmp_*
+/third_party/platform-tools/
+/docs/check-*.png
+*.pem
+peers.json

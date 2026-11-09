@@ -1,0 +1,44 @@
+[package]
+name = "droidbridge"
+version = "0.1.0"
+edition = "2024"
+description = "Mirror and control Android devices attached to any computer on your LAN, from a desktop app or browser."
+repository = "https://github.com/dmxzxy/DroidBridge"
+readme = "README.md"
+license = "MIT"
+
+[dependencies]
+axum = { version = "0.8.9", features = ["ws"] }
+axum-server = { version = "0.8.0", features = ["tls-rustls-no-provider"] }
+futures-util = "0.3.34"
+rcgen = { version = "0.14.10", default-features = false, features = ["crypto", "ring", "pem"] }
+rustls = { version = "0.23.46", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+tao = { version = "0.37.2", optional = true }
+tokio = { version = "1.54.1", features = ["full"] }
+tokio-tungstenite = "0.30.0"
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+wry = { version = "0.57.1", optional = true }
+
+[features]
+# 桌面客户端（WebView2 窗口）：cargo build --release --features desktop
+desktop = ["dep:wry", "dep:tao"]
+
+[lib]
+name = "droidbridge"
+path = "src/lib.rs"
+
+[[bin]]
+name = "droidbridge"
+path = "src/main.rs"
+
+[[bin]]
+name = "droidbridge-desktop"
+path = "src/bin/desktop.rs"
+required-features = ["desktop"]
+
+[profile.release]
+lto = "thin"
+strip = true
