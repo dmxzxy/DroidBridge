@@ -162,12 +162,23 @@ dialog::backdrop{background:rgba(0,0,0,.45)}
 .field .hint{margin-top:5px;color:var(--faint);font-size:11px}
 .dlg-err{color:var(--bad);font-size:12px;min-height:0}
 .dlg-err:empty{display:none}
-.group{display:grid;gap:2px}
-.group-t{margin:6px 0 4px;color:var(--faint);font-size:11px;font-weight:600;letter-spacing:.08em}
-.row{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:36px}
-.row>span{color:var(--sub)}
-.row .select{width:150px;height:30px}
-.addr{display:flex;align-items:center;gap:6px;font-family:Consolas,"SF Mono",monospace;font-size:12px}
+dialog.settings{width:min(440px,calc(100vw - 32px))}
+dialog.settings .dlg-b{gap:18px;max-height:calc(100dvh - 160px);overflow:auto;outline:none}
+.set-t{margin:0 0 6px 2px;color:var(--faint);font-size:11px;font-weight:600;letter-spacing:.06em}
+.set-c{border:1px solid var(--line);border-radius:8px;background:var(--surface)}
+.set-r{display:flex;align-items:center;gap:8px;min-height:44px;padding:6px 8px 6px 12px}
+.set-r+.set-r{border-top:1px solid var(--line)}
+.set-r .k{flex:1;min-width:0;display:flex;align-items:baseline;gap:6px;flex-wrap:wrap}
+.set-r .k small{color:var(--faint);font-size:11px}
+.set-r .select{width:132px;height:30px;flex:none}
+.set-r .switch{margin-right:4px}
+.set-r .v{color:var(--sub);min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.set-r .v.mono{font:12px Consolas,"SF Mono",monospace}
+.set-r .v.path{flex:0 1 auto;max-width:55%;direction:rtl;text-align:left;font-size:12px}
+.set-n{display:flex;align-items:center;gap:10px;padding:8px 12px;border-radius:8px;background:var(--active);color:var(--sub);font-size:12px}
+.set-n[hidden]{display:none}
+.set-n span{flex:1}
+.set-ver{margin-right:auto;align-self:center;color:var(--faint);font-size:11px}
 .switch{position:relative;width:32px;height:18px;flex:none}
 .switch input{position:absolute;opacity:0;inset:0;margin:0;cursor:pointer}
 .switch i{position:absolute;inset:0;border-radius:9px;background:var(--line2);transition:.15s;pointer-events:none}
@@ -379,8 +390,6 @@ const EN = {"分辨率":"Resolution",
   "知道了":"Got it",
   "复制":"Copy",
   "画面":"Video",
-  "其他电脑添加本机时填写局域网地址；画面设置对之后打开的投屏生效。":"Other computers add this one by its LAN address. Video settings apply to newly opened devices.",
-  "重新连接已打开的设备":"Reconnect open devices",
   "完成":"Done",
   "设置":"Settings",
   "已复制 ":"Copied ",
@@ -432,8 +441,6 @@ const EN = {"分辨率":"Resolution",
   "把文件拖到设备画面上即可安装或传输":"Drop files on a device screen to install or send them",
   "无法连接 DroidBridge：":"Cannot connect to DroidBridge: ",
   "通过 SSH 重新安装…":"Reinstall over SSH…",
-  "投屏时保持屏幕常亮":"Keep screen awake while mirroring",
-  "局域网地址":"LAN address",
   "过滤：关键字或 Tag，-排除":"Filter: text or tag, -exclude",
   "全部应用":"All apps",
   "只看某个应用：填写包名后回车":"Filter by app: type a package name and press Enter",
@@ -454,6 +461,12 @@ const EN = {"分辨率":"Resolution",
   " · 新增 {0} 行":" · {0} new lines",
   "已保存 {0} 行日志":"Saved {0} log lines",
   "通用":"General",
+  "保持屏幕常亮":"Keep screen awake",
+  "默认转发声音":"Forward audio by default",
+  "同时在手机上播放":"Also play on the device",
+  "截图保存位置":"Save screenshots to",
+  "更改保存位置":"Change location",
+  "已打开的投屏需重新连接才会生效":"Reconnect open devices to apply",
   "无线连接":"Wireless",
   "无线连接设备":"Connect device wirelessly",
   "在局域网中发现":"Found on your network",
@@ -471,8 +484,6 @@ const EN = {"分辨率":"Resolution",
   "设备将连接到「{0}」":"The device will connect to “{0}”",
   "重试":"Retry",
   "声音":"Audio",
-  "默认转发声音（Android 11+）":"Forward audio by default (Android 11+)",
-  "同时在手机上播放（Android 13+）":"Also play on the device (Android 13+)",
   "转发声音":"Forward audio",
   "断开无线连接":"Disconnect wireless",
   "正在断开…":"Disconnecting…",
@@ -533,8 +544,6 @@ const EN = {"分辨率":"Resolution",
   "下载":"Download",
   "删除":"Delete",
   "确定要删除这个文件吗？":"Delete this file?",
-  "媒体目录":"Media folder",
-  "修改":"Change",
   "点击复制":"Click to copy",
   "截图失败：":"Failed to save screenshot: ",
   "「{0}」是 Windows 电脑，请在对方电脑上下载新版本安装包并运行":"“{0}” is a Windows computer; download and run the new version on that computer",
@@ -600,6 +609,7 @@ const P = {
   home: '<circle cx="12" cy="12" r="6.5"/>',
   recent: '<rect x="6" y="6" width="12" height="12" rx="1.5"/>',
   chevLeft: '<path d="m15 18-6-6 6-6"/>',
+  folder: '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
   copy: '<rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>',
   edit: '<path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z"/>',
   trash: '<path d="M3 6h18M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6M10 11v6M14 11v6M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>',
@@ -1178,58 +1188,62 @@ async function wirelessAction(v, path, label) {
 }
 
 function settingsDialog() {
-  const sel = (k) => {
-    const s = h('select', { class: 'select', onchange: () => pref.set(k, s.value) }, QUALITY[k].opts.map(([v, l]) => h('option', { value: v }, l)));
-    s.value = q(k);
-    return h('label', { class: 'row' }, h('span', {}, QUALITY[k].label), s);
+  let note = null;
+  const changed = () => { if (viewers.size && note) note.hidden = false; };
+  const row = (label, ...right) => h('div', { class: 'set-r' }, h('span', { class: 'k' }, label), ...right);
+  const sw = (key, def, onChange) => {
+    const i = h('input', { type: 'checkbox', onchange: () => { pref.set(key, i.checked ? '1' : '0'); if (onChange) onChange(); } });
+    i.checked = pref.get(key, def) === '1';
+    return h('label', { class: 'switch' }, i, h('i'));
   };
-  const awake = h('input', { type: 'checkbox', onchange: () => pref.set('awake', awake.checked ? '1' : '0') });
-  awake.checked = pref.get('awake', '1') === '1';
-  const audio = h('input', { type: 'checkbox', onchange: () => pref.set('audio', audio.checked ? '1' : '0') });
-  audio.checked = pref.get('audio', '0') === '1';
-  const dup = h('input', { type: 'checkbox', onchange: () => pref.set('audiodup', dup.checked ? '1' : '0') });
-  dup.checked = pref.get('audiodup', '0') === '1';
-  const lang = h('select', { class: 'select', onchange: () => { localStorage.setItem('db_lang', lang.value); location.reload(); } },
+  const sel = (k) => {
+    const s = h('select', { class: 'select', 'aria-label': QUALITY[k].label, onchange: () => { pref.set(k, s.value); changed(); } }, QUALITY[k].opts.map(([v, l]) => h('option', { value: v }, l)));
+    s.value = q(k);
+    return row(QUALITY[k].label, s);
+  };
+  const req = (text, v) => [text, h('small', {}, v)];
+  const lang = h('select', { class: 'select', 'aria-label': 'Language', onchange: () => { localStorage.setItem('db_lang', lang.value); location.reload(); } },
     h('option', { value: 'zh' }, '简体中文'), h('option', { value: 'en' }, 'English'));
   lang.value = LANG;
-  const copyRow = (text) => h('div', { class: 'addr' }, text, ib('copy', t('复制'), () => copyText(text)));
-  const addrs = INFO ? (INFO.ips || []).map(ip => copyRow(`${ip}:${INFO.port}`)) : [];
-  // 媒体目录
-  const mediaDirHint = h('div', { class: 'hint' }, '');
-  const mediaDirField = h('div', { class: 'field' }, h('label', {}, t('媒体目录')), mediaDirHint);
-  api('/api/settings').then(r => { mediaDirHint.textContent = r.media_dir || ''; }).catch(() => {});
-  if (isLocalHost()) {
-    const mediaDirInput = h('input', { class: 'input', spellcheck: 'false' });
-    const mediaSave = h('button', { class: 'btn', type: 'button', onclick: async () => {
-      const v = mediaDirInput.value.trim();
-      if (!v) return;
+
+  // 截图和录屏的保存位置：路径过长时保留末尾；本机才能修改或打开
+  let mediaDir = '';
+  const dirText = h('bdi', {}, '…');
+  const dirEl = h('span', { class: 'v path' }, dirText);
+  const setDir = (d) => { mediaDir = d || ''; dirText.textContent = mediaDir || '—'; dirEl.title = mediaDir; };
+  api('/api/settings').then(r => setDir(r.media_dir)).catch(() => setDir(''));
+  const dirTools = isLocalHost() ? [
+    ib('folder', t('打开文件夹'), () => api('/api/media/reveal', { method: 'POST', body: '{}' }).catch(e => toast(e.message, { kind: 'bad' }))),
+    ib('edit', t('更改保存位置'), async () => {
+      const v = await promptDialog(t('更改保存位置'), null, { value: mediaDir, okText: t('保存') });
+      if (v === null || !v.trim() || v.trim() === mediaDir) return;
       try {
-        await api('/api/settings', { method: 'PUT', body: JSON.stringify({ media_dir: v }) });
-        mediaDirHint.textContent = v; toast(t('已保存'), { kind: 'ok' });
+        await api('/api/settings', { method: 'PUT', body: JSON.stringify({ media_dir: v.trim() }) });
+        setDir(v.trim()); toast(t('已保存'), { kind: 'ok' });
       } catch (e) { toast(e.message, { kind: 'bad', ms: 4000 }); }
-    } }, t('修改'));
-    api('/api/settings').then(r => { mediaDirInput.value = r.media_dir || ''; }).catch(() => {});
-    mediaDirField.append(h('div', { style: 'display:flex;gap:8px;margin-top:8px' }, mediaDirInput, mediaSave));
-  }
+    }),
+  ] : [];
+
+  const ips = INFO ? (INFO.ips || []).map(ip => `${ip}:${INFO.port}`) : [];
+  const group = (title, ...rows) => h('section', { class: 'set-g' }, h('div', { class: 'set-t' }, title), h('div', { class: 'set-c' }, rows));
+  note = h('div', { class: 'set-n', hidden: true }, h('span', {}, t('已打开的投屏需重新连接才会生效')),
+    h('button', { class: 'linkbtn', type: 'button', onclick: () => { for (const v of viewers.values()) v.reconnect(); note.hidden = true; } }, t('重新连接')));
   const body = [
-    h('div', { class: 'group' }, h('div', { class: 'group-t' }, t('画面')), sel('size'), sel('rate'), sel('fps'),
-      h('label', { class: 'row' }, h('span', {}, t('投屏时保持屏幕常亮')), h('span', { class: 'switch' }, awake, h('i')))),
-    h('div', { class: 'group' }, h('div', { class: 'group-t' }, t('声音')),
-      h('label', { class: 'row' }, h('span', {}, t('默认转发声音（Android 11+）')), h('span', { class: 'switch' }, audio, h('i'))),
-      h('label', { class: 'row' }, h('span', {}, t('同时在手机上播放（Android 13+）')), h('span', { class: 'switch' }, dup, h('i')))),
-    h('div', { class: 'group' }, h('div', { class: 'group-t' }, t('通用')),
-      h('label', { class: 'row' }, h('span', {}, 'Language / 语言'), lang)),
-    h('div', { class: 'group' }, h('div', { class: 'group-t' }, t('本机')),
-      h('div', { class: 'row' }, h('span', {}, t('名称')), h('span', {}, INFO ? INFO.name : '—')),
-      h('div', { class: 'row' }, h('span', {}, t('局域网地址')), h('div', {}, addrs.length ? addrs : '—')),
-      mediaDirField),
-    h('div', { class: 'foot' }, t('其他电脑添加本机时填写局域网地址；画面设置对之后打开的投屏生效。'),
-      INFO ? h('div', {}, `DroidBridge ${INFO.version} · scrcpy-server ${INFO.scrcpy}`) : null),
+    group(t('画面'), sel('size'), sel('rate'), sel('fps'), row(t('保持屏幕常亮'), sw('awake', '1', changed))),
+    group(t('声音'),
+      row(req(t('默认转发声音'), 'Android 11+'), sw('audio', '0')),
+      row(req(t('同时在手机上播放'), 'Android 13+'), sw('audiodup', '0', changed))),
+    group(t('通用'),
+      row(LANG === 'zh' ? req('语言', 'Language') : req('Language', '语言'), lang),
+      row(t('截图保存位置'), dirEl, ...dirTools)),
+    group(t('本机'),
+      row(t('名称'), h('span', { class: 'v' }, INFO ? INFO.name : '—')),
+      ...(ips.length ? ips : ['—']).map((a, i) => row(i ? '' : t('地址'), h('span', { class: 'v mono' }, a), a === '—' ? null : ib('copy', t('复制'), () => copyText(a))))),
+    note,
   ];
-  const actions = [];
-  if (viewers.size) actions.push(h('button', { class: 'btn', type: 'button', onclick: () => { for (const v of viewers.values()) v.reconnect(); dlg.close(); } }, t('重新连接已打开的设备')));
-  actions.push(h('button', { class: 'btn primary', type: 'button', onclick: () => dlg.close() }, t('完成')));
-  const dlg = dialog({ title: t('设置'), body, actions });
+  const ver = INFO ? h('span', { class: 'set-ver' }, `DroidBridge ${INFO.version} · scrcpy ${INFO.scrcpy}`) : null;
+  const dlg = dialog({ title: t('设置'), body, cls: 'settings', actions: [ver, h('button', { class: 'btn primary', type: 'button', onclick: () => dlg.close() }, t('完成'))] });
+  if (document.activeElement && dlg.contains(document.activeElement)) document.activeElement.blur();
 }
 
 function copyText(text) {

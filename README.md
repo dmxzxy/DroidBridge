@@ -95,7 +95,7 @@ Click the headphones icon in the side toolbar, or turn on **Settings → Audio �
 
 ### Screenshots, recording and gallery
 
-Click the **camera** icon to capture the current screen, or the **record** icon (red dot) to start / stop a screen recording. Screenshots are saved as PNG, recordings as WebM / MP4 (with audio when audio forwarding is on). Files are stored on the node you are connected to, in the **media directory** (default `<data>/media`, changeable in Settings or with `--media-dir`). If the app closes or the page is reloaded mid-recording, the partial file is recovered automatically (a recording left idle for 2 minutes is finalised as a playable file).
+Click the **camera** icon to capture the current screen, or the **record** icon (red dot) to start / stop a screen recording. Screenshots are saved as PNG, recordings as WebM / MP4 (with audio when audio forwarding is on). Files are stored on the node you are connected to, in the **media directory** (default `<data>/media`, changeable in Settings → Save screenshots to, or with `--media-dir`). If the app closes or the page is reloaded mid-recording, the partial file is recovered automatically (a recording left idle for 2 minutes is finalised as a playable file).
 
 Click the **gallery** icon next to the sidebar gear to browse everything: filter by type or device, click a thumbnail to preview (arrow keys / buttons to step, Esc to close), download, reveal in the file manager, or delete.
 
