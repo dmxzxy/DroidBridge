@@ -1,6 +1,6 @@
 [package]
 name = "droidbridge"
-version = "0.5.0"
+version = "0.6.0"
 edition = "2024"
 description = "Mirror and control Android devices attached to any computer on your LAN, from a desktop app or browser."
 repository = "https://github.com/dmxzxy/DroidBridge"
