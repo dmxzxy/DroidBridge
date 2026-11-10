@@ -31,6 +31,7 @@ body{display:flex}
 .ib svg{width:16px;height:16px}
 .ib.on{color:var(--accent);background:var(--active)}
 .ib:disabled{opacity:.35;cursor:default;background:none}
+.ib[hidden]{display:none}
 
 /* 按钮与表单 */
 .btn{height:32px;padding:0 14px;border-radius:6px;border:1px solid var(--line2);background:transparent;color:var(--text)}
@@ -188,6 +189,51 @@ dialog.settings .dlg-b{gap:18px;max-height:calc(100dvh - 160px);overflow:auto;ou
 .steps{margin:0;padding-left:18px;color:var(--sub);display:grid;gap:6px}
 .steps b{color:var(--text);font-weight:500}
 .foot{color:var(--faint);font-size:11px}
+.perf{position:absolute;left:8px;top:8px;z-index:2;min-width:168px;max-width:calc(100% - 16px);padding:6px 9px;border-radius:6px;background:rgba(0,0,0,.62);color:#e8eaed;font:11px/1.6 Consolas,"SF Mono",ui-monospace,monospace;pointer-events:none;-webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px)}
+.perf[hidden]{display:none}
+.perf .pk{color:#9aa1ad;max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.perf .pk.err{color:#ff8a8a;white-space:normal}
+.perf .pr{display:flex;gap:8px;align-items:center;white-space:nowrap}
+.perf .pl{width:32px;flex:none;color:#9aa1ad}
+.perf b{font-size:13px;font-weight:600;min-width:22px}
+.perf svg{width:60px;height:14px;margin-left:auto;flex:none}
+.perf .warn>span:last-child{color:#f5b942}
+.perf .bad>span:last-child{color:#ff7b7b}
+.viewer.synced{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
+.vhead .ib.on{color:var(--accent);background:var(--active)}
+dialog.apps{width:min(600px,calc(100vw - 32px))}
+.apps-bar{display:flex;gap:8px;align-items:center}
+.apps-bar .input{flex:1;min-width:0;height:32px}
+.apps-bar .seg{flex:none}
+.apps-bar .seg button{padding:0 10px}
+.apps-list{height:min(52vh,460px);overflow:auto;margin:0 -8px;padding:0 8px}
+.app{display:flex;align-items:center;gap:10px;min-height:46px;padding:4px 4px 4px 8px;border-radius:6px}
+.app:hover{background:var(--hover)}
+.app .t{flex:1;min-width:0}
+.app b{display:flex;align-items:center;gap:6px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.app small{display:block;color:var(--faint);font:11px Consolas,"SF Mono",monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.app .run{flex:none;font-size:11px;font-weight:400;color:var(--ok)}
+.app .acts{display:flex;gap:2px;flex:none;opacity:.0}
+.app:hover .acts,.app .acts:focus-within,.app:has(.ib[aria-expanded=true]) .acts{opacity:1}
+@media (hover:none){.app .acts{opacity:1}}
+.apps-empty{padding:40px 0;text-align:center;color:var(--faint);display:grid;gap:12px;justify-items:center}
+.apps-n{margin-right:auto;align-self:center;color:var(--faint);font-size:12px}
+.bi-file{display:flex;align-items:center;gap:10px;width:100%;min-height:44px;padding:8px 12px;border:1px dashed var(--line2);border-radius:8px;background:none;color:var(--sub);text-align:left}
+.bi-file:hover{background:var(--hover)}
+.bi-file:focus-visible{outline:none;border-color:var(--accent)}
+.bi-file svg{width:18px;height:18px;flex:none}
+.bi-file b{color:var(--text);font-weight:500}
+.bi-file .t{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bi-list{max-height:min(46vh,380px);overflow:auto;border:1px solid var(--line);border-radius:8px}
+.bi-h{display:flex;align-items:center;gap:8px;padding:8px 12px 4px;color:var(--faint);font-size:11px;font-weight:600;letter-spacing:.04em}
+.bi-h .linkbtn{margin-left:auto;font-size:11px;font-weight:400}
+.bi-d{display:flex;align-items:center;gap:10px;min-height:38px;padding:4px 12px;cursor:pointer}
+.bi-d input{margin:0;accent-color:var(--accent)}
+.bi-d .t{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bi-d .t small{color:var(--faint);font-size:11px;margin-left:6px}
+.bi-d .r{flex:none;display:flex;align-items:center;gap:6px;max-width:55%;font-size:12px;color:var(--sub);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bi-d .r.ok{color:var(--ok)}.bi-d .r.bad{color:var(--bad);white-space:normal}
+.bi-d .r svg{width:14px;height:14px;flex:none}
 .dev .wl{color:var(--faint);flex:none;display:flex}
 .dev .wl svg{width:13px;height:13px}
 .host .upd{flex:none;height:20px;padding:0 7px;border:0;border-radius:10px;background:var(--active);color:var(--accent);font-size:11px;font-weight:600;cursor:pointer;display:inline-flex;align-items:center;gap:4px}
@@ -311,11 +357,11 @@ dialog.gallery .dlg-d{flex:none}
 <div class="topbar">
   <button class="ib back" id="mBack"></button>
   <span class="logo" id="mLogo"></span><span id="mTitle">DroidBridge</span>
-  <button class="ib" id="mGallery"></button>
+  <button class="ib" id="mBatch"></button><button class="ib" id="mGallery"></button>
   <button class="ib gear" id="mGear"></button>
 </div>
 <aside>
-  <div class="brand"><span class="logo" id="logo"></span>DroidBridge<button class="ib" id="gallery"></button><button class="ib" id="gear"></button></div>
+  <div class="brand"><span class="logo" id="logo"></span>DroidBridge<button class="ib" id="batch"></button><button class="ib" id="gallery"></button><button class="ib" id="gear"></button></div>
   <div id="noticeSide"></div>
   <div class="lists" id="lists"></div>
 </aside>
@@ -461,6 +507,57 @@ const EN = {"分辨率":"Resolution",
   " · 新增 {0} 行":" · {0} new lines",
   "已保存 {0} 行日志":"Saved {0} log lines",
   "通用":"General",
+  "性能数据":"Performance",
+  "群控：在这台设备上的操作同步到其他群控设备":"Group control: mirror input on this device to other grouped devices",
+  "再给至少一台设备打开群控":"Turn on group control on at least one more device",
+  "群控：{0} 台设备同步操作":"Group control: {0} devices in sync",
+  "正在读取性能数据…":"Reading performance data…",
+  "应用":"App",
+  "整机":"Total",
+  "内存":"Mem",
+  "温度":"Temp",
+  "电池":"Batt",
+  "电量":"Batt",
+  "充电中":"charging",
+  "应用管理…":"Apps…",
+  "应用管理":"Apps",
+  "搜索名称或包名":"Search name or package",
+  "用户应用":"User",
+  "系统应用":"System",
+  "强制停止":"Force stop",
+  "清除数据…":"Clear data…",
+  "清除“{0}”的数据？":"Clear data of “{0}”?",
+  "应用的全部数据、账号和设置都会被删除，无法恢复。":"All of the app's data, accounts and settings will be deleted. This cannot be undone.",
+  "清除数据":"Clear data",
+  "卸载…":"Uninstall…",
+  "卸载“{0}”？":"Uninstall “{0}”?",
+  "应用及其数据会从设备上删除。":"The app and its data will be removed from the device.",
+  "卸载":"Uninstall",
+  "正在停止":"Stopping",
+  "正在清除":"Clearing",
+  "正在卸载":"Uninstalling",
+  "正在启动":"Launching",
+  "{0} 个应用":"{0} apps",
+  "没有匹配的应用":"No matching apps",
+  "没有应用":"No apps",
+  "正在运行":"Running",
+  "运行中":"running",
+  "启动":"Launch",
+  "正在读取应用列表…":"Loading apps…",
+  "重试":"Retry",
+  "选择 APK 文件":"Choose an APK file",
+  "全选":"All",
+  "重试失败的设备":"Retry failed",
+  "正在安装…":"Installing…",
+  "安装到 {0} 台设备":"Install on {0} devices",
+  "安装":"Install",
+  "安装中":"Installing",
+  "等待设备上确认…":"Confirm on the device…",
+  "已安装":"Installed",
+  "{0} 台安装失败":"Failed on {0} devices",
+  "已安装到 {0} 台设备":"Installed on {0} devices",
+  "批量安装 APK":"Install APK on devices",
+  "没有可用的设备":"No devices available",
   "保持屏幕常亮":"Keep screen awake",
   "默认转发声音":"Forward audio by default",
   "同时在手机上播放":"Also play on the device",
@@ -482,7 +579,6 @@ const EN = {"分辨率":"Resolution",
   "已配对设备在无线调试页面显示的地址，或执行过 adb tcpip 的设备（默认端口 5555）":"The address shown on the Wireless debugging page of a paired device, or a device in adb tcpip mode (default port 5555)",
   "连接":"Connect",
   "设备将连接到「{0}」":"The device will connect to “{0}”",
-  "重试":"Retry",
   "声音":"Audio",
   "转发声音":"Forward audio",
   "断开无线连接":"Disconnect wireless",
@@ -610,6 +706,11 @@ const P = {
   recent: '<rect x="6" y="6" width="12" height="12" rx="1.5"/>',
   chevLeft: '<path d="m15 18-6-6 6-6"/>',
   folder: '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
+  activity: '<path d="M22 12h-4l-3 9L9 3l-3 9H2"/>',
+  grid: '<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>',
+  link: '<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>',
+  package: '<path d="m7.5 4.27 9 5.15"/><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22V12"/>',
+  eraser: '<path d="m7 21-4.3-4.3c-1-1-1-2.5 0-3.4l9.6-9.6c1-1 2.5-1 3.4 0l5.6 5.6c1 1 1 2.5 0 3.4L13 21"/><path d="M22 21H7"/><path d="m5 11 9 9"/>',
   copy: '<rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>',
   edit: '<path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z"/>',
   trash: '<path d="M3 6h18M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6M10 11v6M14 11v6M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>',
@@ -625,6 +726,7 @@ const P = {
   alert: '<path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h16.9a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/>',
 };
 const svg = (n) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">${P[n]}</svg>`;
+const SYNC_TYPES = new Set(['touch', 'scroll', 'key', 'text', 'back', 'cmd', 'power', 'clipboard']);
 const ib = (icon, title, onclick, cls) => h('button', { class: 'ib' + (cls ? ' ' + cls : ''), title, 'aria-label': title, type: 'button', onclick, html: svg(icon) });
 const isMobile = () => matchMedia('(max-width:720px)').matches;
 
@@ -675,7 +777,7 @@ function menu(anchor, items) {
     el.append(h('button', { class: it.danger ? 'danger' : '', type: 'button', role: 'menuitem', onclick: () => { closeMenu(); it.fn(); } },
       h('span', { html: svg(it.icon) }).firstChild, it.label));
   }
-  document.body.append(el);
+  (anchor.closest('dialog[open]') || document.body).append(el);
   const r = anchor.getBoundingClientRect(), mw = el.offsetWidth, mh = el.offsetHeight;
   let left = Math.min(r.right - mw, innerWidth - mw - 8); if (left < 8) left = Math.min(r.left, innerWidth - mw - 8);
   let top = r.bottom + 4; if (top + mh > innerHeight - 8) top = Math.max(8, r.top - mh - 4);
@@ -1246,6 +1348,142 @@ function settingsDialog() {
   if (document.activeElement && dlg.contains(document.activeElement)) document.activeElement.blur();
 }
 
+// ---------------- 应用管理 ----------------
+function appsDialog(v) {
+  const peer = v.host.id, serial = v.dev.serial;
+  let apps = [], kind = 'user';
+  const search = h('input', { class: 'input', type: 'search', placeholder: t('搜索名称或包名'), spellcheck: 'false', oninput: () => render() });
+  const segBtn = (k, label) => h('button', { type: 'button', class: k === kind ? 'on' : '', onclick: e => { kind = k; [...seg.children].forEach(b => b.classList.toggle('on', b === e.currentTarget)); render(); } }, label);
+  const seg = h('div', { class: 'seg sm' }, segBtn('user', t('用户应用')), segBtn('system', t('系统应用')));
+  const list = h('div', { class: 'apps-list' });
+  const count = h('span', { class: 'apps-n' });
+  const call = async (a, action, label) => {
+    const tt = toast(label + ' ' + (a.name || a.pkg) + '…', { sticky: true });
+    try {
+      const r = await api('/api/apps/action?peer=' + encodeURIComponent(peer), { method: 'POST', body: JSON.stringify({ serial, pkg: a.pkg, action }) });
+      tt.set(r.msg + ' · ' + (a.name || a.pkg), 'ok'); tt.close(2500);
+      if (action === 'uninstall') apps = apps.filter(x => x !== a);
+      else a.running = action === 'launch' || (action === 'stop' || action === 'clear' ? false : a.running);
+      render();
+    } catch (e) { tt.set(e.message, 'bad'); tt.close(7000); }
+  };
+  const more = (btn, a) => menu(btn, [
+    { icon: 'stop', label: t('强制停止'), fn: () => call(a, 'stop', t('正在停止')) },
+    { icon: 'eraser', label: t('清除数据…'), fn: async () => { if (await confirmDialog(t('清除“{0}”的数据？', a.name || a.pkg), t('应用的全部数据、账号和设置都会被删除，无法恢复。'), t('清除数据'), true)) call(a, 'clear', t('正在清除')); } },
+    a.system ? null : { icon: 'trash', label: t('卸载…'), danger: true, fn: async () => { if (await confirmDialog(t('卸载“{0}”？', a.name || a.pkg), t('应用及其数据会从设备上删除。'), t('卸载'), true)) call(a, 'uninstall', t('正在卸载')); } },
+  ].filter(Boolean));
+  function render() {
+    const q = search.value.trim().toLowerCase();
+    const shown = apps.filter(a => (kind === 'system') === a.system && (!q || a.pkg.toLowerCase().includes(q) || (a.name || '').toLowerCase().includes(q)));
+    count.textContent = t('{0} 个应用', shown.length);
+    if (!shown.length) { list.replaceChildren(h('div', { class: 'apps-empty' }, q ? t('没有匹配的应用') : t('没有应用'))); return; }
+    list.replaceChildren(...shown.map(a => h('div', { class: 'app' },
+      h('div', { class: 't' }, h('b', {}, h('span', {}, a.name || a.pkg), a.running ? h('span', { class: 'run', title: t('正在运行') }, '● ' + t('运行中')) : null), a.name ? h('small', {}, a.pkg) : null),
+      h('div', { class: 'acts' }, ib('play', t('启动'), () => call(a, 'launch', t('正在启动'))), ib('more', t('更多'), e => more(e.currentTarget, a))))));
+  }
+  async function load() {
+    list.replaceChildren(h('div', { class: 'apps-empty' }, h('span', { class: 'spin' }), t('正在读取应用列表…')));
+    count.textContent = '';
+    try {
+      const r = await api('/api/apps?peer=' + encodeURIComponent(peer), { method: 'POST', body: JSON.stringify({ serial }) });
+      const coll = new Intl.Collator(LANG === 'zh' ? 'zh-CN' : 'en');
+      apps = r.apps.sort((a, b) => coll.compare(a.name || a.pkg, b.name || b.pkg));
+      render();
+    } catch (e) {
+      list.replaceChildren(h('div', { class: 'apps-empty' }, h('span', {}, e.message), h('button', { class: 'btn', type: 'button', onclick: load }, t('重试'))));
+    }
+  }
+  const dlg = dialog({
+    title: t('应用管理') + ' · ' + (v.nameEl.textContent || serial), cls: 'apps',
+    body: [h('div', { class: 'apps-bar' }, search, seg, ib('refresh', t('刷新'), load)), list],
+    actions: [count, h('button', { class: 'btn', type: 'button', onclick: () => dlg.close() }, t('关闭'))],
+  });
+  load();
+}
+
+// ---------------- 批量安装 ----------------
+function batchInstallDialog(initial) {
+  let file = initial || null, running = false, done = false;
+  const picker = h('input', { type: 'file', accept: '.apk', hidden: true, onchange: () => { if (picker.files[0]) { file = picker.files[0]; showFile(); } picker.value = ''; } });
+  const fileBtn = h('button', { class: 'bi-file', type: 'button', onclick: () => !running && picker.click() });
+  const showFile = () => {
+    fileBtn.replaceChildren(h('span', { html: svg('package') }).firstChild, file
+      ? h('span', { class: 't' }, h('b', {}, file.name), '  ' + (file.size < 1048576 ? Math.max(1, Math.round(file.size / 1024)) + ' KB' : (file.size / 1048576).toFixed(1) + ' MB'))
+      : h('span', { class: 't' }, t('选择 APK 文件')));
+    update();
+  };
+  const rows = [];
+  const groups = [];
+  for (const hst of hosts.values()) {
+    if (hst.error) continue;
+    const ready = (hst.devices || []).filter(d => d.state === 'device');
+    if (!ready.length) continue;
+    const mine = [];
+    for (const d of ready) {
+      const cb = h('input', { type: 'checkbox', checked: true, onchange: () => update() });
+      const res = h('span', { class: 'r' });
+      const row = { hst, d, cb, res };
+      mine.push(row); rows.push(row);
+    }
+    const all = h('button', { class: 'linkbtn', type: 'button', onclick: () => { const on = !mine.every(r => r.cb.checked); mine.forEach(r => r.cb.checked = on); update(); } }, t('全选'));
+    groups.push(h('div', {}, h('div', { class: 'bi-h' }, hst.remote ? hst.name : t('本机'), all),
+      ...mine.map(r => h('label', { class: 'bi-d' }, r.cb, h('span', { class: 't' }, r.d.model || r.d.serial, r.d.model ? h('small', {}, r.d.serial) : null), r.res))));
+  }
+  const ok = h('button', { class: 'btn primary', type: 'submit' });
+  const retry = h('button', { class: 'btn', type: 'button', hidden: true, onclick: () => start(rows.filter(r => r.failed)) }, t('重试失败的设备'));
+  function update() {
+    if (done) { ok.textContent = t('完成'); ok.disabled = false; return; }
+    const n = rows.filter(r => r.cb.checked).length;
+    ok.textContent = running ? t('正在安装…') : n ? t('安装到 {0} 台设备', n) : t('安装');
+    ok.disabled = running || !file || !n;
+  }
+  const setRes = (r, kind, text, icon) => { r.res.className = 'r' + (kind ? ' ' + kind : ''); r.res.replaceChildren(icon || '', text); r.res.title = text; };
+  async function installOne(r) {
+    r.failed = false;
+    setRes(r, '', t('安装中'), h('span', { class: 'spin sm' }));
+    // 部分手机（OPPO、vivo、小米等）需要在设备上点“安装”确认
+    const slow = setTimeout(() => setRes(r, '', t('等待设备上确认…'), h('span', { class: 'spin sm' })), 10000);
+    try {
+      const qs = new URLSearchParams({ serial: r.d.serial, peer: r.hst.id, name: file.name, lang: LANG });
+      const resp = await fetch(withToken('/api/push?' + qs), { method: 'POST', body: file });
+      const j = await resp.json().catch(() => ({}));
+      if (!resp.ok) throw new Error(j.error || ('HTTP ' + resp.status));
+      setRes(r, 'ok', t('已安装'), h('span', { html: svg('check') }).firstChild);
+    } catch (e) {
+      r.failed = true;
+      setRes(r, 'bad', e.message.replace(/^adb .*? (失败|failed)[:：]\s*/, ''));
+    } finally { clearTimeout(slow); }
+  }
+  async function start(list) {
+    running = true; done = false; retry.hidden = true;
+    rows.forEach(r => r.cb.disabled = true);
+    update();
+    // 同时最多装 4 台
+    const queue = [...list];
+    await Promise.all(Array.from({ length: Math.min(4, queue.length) }, async () => { while (queue.length) await installOne(queue.shift()); }));
+    running = false; done = true;
+    const failed = rows.filter(r => r.failed).length;
+    retry.hidden = !failed;
+    update();
+    toast(failed ? t('{0} 台安装失败', failed) : t('已安装到 {0} 台设备', list.length), { kind: failed ? 'bad' : 'ok' });
+  }
+  const dlg = dialog({
+    title: t('批量安装 APK'), cls: 'wide',
+    body: [fileBtn, picker, groups.length ? h('div', { class: 'bi-list' }, groups) : h('div', { class: 'empty' }, t('没有可用的设备'))],
+    actions: [retry, h('button', { class: 'btn', type: 'button', onclick: () => dlg.close() }, t('关闭')), ok],
+    onsubmit: () => { if (done) dlg.close(); else if (!running) start(rows.filter(r => r.cb.checked)); },
+  });
+  showFile();
+  if (document.activeElement === fileBtn) fileBtn.blur();
+}
+// 把 APK 拖到窗口空白处（不在投屏画面上）：批量安装
+document.addEventListener('dragover', e => { if (e.dataTransfer && [...e.dataTransfer.types].includes('Files')) e.preventDefault(); });
+document.addEventListener('drop', e => {
+  const f = [...((e.dataTransfer && e.dataTransfer.files) || [])].find(x => /\.apk$/i.test(x.name));
+  e.preventDefault();
+  if (f && !document.querySelector('dialog[open]')) batchInstallDialog(f);
+});
+
 function copyText(text) {
   const done = () => toast(t('已复制 ') + text);
   if (navigator.clipboard && isSecureContext) navigator.clipboard.writeText(text).then(done, () => toast(text));
@@ -1518,21 +1756,25 @@ class Viewer {
     this.audioBtn.classList.toggle('on', this.audioOn);
     this.recBtn = ib('record', t('录制屏幕'), () => this.toggleRecord());
     this.recEl = h('span', { class: 'rec', hidden: true });
+    this.perfBtn = ib('activity', t('性能数据'), () => this.togglePerf());
+    this.perfEl = h('div', { class: 'perf', hidden: true });
+    this.syncBtn = ib('link', t('群控：在这台设备上的操作同步到其他群控设备'), () => this.toggleSync());
+    this.syncBtn.hidden = viewers.size < 1;
     this.vlog = h('div', { class: 'vlog' });
     this.root = h('div', { class: 'viewer' },
       h('div', { class: 'vhead' }, this.dot, this.nameEl, this.recEl, h('span', { class: 'sub' }, this.host.remote ? this.host.name : ''), this.statEl,
-        ib('max', t('全屏'), () => this.fullscreen()), ib('x', t('关闭'), () => this.close())),
+        this.syncBtn, ib('max', t('全屏'), () => this.fullscreen()), ib('x', t('关闭'), () => this.close())),
       h('div', { class: 'vmain' },
       h('div', { class: 'vbody' },
         h('div', { class: 'vcol' },
-          h('div', { class: 'screen' }, this.canvas, this.overlay, h('div', { class: 'drop' }, t('松开以安装 APK 或传到手机'))),
+          h('div', { class: 'screen' }, this.canvas, this.overlay, this.perfEl, h('div', { class: 'drop' }, t('松开以安装 APK 或传到手机'))),
           h('div', { class: 'nav' }, ib('back', t('返回'), key(AKEY.BACK)), ib('home', t('主页'), key(AKEY.HOME)), ib('recent', t('最近任务'), key(AKEY.APP_SWITCH))),
           this.typing),
         h('div', { class: 'vtools' },
           ib('power', t('电源键'), key(AKEY.POWER)), ib('volUp', t('音量 +'), key(AKEY.VOLUME_UP)), ib('volDown', t('音量 −'), key(AKEY.VOLUME_DOWN)),
           ib('rotate', t('旋转屏幕'), () => this.send({ t: 'cmd', name: 'rotate' })),
           h('div', { class: 'sep' }),
-          ib('camera', t('截取屏幕'), () => this.screenshot()), this.recBtn, this.kbBtn, this.audioBtn, this.logBtn, this.moreBtn)),
+          ib('camera', t('截取屏幕'), () => this.screenshot()), this.recBtn, this.kbBtn, this.audioBtn, this.logBtn, this.perfBtn, this.moreBtn)),
       this.vlog),
       this.fileInput);
     this.bindInput();
@@ -1541,6 +1783,8 @@ class Viewer {
 
   moreMenu() {
     menu(this.moreBtn, [
+      { icon: 'grid', label: t('应用管理…'), fn: () => appsDialog(this) },
+      '-',
       { icon: 'bell', label: t('下拉通知栏'), fn: () => this.send({ t: 'cmd', name: 'notif' }) },
       { icon: 'sliders', label: t('快捷设置'), fn: () => this.send({ t: 'cmd', name: 'settings' }) },
       '-',
@@ -1579,7 +1823,7 @@ class Viewer {
   }
   /** 手动重连：清零失败计数 */
   reconnect() { this.recovering = false; this.fails = 0; this.restart(); }
-  restart() { this.teardown(); this.connect(); if (this.log) this.log.connect(); }
+  restart() { this.teardown(); this.connect(); if (this.log) this.log.connect(); if (this.perfOn) { this.closePerf(); this.openPerf(); } }
 
   /** 连接断开后自动恢复：设备在线就重连（失败多次后停止），设备不在就等它回来 */
   async onLost() {
@@ -1627,6 +1871,7 @@ class Viewer {
   }
   close() {
     this.closed = true; this.recovering = false;
+    this.perfOn = false; this.closePerf();
     if (this.recording) this.stopRecord();
     if (this.log) this.log.destroy();
     this.teardown();
@@ -1760,7 +2005,73 @@ class Viewer {
     this.frames = 0; this.bytes = 0;
   }
 
-  send(obj) { if (this.ws && this.ws.readyState === 1) this.ws.send(JSON.stringify(obj)); }
+  sendRaw(obj) { if (this.ws && this.ws.readyState === 1) this.ws.send(JSON.stringify(obj)); }
+  /** 发送控制消息；开启群控时同步给其他群控设备（坐标按各自分辨率等比换算） */
+  send(obj) {
+    this.sendRaw(obj);
+    if (!this.sync || !SYNC_TYPES.has(obj.t) || (obj.t === 'cmd' && obj.name === 'reset_video')) return;
+    for (const v of viewers.values()) {
+      if (v === this || !v.sync) continue;
+      if (obj.w) { if (v.vw) v.sendRaw({ ...obj, x: Math.round(obj.x / obj.w * v.vw), y: Math.round(obj.y / obj.h * v.vh), w: v.vw, h: v.vh }); }
+      else v.sendRaw(obj);
+    }
+  }
+  toggleSync(on = !this.sync) {
+    this.sync = on;
+    this.root.classList.toggle('synced', on);
+    this.syncBtn.classList.toggle('on', on);
+    if (!on) return;
+    const n = [...viewers.values()].filter(v => v.sync).length;
+    toast(n < 2 ? t('再给至少一台设备打开群控') : t('群控：{0} 台设备同步操作', n));
+  }
+
+  togglePerf() {
+    this.perfOn = !this.perfOn;
+    this.perfBtn.classList.toggle('on', this.perfOn);
+    this.perfEl.hidden = !this.perfOn;
+    this.closePerf();
+    if (this.perfOn) { this.perfHist = []; this.perfEl.replaceChildren(h('div', { class: 'pk' }, t('正在读取性能数据…'))); this.openPerf(); }
+  }
+  closePerf() { if (this.perfWs) { const w = this.perfWs; this.perfWs = null; try { w.close(); } catch {} } clearTimeout(this.perfRetry); }
+  openPerf() {
+    const p = new URLSearchParams({ serial: this.dev.serial, peer: this.host.id, lang: LANG });
+    const tk = pref.get('token', ''); if (tk) p.set('token', tk);
+    const ws = this.perfWs = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws/perf?' + p);
+    ws.onmessage = e => {
+      if (this.perfWs !== ws) return;
+      const m = JSON.parse(e.data);
+      if (m.type === 'perf') this.renderPerf(m);
+      else if (m.msg) this.perfEl.replaceChildren(h('div', { class: 'pk err' }, m.msg));
+    };
+    // 断开后（设备暂时断线等）每 3 秒重试，直到关闭浮层
+    ws.onclose = () => {
+      if (this.perfWs !== ws) return;
+      this.perfWs = null;
+      if (this.perfOn && !this.closed) this.perfRetry = setTimeout(() => { if (this.perfOn && !this.perfWs && !this.closed) this.openPerf(); }, 3000);
+    };
+  }
+  renderPerf(m) {
+    const hist = this.perfHist;
+    if (m.fps != null) { hist.push(m.fps); if (hist.length > 40) hist.shift(); }
+    const n = v => v == null ? '–' : (v < 10 && v % 1 ? v.toFixed(1) : Math.round(v));
+    const row = (k, v, cls) => h('div', { class: 'pr' + (cls ? ' ' + cls : '') }, h('span', { class: 'pl' }, k), h('span', {}, v));
+    const pair = (a, b) => [a, b].filter(Boolean).join(' · ') || '–';
+    let spark = null;
+    if (hist.length > 1) {
+      const max = Math.max(60, ...hist), w = 60, ht = 14, step = w / 39;
+      const pts = hist.map((v, i) => (w - (hist.length - 1 - i) * step).toFixed(1) + ',' + (ht - 1 - v / max * (ht - 2)).toFixed(1)).join(' ');
+      spark = h('span', { html: `<svg viewBox="0 0 ${w} ${ht}" fill="none" stroke="#7aa7ff" stroke-width="1.2" stroke-linejoin="round"><polyline points="${pts}"/></svg>` }).firstChild;
+    }
+    const temp = m.cpu_temp ?? m.batt_temp;
+    this.perfEl.replaceChildren(
+      h('div', { class: 'pk' }, m.pkg || '—'),
+      h('div', { class: 'pr' }, h('span', { class: 'pl' }, 'FPS'), h('b', {}, n(m.fps)), spark),
+      row('CPU', pair(m.app_cpu != null && t('应用') + ' ' + n(m.app_cpu) + '%', m.cpu != null && t('整机') + ' ' + n(m.cpu) + '%')),
+      row(t('内存'), pair(m.app_mem != null && t('应用') + ' ' + m.app_mem + ' MB', m.mem_total && t('整机') + ' ' + Math.round(m.mem_used / m.mem_total * 100) + '%')),
+      row(t('温度'), pair(m.cpu_temp != null && 'CPU ' + Math.round(m.cpu_temp) + '°C', m.batt_temp != null && t('电池') + ' ' + m.batt_temp.toFixed(1) + '°C'), temp >= 55 ? 'bad' : temp >= 45 ? 'warn' : ''),
+      row(t('电量'), m.level == null ? '–' : m.level + '%' + (m.charging ? ' · ' + t('充电中') : ''), m.level != null && m.level <= 15 && !m.charging ? 'warn' : ''),
+    );
+  }
   pressKey(code, meta = 0) { this.send({ t: 'key', action: 0, code, meta }); this.send({ t: 'key', action: 1, code, meta }); }
   toggleTyping() {
     const show = !this.typing.classList.contains('show');
@@ -2002,6 +2313,8 @@ function openViewer(hst, dev) {
 }
 
 function afterViewersChange() {
+  // 群控至少需要两台设备
+  for (const v of viewers.values()) { v.syncBtn.hidden = viewers.size < 2; if (viewers.size < 2 && v.sync) v.toggleSync(false); }
   $('#placeholder').style.display = viewers.size ? 'none' : '';
   if (!viewers.size) { document.body.classList.remove('viewing'); history.replaceState(null, '', location.pathname + location.search); }
   renderSide();
@@ -2240,6 +2553,8 @@ async function openGallery(locate) {
 $('#logo').innerHTML = svg('phone');
 $('#mLogo').innerHTML = svg('phone');
 $('#gear').replaceWith(ib('gear', t('设置'), settingsDialog));
+$('#batch').replaceWith(ib('package', t('批量安装 APK'), () => batchInstallDialog()));
+$('#mBatch').replaceWith(ib('package', t('批量安装 APK'), () => batchInstallDialog()));
 $('#gallery').replaceWith(ib('images', t('相册'), () => openGallery()));
 $('#mGear').replaceWith(ib('gear', t('设置'), settingsDialog));
 $('#mGallery').replaceWith(ib('images', t('相册'), () => openGallery(), 'gear'));

@@ -53,6 +53,8 @@
       SHOTS.forEach((s, i) => { if (!s.url) s.url = thumb(i, s.device); });
       return json({ dir: 'C:\\DroidBridge\\data\\media', items: SHOTS });
     }
+    if (u.pathname === '/api/apps') return json({ named: true, apps: APPS() });
+    if (u.pathname === '/api/apps/action') return json({ ok: true, msg: LANG === 'en' ? 'Done' : '完成' });
     if (u.pathname === '/api/settings') return json({ media_dir: 'C:\\DroidBridge\\data\\media' });
     return json({ error: 'not found' }, 404);
   };
@@ -65,10 +67,24 @@
     return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="-16 -16 ${n*c+32} ${n*c+32}"><rect x="-16" y="-16" width="${n*c+32}" height="${n*c+32}" fill="#fff"/>${r}${finder(0,0)}${finder(n-7,0)}${finder(0,n-7)}</svg>`;
   }
 
+  const APPS = () => {
+    const zh = LANG !== 'en';
+    const u = [['Example Game', 'com.example.game', 1], [zh ? '记账本' : 'Ledger', 'com.example.ledger', 0], [zh ? '地图导航' : 'Maps Go', 'com.example.maps', 0], ['Chrome', 'com.android.chrome', 0],
+      [zh ? '测试工具' : 'Test Kit', 'com.example.testkit', 1], [zh ? '视频剪辑' : 'Video Editor', 'com.example.video', 0], [zh ? '音乐' : 'Music', 'com.example.music', 0], ['WeChat', 'com.tencent.mm', 1],
+      [zh ? '阅读' : 'Reader', 'com.example.reader', 0], [zh ? '天气' : 'Weather', 'com.example.weather', 0]];
+    const sys = [[zh ? '设置' : 'Settings', 'com.android.settings', 1], [zh ? '相机' : 'Camera', 'com.android.camera', 0], [zh ? '电话' : 'Phone', 'com.android.dialer', 0]];
+    return [...u.map(([name, pkg, r]) => ({ name, pkg, system: false, running: !!r })), ...sys.map(([name, pkg, r]) => ({ name, pkg, system: true, running: !!r }))];
+  };
+  let perfTick = 0;
+  const perfSample = () => {
+    perfTick++;
+    const fps = 57 + Math.round(Math.sin(perfTick / 2) * 2 + (perfTick % 7 === 3 ? -14 : 0));
+    return { type: 'perf', pkg: 'com.example.game', fps, cpu: 41.3, app_cpu: 18.6, mem_total: 11742, mem_used: 7210, app_mem: 1184, cpu_temp: 46.2, batt_temp: 33.5, level: 78, charging: false };
+  };
   const KIND = { 'R5CT20ABCDE': 'home', '2A281FDH3000XY': 'settings', '192.168.1.31:5555': 'error' };
   const NAME = { 'R5CT20ABCDE': 'SM-S9180', '2A281FDH3000XY': 'Pixel 7' };
   class FakeWS {
-    constructor(url) { this.readyState = 0; this.isLog = url.includes('/ws/logcat'); this.serial = new URLSearchParams(url.split('?')[1] || '').get('serial'); setTimeout(() => this.isLog ? this.startLog() : this.start(), 50); }
+    constructor(url) { this.readyState = 0; this.isLog = url.includes('/ws/logcat'); this.isPerf = url.includes('/ws/perf'); if (this.isPerf) { this.readyState = 1; const hist = () => { for (let i = 0; i < 30; i++) this.emit(perfSample()); }; setTimeout(hist, 50); this.timer = setInterval(() => this.emit(perfSample()), 1000); return; } this.serial = new URLSearchParams(url.split('?')[1] || '').get('serial'); setTimeout(() => this.isLog ? this.startLog() : this.start(), 50); }
     startLog() {
       this.readyState = 1; this.onopen && this.onopen();
       const T = (i) => '11-07 10:24:' + String(10 + (i >> 2)).padStart(2, '0') + '.' + String(100 + i * 37 % 900);
@@ -90,8 +106,8 @@
       this.emit({ type: 'session', width: 720, height: 1600 });
       setTimeout(() => { for (const v of viewers.values()) if (v.ws === this) paint(v, kind); }, 100);
     }
-    send() {}
-    close() { this.readyState = 3; }
+    send(d) { (this.sent || (this.sent = [])).push(d); }
+    close() { this.readyState = 3; clearInterval(this.timer); }
   }
   window.WebSocket = FakeWS;
 
@@ -159,10 +175,21 @@
     if (S === 'mview' || S === 'menu' || S === 'settings' || S === 'log') openViewer(L, DEV.local[0]);
     if (S === 'log') setTimeout(() => [...viewers.values()][0].toggleLog(true), 300);
     if (S === 'add') peerDialog();
+    if (S === 'perf') { openViewer(L, DEV.local[0]); setTimeout(() => [...viewers.values()][0].togglePerf(), 300); }
+    if (S === 'apps') { openViewer(L, DEV.local[0]); setTimeout(() => appsDialog([...viewers.values()][0]), 300); }
+    if (S === 'batch') setTimeout(() => {
+      batchInstallDialog(new File([new Uint8Array(23 * 1048576)], 'example-game-2.4.1.apk'));
+      const d = [...document.querySelectorAll('.bi-d .r')];
+      const st = [['ok', LANG === 'en' ? 'Installed' : '已安装'], ['ok', LANG === 'en' ? 'Installed' : '已安装'], ['', LANG === 'en' ? 'Confirm on the device…' : '等待设备上确认…']];
+      d.forEach((r, i) => { if (!st[i]) return; r.className = 'r ' + st[i][0]; r.replaceChildren(st[i][0] ? h('span', { html: svg('check') }).firstChild : h('span', { class: 'spin sm' }), st[i][1]); });
+      document.querySelectorAll('.bi-d input').forEach(c => c.disabled = true);
+      const b = document.querySelector('dialog.wide .btn.primary'); b.textContent = LANG === 'en' ? 'Installing…' : '正在安装…'; b.disabled = true;
+    }, 300);
+    if (S === 'sync') { openViewer(B, DEV.pB[0]); openViewer(L, DEV.local[0]); setTimeout(() => { for (const v of viewers.values()) v.toggleSync(true); }, 400); }
     if (S === 'wireless') wirelessDialog(L);
     if (S === 'gallery') setTimeout(() => openGallery(), 300);
     if (S === 'settings') setTimeout(settingsDialog, 300);
     if (S === 'menu') { removeEventListener('scroll', closeMenu, true); window.closeMenu = () => {}; setTimeout(() => [...viewers.values()][0].moreMenu(), 200); }
-    if (S === 'mview' || S === 'desk') window.scrollTo(0, 0);
+    if (S === 'mview' || S === 'desk' || S === 'sync') window.scrollTo(0, 0);
   }, 800));
 })();

@@ -4,12 +4,14 @@
 #[macro_use]
 pub mod i18n;
 pub mod adb;
+pub mod apps;
 pub mod control;
 pub mod discovery;
 pub mod icon;
 pub mod logcat;
 pub mod media;
 pub mod peers;
+pub mod perf;
 pub mod remote;
 pub mod scrcpy;
 pub mod util;
@@ -324,6 +326,9 @@ fn router(state: Shared) -> Router {
         .route("/api/settings", axum::routing::get(media::settings_get_handler).put(media::settings_put_handler))
         .route("/ws/stream", get(ws_stream))
         .route("/ws/logcat", get(ws_logcat))
+        .route("/ws/perf", get(ws_perf))
+        .route("/api/apps", post(apps_list))
+        .route("/api/apps/action", post(apps_action))
         .layer(middleware::from_fn_with_state(state.clone(), auth))
         .with_state(state)
 }
@@ -469,13 +474,18 @@ pub async fn save_peer(
             let old = st.peers.get(id).await.ok_or_else(|| tr!("远程电脑不存在", "Remote computer not found"))?;
             peers::Peer { id: id.clone(), name: name.trim().to_string(), addr, token: token.or(old.token), ssh: old.ssh }
         }
-        None => peers::Peer {
-            id: format!("p{:08x}", util::random_scid()),
-            name: name.trim().to_string(),
-            addr,
-            token,
-            ssh: None,
-        },
+        None => {
+            // 同一地址已在列表中（如重新安装、更新）：沿用原来的 id、名称和令牌，已打开的投屏不受影响
+            let old_id = st.peers.list().await.into_iter().find(|p| p.addr == addr).map(|p| p.id);
+            let old = match old_id { Some(i) => st.peers.get(&i).await, None => None };
+            peers::Peer {
+                id: old.as_ref().map(|p| p.id.clone()).unwrap_or_else(|| format!("p{:08x}", util::random_scid())),
+                name: Some(name.trim()).filter(|n| !n.is_empty()).or(old.as_ref().map(|p| p.name.as_str())).unwrap_or("").to_string(),
+                addr,
+                token: token.or_else(|| old.as_ref().and_then(|p| p.token.clone())),
+                ssh: None,
+            }
+        }
     };
     let info = peers::get_json(&peer, "/api/info")
         .await
@@ -637,6 +647,22 @@ async fn ws_logcat(State(st): State<Shared>, ws: WebSocketUpgrade, req_uri: axum
     ws.on_upgrade(move |socket| i18n::REQUEST_EN.scope(en, logcat::run(st, serial, socket)))
 }
 
+async fn ws_perf(State(st): State<Shared>, ws: WebSocketUpgrade, req_uri: axum::http::Uri) -> Response {
+    let raw_query = req_uri.query().map(String::from);
+    let q = util::parse_query(raw_query.as_deref());
+    let Some(serial) = q.get("serial").cloned().filter(|s| !s.is_empty()) else {
+        return err(StatusCode::BAD_REQUEST, tr!("缺少 serial 参数", "Missing serial parameter"));
+    };
+    if let Some(id) = remote_id(&q) {
+        let Some(peer) = st.peers.get(id).await else {
+            return err(StatusCode::NOT_FOUND, tr!("远程电脑不存在", "Remote computer not found"));
+        };
+        return ws.on_upgrade(move |socket| peers::proxy_ws(socket, peer, "/ws/perf", raw_query));
+    }
+    let en = i18n::is_en();
+    ws.on_upgrade(move |socket| i18n::REQUEST_EN.scope(en, perf::run(st, serial, socket)))
+}
+
 async fn ws_stream(State(st): State<Shared>, ws: WebSocketUpgrade, req_uri: axum::http::Uri) -> Response {
     let raw_query = req_uri.query().map(String::from);
     let q = util::parse_query(raw_query.as_deref());
@@ -745,6 +771,8 @@ adb_post!(adb_connect, wireless::ConnectReq, "/api/adb/connect", wireless::conne
 adb_post!(adb_pair, wireless::PairReq, "/api/adb/pair", wireless::pair);
 adb_post!(adb_disconnect, wireless::SerialReq, "/api/adb/disconnect", wireless::disconnect);
 adb_post!(adb_tcpip, wireless::SerialReq, "/api/adb/tcpip", wireless::tcpip);
+adb_post!(apps_list, apps::ListReq, "/api/apps", apps::list);
+adb_post!(apps_action, apps::ActionReq, "/api/apps/action", apps::action);
 
 async fn adb_qr_start(State(st): State<Shared>, Query(q): Query<HashMap<String, String>>) -> Response {
     let st2 = st.clone();

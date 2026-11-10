@@ -41,6 +41,9 @@ foreach ($lang in 'en', 'zh') {
   Shot "$demo`?s=log&lang=$lang" 1440 900 (Join-Path $o '8-logcat.png')
   Shot "$demo`?s=wireless&lang=$lang" 1280 860 (Join-Path $o '9-wireless.png')
   Shot "$demo`?s=gallery&lang=$lang" 1280 860 (Join-Path $o '10-gallery.png')
+  Shot "$demo`?s=perf&lang=$lang" 1280 860 (Join-Path $o '11-perf.png')
+  Shot "$demo`?s=apps&lang=$lang" 1280 860 (Join-Path $o '12-apps.png')
+  Shot "$demo`?s=batch&lang=$lang" 1280 760 (Join-Path $o '13-batch.png')
   Mobile 'mlist' 844 (Join-Path $o '6-mobile-list.png') $lang
   Mobile 'mview' 844 (Join-Path $o '7-mobile-view.png') $lang
 }

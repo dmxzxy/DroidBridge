@@ -26,6 +26,8 @@ const SOURCES: &[(&str, &[u8])] = &[
     src!("src/lib.rs"),
     src!("src/main.rs"),
     src!("src/adb.rs"),
+    src!("src/apps.rs"),
+    src!("src/perf.rs"),
     src!("src/control.rs"),
     src!("src/discovery.rs"),
     src!("src/wireless.rs"),
