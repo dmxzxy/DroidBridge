@@ -241,6 +241,22 @@ async fn session(
         .await;
 
     let (ctl_r, mut ctl_w) = control.into_split();
+    let mut agent_rx = state.agent.events.subscribe();
+    let agent_out = out.clone();
+    let my_serial = serial.to_string();
+    let agent_task = tokio::spawn(async move {
+        loop {
+            match agent_rx.recv().await {
+                Ok((s, v)) if s == my_serial => {
+                    if agent_out.send(text(v)).await.is_err() {
+                        return;
+                    }
+                }
+                Ok(_) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
+                Err(_) => return,
+            }
+        }
+    });
     let mut video_task = tokio::spawn(read_video(video, out.clone()));
     let ctl_task = tokio::spawn(read_device_msgs(ctl_r, out.clone()));
     let audio_task = audio.map(|a| {
@@ -259,6 +275,7 @@ async fn session(
 
     video_task.abort();
     ctl_task.abort();
+    agent_task.abort();
     if let Some(t) = audio_task {
         t.abort();
     }

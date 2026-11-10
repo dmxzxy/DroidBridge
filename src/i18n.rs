@@ -39,7 +39,7 @@ pub fn from_headers(h: &axum::http::HeaderMap) -> Option<bool> {
         .and_then(|v| v.to_str().ok())?
         .trim()
         .to_ascii_lowercase();
-    if v.is_empty() {
+    if v.is_empty() || v.starts_with('*') {
         return None;
     }
     Some(!v.starts_with("zh"))

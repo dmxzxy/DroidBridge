@@ -666,6 +666,7 @@ mod tests {
             wireless: crate::wireless::Wireless::load(dir.join("wireless.json")),
             uids: std::sync::Mutex::new(std::collections::HashMap::new()),
             media_dir_override: None,
+            agent: crate::agent::AgentState::default(),
             cfg,
         })
     }

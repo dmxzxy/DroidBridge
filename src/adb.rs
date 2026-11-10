@@ -44,6 +44,24 @@ pub async fn run_timeout(adb: &Path, args: &[&str], timeout: std::time::Duration
     }
 }
 
+/// 执行并返回原始 stdout（二进制输出，如 exec-out screencap），带超时
+pub async fn run_bytes(adb: &Path, args: &[&str], timeout: std::time::Duration) -> Result<Vec<u8>, String> {
+    let fut = command(adb).args(args).kill_on_drop(true).output();
+    let out = match tokio::time::timeout(timeout, fut).await {
+        Ok(r) => r.map_err(|e| { let p = adb.display(); tr!("无法执行 adb（{p}）：{e}", "Cannot run adb ({p}): {e}") })?,
+        Err(_) => {
+            let a = args.join(" ");
+            return Err(tr!("adb {a} 超时", "adb {a} timed out"));
+        }
+    };
+    if out.status.success() {
+        Ok(out.stdout)
+    } else {
+        let (a, e) = (args.join(" "), String::from_utf8_lossy(&out.stderr).trim().to_string());
+        Err(tr!("adb {a} 失败：{e}", "adb {a} failed: {e}"))
+    }
+}
+
 /// 执行并返回 stdout+stderr（adb connect / pair 把结果写在不同的流里）
 async fn run_merged(adb: &Path, args: &[&str]) -> Result<String, String> {
     let out = command(adb)

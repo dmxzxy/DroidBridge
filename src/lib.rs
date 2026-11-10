@@ -4,11 +4,13 @@
 #[macro_use]
 pub mod i18n;
 pub mod adb;
+pub mod agent;
 pub mod apps;
 pub mod control;
 pub mod discovery;
 pub mod icon;
 pub mod logcat;
+pub mod mcp;
 pub mod media;
 pub mod peers;
 pub mod perf;
@@ -188,6 +190,8 @@ pub struct AppState {
     pub uids: std::sync::Mutex<HashMap<String, String>>,
     /// 命令行 `--media-dir` 指定的媒体目录（优先）
     pub media_dir_override: Option<PathBuf>,
+    /// AI Agent：设备状态与操作事件
+    pub agent: agent::AgentState,
 }
 
 type Shared = Arc<AppState>;
@@ -247,6 +251,7 @@ pub async fn start(cfg: Config) -> Result<Started, StartError> {
         wireless: wireless::Wireless::load(cfg.data_dir.join("wireless.json")),
         uids: std::sync::Mutex::new(HashMap::new()),
         media_dir_override,
+        agent: agent::AgentState::default(),
         cfg,
     });
     let app = router(state.clone());
@@ -327,6 +332,9 @@ fn router(state: Shared) -> Router {
         .route("/ws/stream", get(ws_stream))
         .route("/ws/logcat", get(ws_logcat))
         .route("/ws/perf", get(ws_perf))
+        .route("/mcp", post(mcp::handle).get(mcp::handle_get).delete(mcp::handle_get))
+        .route("/api/agent/exec", post(agent_exec))
+        .route("/api/agent/pause", post(agent_pause))
         .route("/api/apps", post(apps_list))
         .route("/api/apps/action", post(apps_action))
         .layer(middleware::from_fn_with_state(state.clone(), auth))
@@ -383,13 +391,20 @@ async fn auth(State(st): State<Shared>, req: Request, next: Next) -> Response {
 
 async fn auth_inner(st: Shared, req: Request, next: Next) -> Response {
     let path = req.uri().path();
-    let protected = (path.starts_with("/api/") && path != "/api/info") || path.starts_with("/ws/");
+    let protected = (path.starts_with("/api/") && path != "/api/info") || path.starts_with("/ws/") || path == "/mcp";
     if let (true, Some(expected)) = (protected, st.cfg.token.as_deref()) {
         let q = util::parse_query(req.uri().query());
         let given = q
             .get("token")
             .cloned()
-            .or_else(|| req.headers().get("x-token").and_then(|v| v.to_str().ok()).map(String::from));
+            .or_else(|| req.headers().get("x-token").and_then(|v| v.to_str().ok()).map(String::from))
+            .or_else(|| {
+                req.headers()
+                    .get(header::AUTHORIZATION)
+                    .and_then(|v| v.to_str().ok())
+                    .and_then(|v| v.strip_prefix("Bearer "))
+                    .map(|v| v.trim().to_string())
+            });
         if given.as_deref() != Some(expected) {
             return err(StatusCode::UNAUTHORIZED, tr!("需要访问令牌", "Access token required"));
         }
@@ -772,6 +787,32 @@ adb_post!(adb_pair, wireless::PairReq, "/api/adb/pair", wireless::pair);
 adb_post!(adb_disconnect, wireless::SerialReq, "/api/adb/disconnect", wireless::disconnect);
 adb_post!(adb_tcpip, wireless::SerialReq, "/api/adb/tcpip", wireless::tcpip);
 adb_post!(apps_list, apps::ListReq, "/api/apps", apps::list);
+
+/// 在本机执行 AI 工具（由收到 MCP 请求的节点转发过来）：{"tool":"tap","args":{"serial":..,..}}
+async fn agent_exec(State(st): State<Shared>, Json(body): Json<serde_json::Value>) -> Response {
+    let tool = body.get("tool").and_then(|v| v.as_str()).unwrap_or("");
+    let args = body.get("args").cloned().unwrap_or(json!({}));
+    match agent::exec(&st, tool, &args).await {
+        Ok(content) => Json(json!({"content": content})).into_response(),
+        Err(e) => Json(json!({"content": [{"type":"text","text": e}], "isError": true})).into_response(),
+    }
+}
+
+#[derive(serde::Deserialize)]
+pub struct PauseReq {
+    serial: String,
+    paused: bool,
+}
+async fn agent_pause(State(st): State<Shared>, Query(q): Query<HashMap<String, String>>, body: Bytes) -> Response {
+    let st2 = st.clone();
+    let b = body.clone();
+    local_or_peer(&st, &q, "POST", "/api/agent/pause", &body, || async move {
+        let r: PauseReq = serde_json::from_slice(&b).map_err(|e| e.to_string())?;
+        st2.agent.set_paused(&r.serial, r.paused);
+        Ok(json!({"ok": true, "paused": r.paused}))
+    })
+    .await
+}
 adb_post!(apps_action, apps::ActionReq, "/api/apps/action", apps::action);
 
 async fn adb_qr_start(State(st): State<Shared>, Query(q): Query<HashMap<String, String>>) -> Response {
@@ -830,6 +871,7 @@ mod tests {
             wireless: wireless::Wireless::load(cfg.data_dir.join("wireless.json")),
             uids: std::sync::Mutex::new(HashMap::new()),
             media_dir_override: None,
+            agent: agent::AgentState::default(),
             cfg,
         })
     }

@@ -16,6 +16,7 @@ See and control Android devices from your computer — not only the ones plugged
 - **Performance overlay** — FPS, CPU, memory, temperature and battery of the foreground app, on top of the screen
 - **App manager** — list installed apps; launch, force stop, clear data, uninstall
 - **Batch install & group control** — install one APK on many devices at once; mirror taps and keys on several devices
+- **AI agents (MCP)** — let Claude Code, Cursor and other MCP clients read the screen and operate any device; you watch every action live and can pause the AI
 - **Install APKs / send files** — drop them onto a device screen
 - **Gallery** — screenshots and recordings are saved on the node and browsed in a gallery (filter by type / device, preview, download, reveal in file manager)
 - **Desktop app or browser** — native desktop app for Windows, macOS and Linux; phones and other computers can also use a browser
@@ -148,6 +149,31 @@ To update everything: update DroidBridge on your own computer, then click **Upda
 
 For networks without GitHub access, host the release files (the `droidbridge-server-*.tar.gz` packages and `SHA256SUMS.txt`) on an internal web server and start DroidBridge with the environment variable `DROIDBRIDGE_RELEASE_BASE=http://server/path`.
 
+### AI agents (MCP)
+
+DroidBridge is an [MCP](https://modelcontextprotocol.io) server at `http://127.0.0.1:8730/mcp` (Streamable HTTP; the address is also shown in Settings). Any MCP client can then see and operate every device on this computer and on connected remote computers.
+
+```bash
+# Claude Code
+claude mcp add --transport http droidbridge http://127.0.0.1:8730/mcp
+```
+
+```json
+// Cursor and other clients that use an mcpServers JSON file
+{ "mcpServers": { "droidbridge": { "url": "http://127.0.0.1:8730/mcp" } } }
+```
+
+With `--token`, send it as `Authorization: Bearer <token>` (or append `?token=<token>` to the URL).
+
+Tools: `list_devices`, `read_screen` (UI elements with text, ids and coordinates — cheap and precise), `screenshot`, `tap` (by element index or coordinates), `swipe`, `type_text` (any language), `press_key`, `list_apps`, `launch_app`, `stop_app`, `logcat`, `perf`, `shell` (read-only queries only), `wait`.
+
+While an AI operates a device, its window shows a bar with the current action and marks each tap and swipe. Click **Pause** to stop the AI from changing the device (it can still read the screen) and **Resume** to continue.
+
+Notes:
+- `read_screen` uses `uiautomator`; it cannot read games, constantly animating screens or secure screens, and on tablets with split-screen apps it may read only the focused pane — the AI falls back to `screenshot`.
+- `type_text` pastes through the device clipboard, so the typed text stays in the clipboard.
+- Anyone who can reach the port can use these tools; see [Security](#security).
+
 ### Language
 
 The UI follows the system language (Chinese or English). Change it in **Settings → Language**, or start with `--lang en` / `--lang zh`.
@@ -158,6 +184,7 @@ DroidBridge gives full control over the attached devices and requires **no authe
 
 - Set an access token with `--token <token>` (required by the UI and by other nodes), or use `--bind 127.0.0.1` to allow local access only.
 - Do not expose the ports to the internet.
+- The MCP endpoint (`/mcp`) lets AI clients operate the devices; it uses the same token.
 - LAN discovery broadcasts the computer name and HTTP port on UDP 8730. Disable it with `--no-discovery` (it is also off with `--bind 127.0.0.1`).
 - Tokens of remote computers are stored in plain text in `peers.json` in the data directory.
 
@@ -240,6 +267,8 @@ tools/              packaging, dependency download, screenshots
 | `POST /api/adb/qr`, `GET/DELETE /api/adb/qr/{job}` (`?peer=`) | QR code pairing |
 | `WS /ws/stream?serial=&peer=&max_size=&bit_rate=&max_fps=&audio=` | Video, audio and control |
 | `WS /ws/logcat?serial=&peer=` | Device logs |
+| `POST /mcp` | MCP server (JSON-RPC over Streamable HTTP) |
+| `POST /api/agent/exec` `{"tool","args"}`, `POST /api/agent/pause?peer=` `{"serial","paused"}` | Run an AI tool on this node; pause / resume AI control of a device |
 | `WS /ws/perf?serial=&peer=` | Performance data, one JSON message per second |
 | `POST /api/apps?peer=` `{"serial"}` | Installed apps (`pkg`, `name`, `system`, `running`) |
 | `POST /api/apps/action?peer=` `{"serial","pkg","action"}` | `launch` / `stop` / `clear` / `uninstall` |
@@ -249,6 +278,7 @@ Binary messages on `/ws/stream` are `[flags u8][pts u64 BE][H.264 Annex-B]` (fla
 ## Roadmap
 
 - Crash / ANR capture
+- AI: record actions as replayable scripts, wait for elements, run on many devices in parallel
 - Performance recording and export
 - iOS devices (via WebDriverAgent)
 

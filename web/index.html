@@ -134,6 +134,19 @@ main{flex:1;min-width:0;min-height:100vh;padding:16px;display:flex;flex-directio
 @keyframes spin{to{transform:rotate(360deg)}}
 .drop{position:absolute;inset:8px;display:none;align-items:center;justify-content:center;border:1.5px dashed var(--accent);border-radius:8px;background:rgba(91,141,239,.16);color:#fff;font-size:13px;pointer-events:none}
 .viewer.dropping .drop{display:flex}
+.aibar{position:absolute;left:50%;bottom:10px;transform:translateX(-50%);z-index:3;display:flex;align-items:center;gap:8px;max-width:calc(100% - 20px);height:30px;padding:0 4px 0 10px;border-radius:15px;background:rgba(20,22,28,.82);color:#e8eaed;font-size:12px;-webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px);box-shadow:0 2px 10px rgba(0,0,0,.3)}
+.aibar[hidden]{display:none}
+.aibar .ai-dot{width:7px;height:7px;border-radius:50%;background:#7aa7ff;flex:none;animation:aipulse 1.2s ease-in-out infinite}
+.aibar.paused .ai-dot{background:#f5b942;animation:none}
+.aibar b{font-weight:600;flex:none}
+.aibar .ai-l{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#c4c9d1}
+.aibar button{flex:none;height:22px;padding:0 10px;border:0;border-radius:11px;background:rgba(255,255,255,.14);color:#fff;font-size:12px}
+.aibar button:hover{background:rgba(255,255,255,.24)}
+@keyframes aipulse{50%{opacity:.35}}
+.aitap{position:absolute;z-index:2;width:44px;height:44px;margin:-22px 0 0 -22px;border-radius:50%;border:2px solid #7aa7ff;background:rgba(122,167,255,.25);pointer-events:none;animation:aitap .9s ease-out forwards}
+.aitap.move{animation:none;transition:left .35s ease-in-out,top .35s ease-in-out,opacity .3s .5s;opacity:1}
+@keyframes aitap{0%{transform:scale(.4);opacity:1}100%{transform:scale(1.5);opacity:0}}
+.viewer.ai-active{border-color:#7aa7ff}
 .nav{display:flex;justify-content:space-evenly;align-items:center;height:40px;border-top:1px solid var(--line)}
 .nav .ib{width:64px;height:30px}
 .typing{display:none;gap:6px;padding:8px;border-top:1px solid var(--line)}
@@ -507,6 +520,10 @@ const EN = {"分辨率":"Resolution",
   " · 新增 {0} 行":" · {0} new lines",
   "已保存 {0} 行日志":"Saved {0} log lines",
   "通用":"General",
+  "已继续":"Resumed",
+  "AI 想继续操作，已被暂停":"AI tried to act but is paused",
+  "已暂停，AI 只能读取画面":"Paused — AI can only read the screen",
+  "AI 接入（MCP）":"AI access (MCP)",
   "性能数据":"Performance",
   "群控：在这台设备上的操作同步到其他群控设备":"Group control: mirror input on this device to other grouped devices",
   "再给至少一台设备打开群控":"Turn on group control on at least one more device",
@@ -1327,6 +1344,7 @@ function settingsDialog() {
   ] : [];
 
   const ips = INFO ? (INFO.ips || []).map(ip => `${ip}:${INFO.port}`) : [];
+  const mcpUrl = /^https?:$/.test(location.protocol) && !isLocalHost() ? `${location.protocol}//${location.host}/mcp` : `http://127.0.0.1:${INFO ? INFO.port : 8730}/mcp`;
   const group = (title, ...rows) => h('section', { class: 'set-g' }, h('div', { class: 'set-t' }, title), h('div', { class: 'set-c' }, rows));
   note = h('div', { class: 'set-n', hidden: true }, h('span', {}, t('已打开的投屏需重新连接才会生效')),
     h('button', { class: 'linkbtn', type: 'button', onclick: () => { for (const v of viewers.values()) v.reconnect(); note.hidden = true; } }, t('重新连接')));
@@ -1338,6 +1356,8 @@ function settingsDialog() {
     group(t('通用'),
       row(LANG === 'zh' ? req('语言', 'Language') : req('Language', '语言'), lang),
       row(t('截图保存位置'), dirEl, ...dirTools)),
+    group(t('AI 接入（MCP）'),
+      row(t('地址'), h('span', { class: 'v mono' }, mcpUrl), ib('copy', t('复制'), () => copyText(mcpUrl)))),
     group(t('本机'),
       row(t('名称'), h('span', { class: 'v' }, INFO ? INFO.name : '—')),
       ...(ips.length ? ips : ['—']).map((a, i) => row(i ? '' : t('地址'), h('span', { class: 'v mono' }, a), a === '—' ? null : ib('copy', t('复制'), () => copyText(a))))),
@@ -1758,6 +1778,9 @@ class Viewer {
     this.recEl = h('span', { class: 'rec', hidden: true });
     this.perfBtn = ib('activity', t('性能数据'), () => this.togglePerf());
     this.perfEl = h('div', { class: 'perf', hidden: true });
+    this.aiLabel = h('span', { class: 'ai-l' });
+    this.aiBtn = h('button', { type: 'button', onclick: () => this.setAgentPaused(!this.aiPaused) }, t('暂停'));
+    this.aiBar = h('div', { class: 'aibar', hidden: true }, h('span', { class: 'ai-dot' }), h('b', {}, 'AI'), this.aiLabel, this.aiBtn);
     this.syncBtn = ib('link', t('群控：在这台设备上的操作同步到其他群控设备'), () => this.toggleSync());
     this.syncBtn.hidden = viewers.size < 1;
     this.vlog = h('div', { class: 'vlog' });
@@ -1767,7 +1790,7 @@ class Viewer {
       h('div', { class: 'vmain' },
       h('div', { class: 'vbody' },
         h('div', { class: 'vcol' },
-          h('div', { class: 'screen' }, this.canvas, this.overlay, this.perfEl, h('div', { class: 'drop' }, t('松开以安装 APK 或传到手机'))),
+          h('div', { class: 'screen' }, this.canvas, this.overlay, this.perfEl, this.aiBar, h('div', { class: 'drop' }, t('松开以安装 APK 或传到手机'))),
           h('div', { class: 'nav' }, ib('back', t('返回'), key(AKEY.BACK)), ib('home', t('主页'), key(AKEY.HOME)), ib('recent', t('最近任务'), key(AKEY.APP_SWITCH))),
           this.typing),
         h('div', { class: 'vtools' },
@@ -1934,6 +1957,7 @@ class Viewer {
         else { toast(m.msg, { ms: 5000 }); this.audioBtn.title = m.msg; this.audioBtn.classList.remove('on'); }
         break;
       case 'log': console.log('[' + this.dev.serial + ']', m.msg); break;
+      case 'agent': this.onAgent(m); break;
       case 'clipboard':
         if (navigator.clipboard && isSecureContext) navigator.clipboard.writeText(m.text).then(() => toast(t('已同步手机剪贴板')), () => {});
         break;
@@ -2023,6 +2047,47 @@ class Viewer {
     if (!on) return;
     const n = [...viewers.values()].filter(v => v.sync).length;
     toast(n < 2 ? t('再给至少一台设备打开群控') : t('群控：{0} 台设备同步操作', n));
+  }
+
+  // ---- AI Agent 操作提示 ----
+  onAgent(m) {
+    if (m.action === 'paused' || m.action === 'resumed') { this.aiPaused = m.action === 'paused'; this.showAgent(); return; }
+    if (m.action === 'blocked') { this.aiPaused = true; this.showAgent(t('AI 想继续操作，已被暂停')); return; }
+    if (m.action === 'tap' && m.x != null) this.aiMark(m.x, m.y);
+    if (m.action === 'swipe' && m.x != null) this.aiMark(m.x, m.y, m.x2, m.y2);
+    this.showAgent(m.label || '');
+  }
+  showAgent(label) {
+    if (label !== undefined) this.aiLabel.textContent = label;
+    this.aiBar.hidden = false;
+    this.aiBar.classList.toggle('paused', !!this.aiPaused);
+    this.aiBtn.textContent = this.aiPaused ? t('继续') : t('暂停');
+    if (this.aiPaused && !label) this.aiLabel.textContent = t('已暂停，AI 只能读取画面');
+    this.root.classList.toggle('ai-active', !this.aiPaused);
+    clearTimeout(this.aiTimer);
+    // 暂停时一直显示；否则最后一次操作 15 秒后隐藏
+    if (!this.aiPaused) this.aiTimer = setTimeout(() => { this.aiBar.hidden = true; this.root.classList.remove('ai-active'); }, 15000);
+  }
+  async setAgentPaused(p) {
+    try {
+      await api('/api/agent/pause?peer=' + encodeURIComponent(this.host.id), { method: 'POST', body: JSON.stringify({ serial: this.dev.serial, paused: p }) });
+      this.aiPaused = p; this.showAgent(p ? undefined : t('已继续'));
+    } catch (e) { toast(e.message, { kind: 'bad' }); }
+  }
+  /** 在画面上标出 AI 的点击（或滑动）位置；x、y 为相对画面的比例 */
+  aiMark(x, y, x2, y2) {
+    const sr = this.canvas.parentElement.getBoundingClientRect(), cr = this.canvas.getBoundingClientRect();
+    if (!cr.width) return;
+    const at = (fx, fy) => [cr.left - sr.left + fx * cr.width, cr.top - sr.top + fy * cr.height];
+    const [l, tp] = at(x, y);
+    const el = h('div', { class: 'aitap' + (x2 != null ? ' move' : '') });
+    el.style.left = l + 'px'; el.style.top = tp + 'px';
+    this.canvas.parentElement.append(el);
+    if (x2 != null) {
+      const [l2, t2] = at(x2, y2);
+      requestAnimationFrame(() => requestAnimationFrame(() => { el.style.left = l2 + 'px'; el.style.top = t2 + 'px'; el.style.opacity = '0'; }));
+    }
+    setTimeout(() => el.remove(), 1200);
   }
 
   togglePerf() {

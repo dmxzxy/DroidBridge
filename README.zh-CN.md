@@ -16,6 +16,7 @@
 - **性能浮层**：在画面上显示前台应用的帧率、CPU、内存，以及温度和电量
 - **应用管理**：列出已安装应用，启动、强制停止、清除数据、卸载
 - **批量安装与群控**：一个 APK 一次装到多台设备；在多台设备上同步点击和按键
+- **AI Agent（MCP）**：让 Claude Code、Cursor 等支持 MCP 的 AI 工具读取画面并操作任意设备；每次操作都能实时看到，随时可以暂停
 - **安装 APK / 传文件**：把文件拖到设备画面上即可
 - **相册**：截图与录屏保存在节点上，可在相册中浏览（按类型/设备筛选、预览、下载、在文件管理器中显示）
 - **桌面版 + 浏览器访问**：Windows、macOS、Linux 桌面客户端；手机或其他电脑也可以直接用浏览器打开
@@ -148,6 +149,31 @@
 
 无法访问 GitHub 的内网：把发布文件（`droidbridge-server-*.tar.gz` 和 `SHA256SUMS.txt`）放到内网网页服务器上，并用环境变量 `DROIDBRIDGE_RELEASE_BASE=http://服务器/路径` 启动 DroidBridge。
 
+### AI Agent（MCP）
+
+DroidBridge 同时是一个 [MCP](https://modelcontextprotocol.io) 服务，地址 `http://127.0.0.1:8730/mcp`（Streamable HTTP，设置页里也能看到）。支持 MCP 的 AI 工具接入后，就能查看并操作本机和所有远程电脑上的设备。
+
+```bash
+# Claude Code
+claude mcp add --transport http droidbridge http://127.0.0.1:8730/mcp
+```
+
+```json
+// Cursor 等使用 mcpServers 配置文件的工具
+{ "mcpServers": { "droidbridge": { "url": "http://127.0.0.1:8730/mcp" } } }
+```
+
+启用了 `--token` 时，用请求头 `Authorization: Bearer <令牌>` 传入（或在地址后加 `?token=<令牌>`）。
+
+工具：`list_devices`、`read_screen`（界面元素的文字、id 和坐标，省 token 且准确）、`screenshot`、`tap`（按元素编号或坐标）、`swipe`、`type_text`（支持中文）、`press_key`、`list_apps`、`launch_app`、`stop_app`、`logcat`、`perf`、`shell`（只允许只读查询）、`wait`。
+
+AI 操作设备时，投屏窗口底部会显示当前操作，每次点击和滑动的位置都会标出来。点 **暂停** 后 AI 不能再改变设备（仍可读取画面），点 **继续** 恢复。
+
+说明：
+- `read_screen` 基于 `uiautomator`，读不到游戏、一直在变化的画面和安全界面；平板分屏显示的应用可能只读到当前焦点的一侧。这些情况 AI 会改用 `screenshot`。
+- `type_text` 通过设备剪贴板粘贴，输入的文字会留在剪贴板里。
+- 能访问这个端口的人都能使用这些工具，见[安全须知](#安全须知)。
+
 ### 语言
 
 界面跟随系统语言（中文或英文）。可在 **设置 → 语言** 中切换，或启动时加 `--lang zh` / `--lang en`。
@@ -158,6 +184,7 @@ DroidBridge 能完全控制连接的设备，默认**不需要认证**，请只�
 
 - 用 `--token <令牌>` 启用访问令牌（网页、远程节点访问都需要），或 `--bind 127.0.0.1` 只允许本机访问。
 - 不要把端口暴露到公网。
+- MCP 接口（`/mcp`）可以让 AI 操作设备，使用同一个访问令牌。
 - 局域网自动发现会在 UDP 8730 上广播本机名称和 HTTP 端口；可用 `--no-discovery` 关闭（`--bind 127.0.0.1` 时也会关闭）。
 - 远程电脑的令牌以明文保存在数据目录的 `peers.json` 中。
 
@@ -203,6 +230,7 @@ sh tools/package-linux.sh 0.2.0             # Linux
 ## 计划
 
 - 崩溃 / ANR 捕获
+- AI：把操作录成可重复执行的脚本、等待元素出现、多设备并行执行
 - 性能数据记录与导出
 - iOS 设备（基于 WebDriverAgent）
 

@@ -183,6 +183,21 @@ fn compute(s: &Sample, p: &mut Prev) -> serde_json::Value {
     })
 }
 
+/// 单次性能快照（采样两次、间隔 1 秒，得到帧率与 CPU）
+pub async fn snapshot(st: &AppState, serial: &str) -> Result<serde_json::Value, String> {
+    let mut prev = Prev::default();
+    let mut last = serde_json::Value::Null;
+    for round in 0..2 {
+        let cmd = format!("SINCE={:.0}; PSS={}; {SCRIPT}", prev.since.max(0.0), round);
+        let out = adb::run_timeout(&st.cfg.adb, &["-s", serial, "shell", &cmd], Duration::from_secs(8)).await?;
+        last = compute(&parse(&out), &mut prev);
+        if round == 0 {
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        }
+    }
+    Ok(last)
+}
+
 pub async fn run(st: Arc<AppState>, serial: String, socket: WebSocket) {
     let (mut tx, mut rx) = socket.split();
     let sampler = async {
