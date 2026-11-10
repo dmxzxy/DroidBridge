@@ -21,6 +21,22 @@ pub struct Peer {
     pub addr: String,
     #[serde(default)]
     pub token: Option<String>,
+    /// 通过 SSH 安装时使用的登录方式（不含密码），用于一键更新
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ssh: Option<SshInfo>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct SshInfo {
+    #[serde(default)]
+    pub user: Option<String>,
+    #[serde(default)]
+    pub port: Option<u16>,
+    /// agent / password / key
+    #[serde(default)]
+    pub auth: String,
+    #[serde(default)]
+    pub key_file: String,
 }
 
 #[derive(Serialize)]
@@ -29,6 +45,7 @@ pub struct PeerPublic {
     pub name: String,
     pub addr: String,
     pub has_token: bool,
+    pub ssh: Option<SshInfo>,
 }
 
 pub struct PeerStore {
@@ -63,6 +80,7 @@ impl PeerStore {
                 name: p.name.clone(),
                 addr: p.addr.clone(),
                 has_token: p.token.as_deref().is_some_and(|t| !t.is_empty()),
+                ssh: p.ssh.clone(),
             })
             .collect()
     }
@@ -74,7 +92,8 @@ impl PeerStore {
     pub async fn upsert(&self, peer: Peer) -> Result<(), String> {
         let mut peers = self.peers.write().await;
         if let Some(p) = peers.iter_mut().find(|p| p.id == peer.id || p.addr == peer.addr) {
-            *p = peer;
+            let ssh = peer.ssh.clone().or_else(|| p.ssh.clone());
+            *p = Peer { ssh, ..peer };
         } else {
             peers.push(peer);
         }
@@ -89,8 +108,18 @@ impl PeerStore {
         let Some(p) = peers.iter_mut().find(|p| p.id == peer.id) else {
             return Err(tr!("远程电脑不存在", "Remote computer not found"));
         };
-        *p = peer;
+        let ssh = peer.ssh.clone().or_else(|| p.ssh.clone());
+        *p = Peer { ssh, ..peer };
         self.save(&peers).await
+    }
+
+    /// 记录 SSH 登录方式（按地址）
+    pub async fn set_ssh(&self, addr: &str, ssh: SshInfo) {
+        let mut peers = self.peers.write().await;
+        if let Some(p) = peers.iter_mut().find(|p| p.addr == addr) {
+            p.ssh = Some(ssh);
+            let _ = self.save(&peers).await;
+        }
     }
 
     pub async fn remove(&self, id: &str) -> Result<bool, String> {

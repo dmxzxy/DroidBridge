@@ -10,6 +10,8 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
+  # 正式版：远程安装时优先下载本版本 Releases 中的预编译服务端
+  DROIDBRIDGE_OFFICIAL: "1"
 
 jobs:
   windows:

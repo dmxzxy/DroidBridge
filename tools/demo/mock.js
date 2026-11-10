@@ -40,6 +40,7 @@
     const u = new URL(url, 'http://x');
     if (u.pathname === '/api/info') return json(INFO);
     if (u.pathname === '/api/peers') return json(PEERS);
+    if (u.pathname === '/api/node') return json(u.searchParams.get('peer') === 'pB' ? { version: '0.0.9', build: 'old', os: 'macos' } : INFO);
     if (u.pathname === '/api/discovered') return json({ enabled: true, list: [{ name: 'QA-Bench-04', addr: '192.168.1.44:8730', auth: false, version: '0.2.0', os: 'windows' }] });
     if (u.pathname === '/api/adb/qr') return json({ job: 'q1', name: 'DroidBridge-demo', svg: fakeQr() });
     if (u.pathname.startsWith('/api/adb/qr/')) return json({ state: 'waiting', msg: LANG === 'en' ? 'Waiting for the phone to scan…' : '等待手机扫码…' });

@@ -43,19 +43,53 @@ const SOURCES: &[(&str, &[u8])] = &[
     src!("third_party/scrcpy-version.txt"),
 ];
 
-/// 源码指纹：用于判断对方是否已运行相同版本、以及二进制缓存是否可复用
+/// 源码指纹：用于判断对方是否已运行相同版本、以及二进制缓存是否可复用。
+/// 文本文件忽略 \r，使 Windows（CRLF）与其他系统（LF）检出的同一份代码得到相同指纹。
 pub fn build_id() -> &'static str {
     static ID: OnceLock<String> = OnceLock::new();
-    ID.get_or_init(|| {
-        let mut h: u64 = 0xcbf2_9ce4_8422_2325;
-        for (p, b) in SOURCES {
-            for x in p.as_bytes().iter().chain(b.iter()) {
-                h ^= *x as u64;
-                h = h.wrapping_mul(0x0100_0000_01b3);
-            }
+    ID.get_or_init(|| fingerprint(SOURCES))
+}
+
+fn fingerprint(sources: &[(&str, &[u8])]) -> String {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    let mut feed = |x: u8| {
+        h ^= x as u64;
+        h = h.wrapping_mul(0x0100_0000_01b3);
+    };
+    for (p, b) in sources {
+        p.bytes().for_each(&mut feed);
+        let text = *p != "third_party/scrcpy-server";
+        b.iter().filter(|&&x| !(text && x == b'\r')).for_each(|&x| feed(x));
+    }
+    format!("{h:016x}")
+}
+
+/// 由 GitHub Actions 发版构建（release.yml 设置 DROIDBRIDGE_OFFICIAL=1）。
+/// 只有正式版的源码与 Releases 中的预编译程序一一对应，开发版仍在对方电脑上现场编译。
+pub const OFFICIAL: bool = option_env!("DROIDBRIDGE_OFFICIAL").is_some();
+
+/// 预编译程序的下载地址前缀：环境变量 DROIDBRIDGE_RELEASE_BASE（内网镜像）优先，
+/// 正式版默认使用 GitHub Releases 中与本机相同版本的发布。
+pub fn release_base() -> Option<String> {
+    if let Ok(b) = std::env::var("DROIDBRIDGE_RELEASE_BASE") {
+        let b = b.trim().trim_end_matches('/').to_string();
+        if !b.is_empty() {
+            return Some(b);
         }
-        format!("{h:016x}")
-    })
+    }
+    OFFICIAL.then(|| format!("{}/releases/download/v{}", env!("CARGO_PKG_REPOSITORY"), env!("CARGO_PKG_VERSION")))
+}
+
+/// 对方系统对应的服务版安装包：(文件名, 包内目录名)
+fn release_asset(os: &str, arch: &str) -> Option<(String, String)> {
+    let v = env!("CARGO_PKG_VERSION");
+    let plat = match (os, arch) {
+        ("Darwin", _) => "macos-universal",
+        ("Linux", "x86_64" | "amd64") => "linux-x86_64",
+        _ => return None,
+    };
+    let dir = format!("droidbridge-server-{v}-{plat}");
+    Some((format!("{dir}.tar.gz"), dir))
 }
 
 // ---------------------------------------------------------------- 任务状态
@@ -124,6 +158,27 @@ pub struct InstallReq {
     /// 密码登录成功后，把本机公钥加入对方 authorized_keys，以后免密码
     #[serde(default)]
     pub remember: bool,
+}
+
+impl InstallReq {
+    /// 用保存的 SSH 登录信息更新远程电脑（不含密码）
+    pub fn for_update(peer: &peers::Peer) -> Result<Self, String> {
+        let ssh = peer.ssh.clone().ok_or_else(|| tr!("这台电脑不是通过 SSH 安装的，请在对方电脑上更新", "This computer was not installed over SSH; update it on that computer"))?;
+        if ssh.auth == "password" {
+            return Err(tr!("需要输入 SSH 密码", "SSH password required"));
+        }
+        Ok(Self {
+            addr: peer.addr.clone(),
+            user: ssh.user,
+            ssh_port: ssh.port,
+            name: peer.name.clone(),
+            token: peer.token.clone(),
+            auth: ssh.auth,
+            password: String::new(),
+            key_file: ssh.key_file,
+            remember: false,
+        })
+    }
 }
 
 #[derive(Clone, PartialEq)]
@@ -293,16 +348,21 @@ async fn install(ctx: &Ctx, req: &InstallReq, addr: &str) -> Result<serde_json::
         return Err(tr!("暂只支持通过 SSH 安装到 macOS / Linux（对方系统：{os}）。Windows 电脑请直接运行安装包", "SSH install supports macOS / Linux only (remote: {os}). On Windows, run the installer package instead"));
     }
     ctx.log(&format!("{remote_name}：{os} {arch}"));
+    // 保存到远程电脑记录里的登录方式（用于以后一键更新；不含密码）
+    let mut saved_auth = req.auth.clone();
     if req.remember && matches!(t.auth, Auth::Password(_)) {
         match remember_key(ctx, &t).await {
-            Ok(m) => ctx.log(&m),
+            Ok(m) => {
+                ctx.log(&m);
+                saved_auth = "agent".into();
+            }
             Err(e) => ctx.log(&tr!("未能保存免密登录：{e}", "Could not set up key login: {e}")),
         }
     }
     let dir = format!("{home}/.droidbridge");
 
     // 已在运行相同版本时跳过安装
-    let probe_peer = peers::Peer { id: String::new(), name: String::new(), addr: addr.to_string(), token: token.clone() };
+    let probe_peer = peers::Peer { id: String::new(), name: String::new(), addr: addr.to_string(), token: token.clone(), ssh: None };
     let same = match peers::get_json(&probe_peer, "/api/info").await {
         Ok(v) => v.get("build").and_then(|b| b.as_str()) == Some(build_id()),
         Err(_) => false,
@@ -318,6 +378,7 @@ async fn install(ctx: &Ctx, req: &InstallReq, addr: &str) -> Result<serde_json::
             .join("remote-bin")
             .join(format!("{}-{}-{}", os.to_lowercase(), arch, build_id()))
             .join("droidbridge");
+        let mut installed = false;
         if let Ok(bin) = tokio::fs::read(&cache).await {
             ctx.step(&tr!("上传程序", "Uploading program"));
             let kb = bin.len() / 1024;
@@ -331,7 +392,19 @@ async fn install(ctx: &Ctx, req: &InstallReq, addr: &str) -> Result<serde_json::
                 true,
             )
             .await?;
-        } else {
+            installed = true;
+        }
+        if !installed {
+            match (release_base(), release_asset(os, arch)) {
+                (Some(base), Some((asset, pkg_dir))) => {
+                    ctx.step(&tr!("下载预编译程序", "Downloading prebuilt program"));
+                    installed = install_release(ctx, &t, &base, &asset, &pkg_dir).await;
+                }
+                (Some(_), None) => ctx.log(&tr!("没有适用于 {os} {arch} 的预编译程序，改为现场编译", "No prebuilt program for {os} {arch}; building from source")),
+                _ => {}
+            }
+        }
+        if !installed {
             ctx.step(&tr!("上传源码", "Uploading source"));
             ssh_run(ctx, &t, "sh -s", Some(upload_script().into_bytes()), Duration::from_secs(300), true).await?;
             ctx.step(&tr!("在对方电脑上编译（首次约 2–5 分钟）", "Building on the remote computer (2–5 min the first time)"));
@@ -392,7 +465,12 @@ async fn install(ctx: &Ctx, req: &InstallReq, addr: &str) -> Result<serde_json::
     let mut ready = false;
     for _ in 0..30 {
         if let Ok(v) = peers::get_json(&probe_peer, "/api/info").await {
-            if v.get("build").and_then(|b| b.as_str()) == Some(build_id()) {
+            let build = v.get("build").and_then(|b| b.as_str()).unwrap_or("");
+            if v.get("version").and_then(|b| b.as_str()) == Some(env!("CARGO_PKG_VERSION")) {
+                if build != build_id() {
+                    // 例如内网镜像里的程序与本机构建不同；版本一致即可正常使用
+                    ctx.log(&tr!("提示：对方版本相同但构建不同（{build}）", "Note: same version, different build ({build})"));
+                }
                 ready = true;
                 break;
             }
@@ -407,7 +485,84 @@ async fn install(ctx: &Ctx, req: &InstallReq, addr: &str) -> Result<serde_json::
     }
 
     ctx.step(&tr!("添加到列表", "Adding to list"));
-    crate::save_peer(&ctx.st, None, addr, &req.name, token).await
+    let res = crate::save_peer(&ctx.st, None, addr, &req.name, token).await?;
+    let ssh = peers::SshInfo {
+        user: t.user.clone(),
+        port: t.port,
+        auth: if saved_auth.is_empty() { "agent".into() } else { saved_auth },
+        key_file: if let Auth::Key { path, .. } = &t.auth { path.clone() } else { String::new() },
+    };
+    ctx.st.peers.set_ssh(addr, ssh).await;
+    Ok(res)
+}
+
+/// 安装预编译的服务版：先让对方电脑直接下载；对方无法访问时由本机下载后上传。
+/// 两者都失败返回 false，由调用方改为现场编译。安装包附带 platform-tools，对方没有 adb 时使用。
+async fn install_release(ctx: &Ctx, t: &Target, base: &str, asset: &str, pkg_dir: &str) -> bool {
+    let url = format!("{base}/{asset}");
+    ctx.log(&tr!("下载 {url}", "Downloading {url}"));
+    let env = |extra: &str| format!("DB_ASSET={} DB_DIR={} {extra}sh -c {}", sh_quote(asset), sh_quote(pkg_dir), sh_quote(RELEASE_SCRIPT));
+    let remote = env(&format!("DB_URL={} ", sh_quote(base)));
+    let err = match ssh_run(ctx, t, &remote, None, Duration::from_secs(15 * 60), true).await {
+        Ok(_) => {
+            ctx.log(&tr!("已安装预编译程序 {asset}", "Installed prebuilt {asset}"));
+            return true;
+        }
+        Err(e) => e,
+    };
+    ctx.log(&tr!("对方电脑无法下载（{err}），改由本机下载后上传", "The remote computer could not download it ({err}); downloading here and uploading"));
+    let dir = ctx.st.cfg.data_dir.join("remote-bin");
+    let _ = tokio::fs::create_dir_all(&dir).await;
+    let pkg = dir.join(asset);
+    let sums = dir.join(format!("{asset}.sums"));
+    let fetched = async {
+        local_download(&format!("{base}/SHA256SUMS.txt"), &sums).await?;
+        if !pkg.is_file() {
+            local_download(&url, &pkg).await?;
+        }
+        let s = tokio::fs::read_to_string(&sums).await.map_err(|e| e.to_string())?;
+        let data = tokio::fs::read(&pkg).await.map_err(|e| e.to_string())?;
+        Ok::<_, String>((s, data))
+    }
+    .await;
+    match fetched {
+        Ok((s, data)) => {
+            let line = s.lines().find(|l| l.trim_end().ends_with(&format!(" {asset}"))).unwrap_or("").to_string();
+            let cmd = env(&format!("DB_SUMS={} ", sh_quote(&line)));
+            match ssh_run(ctx, t, &cmd, Some(data), Duration::from_secs(10 * 60), true).await {
+                Ok(_) => {
+                    ctx.log(&tr!("已安装预编译程序 {asset}", "Installed prebuilt {asset}"));
+                    true
+                }
+                Err(e) => {
+                    // 校验失败等情况：删掉本机缓存，下次重新下载
+                    let _ = tokio::fs::remove_file(&pkg).await;
+                    ctx.log(&tr!("安装预编译程序失败（{e}），改为现场编译", "Installing the prebuilt program failed ({e}); building from source"));
+                    false
+                }
+            }
+        }
+        Err(e) => {
+            let _ = tokio::fs::remove_file(&pkg).await;
+            ctx.log(&tr!("本机也无法下载（{e}），改为现场编译", "Could not download here either ({e}); building from source"));
+            false
+        }
+    }
+}
+
+/// 用系统自带的 curl 下载（Windows 10+、macOS、Linux 均自带）
+async fn local_download(url: &str, dest: &std::path::Path) -> Result<(), String> {
+    let tmp = dest.with_extension("download");
+    let mut c = Command::new("curl");
+    c.args(["-fsSL", "--connect-timeout", "10", "--max-time", "600", "-o"]).arg(&tmp).arg(url).stdin(Stdio::null());
+    #[cfg(windows)]
+    c.creation_flags(0x0800_0000);
+    let out = c.output().await.map_err(|e| format!("curl: {e}"))?;
+    if !out.status.success() {
+        let _ = tokio::fs::remove_file(&tmp).await;
+        return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
+    }
+    tokio::fs::rename(&tmp, dest).await.map_err(|e| e.to_string())
 }
 
 // ---------------------------------------------------------------- SSH
@@ -653,10 +808,40 @@ mv -f "$D/bin/droidbridge.new" "$D/bin/droidbridge"
 echo "Build finished"
 "#;
 
+/// 安装预编译服务版。变量：DB_ASSET 文件名、DB_DIR 包内目录；
+/// DB_URL 下载地址前缀（对方直接下载），或 DB_SUMS 校验行 + 标准输入为安装包（本机上传）
+const RELEASE_SCRIPT: &str = r#"set -e
+D="$HOME/.droidbridge"; T="$D/dl"
+rm -rf "$T"; mkdir -p "$T"
+if [ -n "$DB_URL" ]; then
+  command -v curl >/dev/null 2>&1 || { echo "curl not found" >&2; exit 5; }
+  curl -fsSL --connect-timeout 10 --max-time 60 -o "$T/sums" "$DB_URL/SHA256SUMS.txt"
+  curl -fsSL --connect-timeout 10 --max-time 600 -o "$T/pkg.tgz" "$DB_URL/$DB_ASSET"
+else
+  printf '%s\n' "$DB_SUMS" > "$T/sums"
+  cat > "$T/pkg.tgz"
+fi
+E=$(grep " $DB_ASSET\$" "$T/sums" | head -n 1 | cut -d' ' -f1)
+[ -n "$E" ] || { echo "no checksum for $DB_ASSET" >&2; exit 4; }
+if command -v sha256sum >/dev/null 2>&1; then S=$(sha256sum "$T/pkg.tgz" | cut -d' ' -f1); else S=$(shasum -a 256 "$T/pkg.tgz" | cut -d' ' -f1); fi
+[ "$S" = "$E" ] || { echo "checksum mismatch" >&2; exit 4; }
+tar -xzf "$T/pkg.tgz" -C "$T"
+B="$T/$DB_DIR/droidbridge"
+[ -f "$B" ] || { echo "droidbridge not found in package" >&2; exit 4; }
+chmod +x "$B"
+"$B" --help >/dev/null 2>&1 || { echo "the prebuilt program cannot run on this computer" >&2; exit 6; }
+mkdir -p "$D/bin"
+cp "$B" "$D/bin/droidbridge.new"; mv -f "$D/bin/droidbridge.new" "$D/bin/droidbridge"
+if [ -d "$T/$DB_DIR/platform-tools" ]; then rm -rf "$D/platform-tools"; mv "$T/$DB_DIR/platform-tools" "$D/platform-tools"; fi
+rm -rf "$T"
+echo "installed $DB_ASSET"
+"#;
+
 const ADB_SCRIPT: &str = r#"export PATH="/usr/local/bin:/opt/homebrew/bin:$PATH"
 for p in "$ANDROID_HOME/platform-tools/adb" "$ANDROID_SDK_ROOT/platform-tools/adb" \
          "$HOME/Library/Android/sdk/platform-tools/adb" "$HOME/Android/Sdk/platform-tools/adb" \
-         /usr/local/bin/adb /opt/homebrew/bin/adb /usr/bin/adb "$(command -v adb 2>/dev/null)"; do
+         /usr/local/bin/adb /opt/homebrew/bin/adb /usr/bin/adb "$(command -v adb 2>/dev/null)" \
+         "$HOME/.droidbridge/platform-tools/adb"; do
   if [ -n "$p" ] && [ -x "$p" ]; then echo "ADB=$p"; exit 0; fi
 done
 if command -v brew >/dev/null 2>&1; then
@@ -766,6 +951,17 @@ mod tests {
         assert_eq!(base64(b"Ma"), "TWE=\n");
         assert_eq!(base64(b"M"), "TQ==\n");
         assert!(base64(&[0u8; 200]).lines().all(|l| l.len() <= 76));
+    }
+
+    #[test]
+    fn fingerprint_ignores_crlf() {
+        let lf = fingerprint(&[("a.rs", b"x\ny\n"), ("third_party/scrcpy-server", b"\r\n")]);
+        let crlf = fingerprint(&[("a.rs", b"x\r\ny\r\n"), ("third_party/scrcpy-server", b"\r\n")]);
+        assert_eq!(lf, crlf);
+        // 二进制文件中的 \r 不能忽略
+        assert_ne!(lf, fingerprint(&[("a.rs", b"x\ny\n"), ("third_party/scrcpy-server", b"\n")]));
+        assert!(release_asset("Darwin", "arm64").unwrap().0.ends_with("-macos-universal.tar.gz"));
+        assert!(release_asset("Linux", "aarch64").is_none());
     }
 
     #[test]

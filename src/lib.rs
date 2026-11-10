@@ -301,6 +301,8 @@ fn router(state: Shared) -> Router {
         .route("/api/peers", get(list_peers).post(add_peer))
         .route("/api/peers/{id}", put(edit_peer).delete(remove_peer))
         .route("/api/install", post(install_start))
+        .route("/api/peers/{id}/update", post(peer_update))
+        .route("/api/node", get(node_info))
         .route("/api/install/{id}", get(install_status))
         .route("/api/ssh/keys", get(ssh_keys))
         .route("/api/discovered", get(discovered))
@@ -402,6 +404,7 @@ async fn info(State(st): State<Shared>) -> Json<serde_json::Value> {
         "name": st.cfg.name,
         "version": env!("CARGO_PKG_VERSION"),
         "build": remote::build_id(),
+        "official": remote::OFFICIAL,
         "os": std::env::consts::OS,
         "lang": i18n::code(),
         "scrcpy": scrcpy_version(),
@@ -464,13 +467,14 @@ pub async fn save_peer(
     let mut peer = match &id {
         Some(id) => {
             let old = st.peers.get(id).await.ok_or_else(|| tr!("远程电脑不存在", "Remote computer not found"))?;
-            peers::Peer { id: id.clone(), name: name.trim().to_string(), addr, token: token.or(old.token) }
+            peers::Peer { id: id.clone(), name: name.trim().to_string(), addr, token: token.or(old.token), ssh: old.ssh }
         }
         None => peers::Peer {
             id: format!("p{:08x}", util::random_scid()),
             name: name.trim().to_string(),
             addr,
             token,
+            ssh: None,
         },
     };
     let info = peers::get_json(&peer, "/api/info")
@@ -509,6 +513,37 @@ async fn install_start(State(st): State<Shared>, Json(req): Json<remote::Install
     match remote::start(st, req) {
         Ok(id) => Json(json!({"job": id})).into_response(),
         Err(e) => err(StatusCode::BAD_REQUEST, e),
+    }
+}
+
+/// 一键更新：用保存的 SSH 登录方式把本机版本装到远程电脑
+async fn peer_update(State(st): State<Shared>, Path(id): Path<String>) -> Response {
+    let Some(peer) = st.peers.get(&id).await else {
+        return err(StatusCode::NOT_FOUND, tr!("远程电脑不存在", "Remote computer not found"));
+    };
+    let req = match remote::InstallReq::for_update(&peer) {
+        Ok(r) => r,
+        Err(e) => return err(StatusCode::BAD_REQUEST, e),
+    };
+    match remote::start(st, req) {
+        Ok(job) => Json(json!({"job": job})).into_response(),
+        Err(e) => err(StatusCode::BAD_REQUEST, e),
+    }
+}
+
+/// 节点信息（版本、构建、系统）：本机或 ?peer= 指定的远程电脑
+async fn node_info(State(st): State<Shared>, Query(q): Query<HashMap<String, String>>) -> Response {
+    match remote_id(&q) {
+        None => info(State(st)).await.into_response(),
+        Some(id) => {
+            let Some(peer) = st.peers.get(id).await else {
+                return err(StatusCode::NOT_FOUND, tr!("远程电脑不存在", "Remote computer not found"));
+            };
+            match peers::get_json(&peer, "/api/info").await {
+                Ok(v) => Json(v).into_response(),
+                Err(e) => err(StatusCode::BAD_GATEWAY, e),
+            }
+        }
     }
 }
 
