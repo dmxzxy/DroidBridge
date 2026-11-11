@@ -15,6 +15,7 @@
 - **设备日志**：在画面旁实时查看 logcat，可按级别、关键字、应用过滤
 - **性能浮层**：在画面上显示前台应用的帧率、CPU、内存，以及温度和电量
 - **应用管理**：列出已安装应用，启动、强制停止、清除数据、卸载
+- **文件管理**：浏览手机存储，上传、下载、新建文件夹、重命名、删除
 - **批量安装与群控**：一个 APK 一次装到多台设备；在多台设备上同步点击和按键
 - **AI Agent（MCP）**：让 Claude Code、Cursor 等支持 MCP 的 AI 工具读取画面并操作任意设备；每次操作都能实时看到，随时可以暂停
 - **安装 APK / 传文件**：把文件拖到设备画面上即可
@@ -26,6 +27,7 @@
 | ![](docs/screenshots/zh/8-logcat.png) | ![](docs/screenshots/zh/9-wireless.png) | ![](docs/screenshots/zh/7-mobile-view.png) |
 | ![](docs/screenshots/zh/10-gallery.png) | ![](docs/screenshots/zh/5-settings.png) | ![](docs/screenshots/zh/6-mobile-list.png) |
 | ![](docs/screenshots/zh/11-perf.png) | ![](docs/screenshots/zh/12-apps.png) | ![](docs/screenshots/zh/13-batch.png) |
+| ![](docs/screenshots/zh/14-files.png) | ![](docs/screenshots/zh/5-settings.png) | ![](docs/screenshots/zh/6-mobile-list.png) |
 
 > 截图使用的是模拟数据，手机画面为示意图（`tools/demo/shots.ps1` 生成）。
 
@@ -128,6 +130,17 @@
 **更多（⋯）→ 应用管理…** 列出已安装的应用，显示应用名称（由 scrcpy-server 在设备上读取），分为用户应用和系统应用，可以搜索，正在运行的会标出。可以直接启动应用，⋯ 里有强制停止、清除数据和卸载（后两项需确认）。
 
 有些系统不允许通过 adb 清除数据：OPPO / 一加 / realme 需在开发者选项中打开“禁止权限监控”；小米需打开“USB 调试（安全设置）”。
+
+### 文件管理
+
+点设备旁的 **⋯**（或在投屏窗口的 **更多 → 文件管理…**），浏览手机存储：
+
+- 浏览文件夹（默认从 `/sdcard` 开始），窗口底部显示剩余空间
+- **上传**：在对话框里选择本机的一个或多个文件，进度在提示条里显示
+- **下载**：把文件下载到本机
+- 每行的 ⋯ 菜单里有**新建文件夹**（底部按钮）、**重命名**、**删除**（删除需确认）
+
+只能访问共享存储（`/sdcard`、`/storage/emulated/0`），路径在服务端校验，无法访问系统目录。上传时先写成临时文件名，完成后再改名，中途中断不会留下半截文件。
 
 ### 批量安装与群控
 

@@ -36,8 +36,9 @@
   // 缩略图懒生成：不能在顶层调用 thumb()，因为本脚本在 <head> 先于页面脚本执行，
   // 此时页面里的 LANG（let）还不存在，会 ReferenceError 导致整个 mock 失效。
   const json = (b, status = 200) => new Response(JSON.stringify(b), { status, headers: { 'content-type': 'application/json' } });
-  window.fetch = async (url) => {
+  window.fetch = async (url, opts) => {
     const u = new URL(url, 'http://x');
+    const post = typeof opts?.body === 'string' ? JSON.parse(opts.body) : {};
     if (u.pathname === '/api/info') return json(INFO);
     if (u.pathname === '/api/peers') return json(PEERS);
     if (u.pathname === '/api/node') return json(u.searchParams.get('peer') === 'pB' ? { version: '0.0.9', build: 'old', os: 'macos' } : INFO);
@@ -55,6 +56,10 @@
     }
     if (u.pathname === '/api/apps') return json({ named: true, apps: APPS() });
     if (u.pathname === '/api/apps/action') return json({ ok: true, msg: LANG === 'en' ? 'Done' : '完成' });
+    if (u.pathname === '/api/files/list') {
+      const p = post.path || '/sdcard';
+      return json(FILES(p));
+    }
     if (u.pathname === '/api/settings') return json({ media_dir: 'C:\\DroidBridge\\data\\media' });
     return json({ error: 'not found' }, 404);
   };
@@ -74,6 +79,29 @@
       [zh ? '阅读' : 'Reader', 'com.example.reader', 0], [zh ? '天气' : 'Weather', 'com.example.weather', 0]];
     const sys = [[zh ? '设置' : 'Settings', 'com.android.settings', 1], [zh ? '相机' : 'Camera', 'com.android.camera', 0], [zh ? '电话' : 'Phone', 'com.android.dialer', 0]];
     return [...u.map(([name, pkg, r]) => ({ name, pkg, system: false, running: !!r })), ...sys.map(([name, pkg, r]) => ({ name, pkg, system: true, running: !!r }))];
+  };
+  // 文件管理演示数据
+  const FILES = (path) => {
+    const zh = LANG !== 'en';
+    const t = Math.floor(Date.now() / 1000);
+    const dir = (name, mtime) => ({ name, dir: true, size: 4096, mtime });
+    const file = (name, size, mtime) => ({ name, dir: false, size, mtime });
+    const tree = {
+      '/sdcard': [dir('Android', t - 86400 * 20), dir('DCIM', t - 3600), dir('Download', t - 7200), dir('Movies', t - 86400 * 3), dir('Music', t - 86400 * 9), dir('Pictures', t - 86400), dir('Documents', t - 86400 * 2),
+        file('notes.txt', 2048, t - 600), file(zh ? '录音.m4a' : 'recording.m4a', 3_400_000, t - 900)],
+      '/sdcard/DCIM': [dir('Camera', t - 3600), dir('Screenshots', t - 1800)],
+      '/sdcard/DCIM/Camera': [file('IMG_20261107_102400.jpg', 3_800_000, t - 300), file('IMG_20261107_101500.jpg', 3_600_000, t - 900), file(zh ? '视频 001.mp4' : 'VID_001.mp4', 48_200_000, t - 3600)],
+      '/sdcard/DCIM/Screenshots': [file('Screenshot_20261107-101500.png', 880_000, t - 1800)],
+      '/sdcard/Download': [file('example-game-2.4.1.apk', 23 * 1048576, t - 7200), file(zh ? '测试报告.pdf' : 'report.pdf', 1_240_000, t - 172800), file('DroidBridge-0.6.0-windows-x64.zip', 23_500_000, t - 43200)],
+      '/sdcard/Movies': [file('screen-2026-11-07.webm', 12_400_000, t - 86400 * 3)],
+      '/sdcard/Music': [file('track-01.mp3', 6_200_000, t - 86400 * 9)],
+      '/sdcard/Pictures': [file('wallpaper.png', 420_000, t - 86400)],
+      '/sdcard/Documents': [file(zh ? '清单.md' : 'todo.md', 1200, t - 86400 * 2)],
+      '/sdcard/Android': [dir('data', t - 86400 * 20), dir('obb', t - 86400 * 20)],
+    };
+    const items = (tree[path] || []).slice().sort((a, b) => (b.dir - a.dir) || a.name.localeCompare(b.name));
+    const parent = path === '/sdcard' ? null : path.split('/').slice(0, -1).join('/') || '/sdcard';
+    return { path, parent, items, space: { total: 126_000_000_000, free: 47_800_000_000 } };
   };
   let perfTick = 0;
   const perfSample = () => {
@@ -176,7 +204,8 @@
     if (S === 'log') setTimeout(() => [...viewers.values()][0].toggleLog(true), 300);
     if (S === 'add') peerDialog();
     if (S === 'perf') { openViewer(L, DEV.local[0]); setTimeout(() => [...viewers.values()][0].togglePerf(), 300); }
-    if (S === 'apps') { openViewer(L, DEV.local[0]); setTimeout(() => appsDialog([...viewers.values()][0]), 300); }
+    if (S === 'files') { openViewer(L, DEV.local[0]); setTimeout(() => filesDialog(L, DEV.local[0]), 300); }
+    if (S === 'apps') { openViewer(L, DEV.local[0]); setTimeout(() => appsDialog(L, DEV.local[0]), 300); }
     if (S === 'batch') setTimeout(() => {
       batchInstallDialog(new File([new Uint8Array(23 * 1048576)], 'example-game-2.4.1.apk'));
       const d = [...document.querySelectorAll('.bi-d .r')];

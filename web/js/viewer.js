@@ -85,7 +85,8 @@ class Viewer {
 
   moreMenu() {
     menu(this.moreBtn, [
-      { icon: 'grid', label: t('应用管理…'), fn: () => appsDialog(this) },
+      { icon: 'grid', label: t('应用管理…'), fn: () => appsDialog(this.host, this.dev) },
+      { icon: 'folder', label: t('文件管理…'), fn: () => filesDialog(this.host, this.dev) },
       '-',
       { icon: 'bell', label: t('下拉通知栏'), fn: () => this.send({ t: 'cmd', name: 'notif' }) },
       { icon: 'sliders', label: t('快捷设置'), fn: () => this.send({ t: 'cmd', name: 'settings' }) },

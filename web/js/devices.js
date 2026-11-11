@@ -98,8 +98,17 @@ function devRows(hst, emptyEl) {
     }, h('span', { class: 'dot ' + (ready ? 'ok' : 'warn') }),
       h('div', { class: 't' }, h('b', {}, d.model || d.serial), d.model ? h('small', {}, d.serial) : null),
       d.wireless ? h('span', { class: 'wl', title: t('无线连接'), html: svg('wifi') }) : null,
-      ready ? null : h('span', { class: 'st' }, STATE_TEXT[d.state] || d.state));
+      ready ? null : h('span', { class: 'st' }, STATE_TEXT[d.state] || d.state),
+      ready ? ib('more', t('更多'), e => { e.stopPropagation(); deviceMenu(e.currentTarget, hst, d); }) : null);
   });
+}
+
+/** 设备菜单：不打开投屏也能管理应用和文件 */
+function deviceMenu(anchor, hst, dev) {
+  menu(anchor, [
+    { icon: 'grid', label: t('应用管理…'), fn: () => appsDialog(hst, dev) },
+    { icon: 'folder', label: t('文件管理…'), fn: () => filesDialog(hst, dev) },
+  ]);
 }
 
 function renderSide() {

@@ -373,8 +373,8 @@ function settingsDialog() {
 }
 
 // ---------------- 应用管理 ----------------
-function appsDialog(v) {
-  const peer = v.host.id, serial = v.dev.serial;
+function appsDialog(hst, dev) {
+  const peer = hst.id, serial = dev.serial;
   let apps = [], kind = 'user';
   const search = h('input', { class: 'input', type: 'search', placeholder: t('搜索名称或包名'), spellcheck: 'false', oninput: () => render() });
   const segBtn = (k, label) => h('button', { type: 'button', class: k === kind ? 'on' : '', onclick: e => { kind = k; [...seg.children].forEach(b => b.classList.toggle('on', b === e.currentTarget)); render(); } }, label);
@@ -418,7 +418,7 @@ function appsDialog(v) {
     }
   }
   const dlg = dialog({
-    title: t('应用管理') + ' · ' + (v.nameEl.textContent || serial), cls: 'apps',
+    title: t('应用管理') + ' · ' + (dev.model || serial), cls: 'apps',
     body: [h('div', { class: 'apps-bar' }, search, seg, ib('refresh', t('刷新'), load)), list],
     actions: [count, h('button', { class: 'btn', type: 'button', onclick: () => dlg.close() }, t('关闭'))],
   });

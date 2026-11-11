@@ -38,9 +38,8 @@ jobs:
         run: cargo build --locked --features desktop
       - name: Test
         run: cargo test --locked
-      - name: Check web UI script
+      - name: Check web UI
         if: runner.os == 'Linux'
-        run: |
-          node -e 'const fs=require("fs");const s=fs.readFileSync("web/index.html","utf8");fs.writeFileSync("/tmp/ui.js",s.slice(s.lastIndexOf("<script>")+8,s.lastIndexOf("</script>")))'
-          node --check /tmp/ui.js
-          for f in web/js/*.js; do node --check "$f" || exit 1; done
+        run: node tools/check-ui.js
+
+

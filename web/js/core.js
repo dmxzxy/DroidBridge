@@ -44,6 +44,7 @@ const P = {
   home: '<circle cx="12" cy="12" r="6.5"/>',
   recent: '<rect x="6" y="6" width="12" height="12" rx="1.5"/>',
   chevLeft: '<path d="m15 18-6-6 6-6"/>',
+  file: '<path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5z"/><path d="M14 2v6h6"/>',
   folder: '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
   activity: '<path d="M22 12h-4l-3 9L9 3l-3 9H2"/>',
   grid: '<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>',

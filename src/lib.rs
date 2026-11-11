@@ -8,6 +8,7 @@ pub mod agent;
 pub mod apps;
 pub mod control;
 pub mod discovery;
+pub mod files;
 pub mod icon;
 pub mod logcat;
 pub mod mcp;
@@ -51,6 +52,7 @@ const ASSETS: &[(&str, &str, &str)] = &[
     ("js/logcat.js", "text/javascript; charset=utf-8", include_str!("../web/js/logcat.js")),
     ("js/audio.js", "text/javascript; charset=utf-8", include_str!("../web/js/audio.js")),
     ("js/gallery.js", "text/javascript; charset=utf-8", include_str!("../web/js/gallery.js")),
+    ("js/files.js", "text/javascript; charset=utf-8", include_str!("../web/js/files.js")),
 ];
 
 async fn asset_root(Path(file): Path<String>) -> Response {
@@ -367,6 +369,12 @@ fn router(state: Shared) -> Router {
         .route("/ws/perf", get(ws_perf))
         .route("/mcp", post(mcp::handle).get(mcp::handle_get).delete(mcp::handle_get))
         .route("/api/agent/exec", post(agent_exec))
+        .route("/api/files/list", post(files_list))
+        .route("/api/files/mkdir", post(files_mkdir))
+        .route("/api/files/rename", post(files_rename))
+        .route("/api/files/delete", post(files_delete))
+        .route("/api/files/upload", post(files_upload).layer(DefaultBodyLimit::max(2usize << 30)))
+        .route("/api/files/download", get(files_download))
         .route("/api/agent/pause", post(agent_pause))
         .route("/api/apps", post(apps_list))
         .route("/api/apps/action", post(apps_action))
@@ -820,6 +828,48 @@ adb_post!(adb_pair, wireless::PairReq, "/api/adb/pair", wireless::pair);
 adb_post!(adb_disconnect, wireless::SerialReq, "/api/adb/disconnect", wireless::disconnect);
 adb_post!(adb_tcpip, wireless::SerialReq, "/api/adb/tcpip", wireless::tcpip);
 adb_post!(apps_list, apps::ListReq, "/api/apps", apps::list);
+
+adb_post!(files_list, files::ListReq, "/api/files/list", files::list);
+adb_post!(files_mkdir, files::TwoReq, "/api/files/mkdir", files::mkdir);
+adb_post!(files_rename, files::TwoReq, "/api/files/rename", files::rename);
+adb_post!(files_delete, files::DeleteReq, "/api/files/delete", files::delete);
+
+/// 上传文件到设备：?path=目录&name=文件名，body 为文件内容
+async fn files_upload(State(st): State<Shared>, Query(q): Query<HashMap<String, String>>, body: Bytes) -> Response {
+    let Some(serial) = q.get("serial").filter(|s| !s.is_empty()) else {
+        return err(StatusCode::BAD_REQUEST, tr!("缺少 serial 参数", "Missing serial parameter"));
+    };
+    let name = q.get("name").map(String::as_str).unwrap_or("file");
+    if let Some(id) = remote_id(&q) {
+        let Some(peer) = st.peers.get(id).await else {
+            return err(StatusCode::NOT_FOUND, tr!("远程电脑不存在", "Remote computer not found"));
+        };
+        let query = format!("serial={}&path={}&name={}", util::url_encode(serial), util::url_encode(q.get("path").map(String::as_str).unwrap_or("")), util::url_encode(name));
+        return match peers::post_file(&peer, &query, &body).await {
+            Ok(v) => Json(v).into_response(),
+            Err(e) => err(StatusCode::BAD_GATEWAY, e),
+        };
+    }
+    let dir = q.get("path").map(String::as_str).unwrap_or("/sdcard");
+    match files::upload(&st, serial, dir, name, &body).await {
+        Ok(v) => Json(v).into_response(),
+        Err(e) => err(StatusCode::BAD_REQUEST, e),
+    }
+}
+
+/// 从设备下载文件：?path=完整路径。远程电脑先转发到这里，再由本机 pull
+async fn files_download(State(st): State<Shared>, Query(q): Query<HashMap<String, String>>) -> Response {
+    let Some(serial) = q.get("serial").filter(|s| !s.is_empty()) else {
+        return err(StatusCode::BAD_REQUEST, tr!("缺少 serial 参数", "Missing serial parameter"));
+    };
+    let Some(path) = q.get("path").filter(|p| !p.is_empty()) else {
+        return err(StatusCode::BAD_REQUEST, tr!("缺少 path 参数", "Missing path parameter"));
+    };
+    match files::download(&st, serial, path).await {
+        Ok(r) => r,
+        Err(e) => err(StatusCode::BAD_REQUEST, e),
+    }
+}
 
 /// 在本机执行 AI 工具（由收到 MCP 请求的节点转发过来）：{"tool":"tap","args":{"serial":..,..}}
 async fn agent_exec(State(st): State<Shared>, Json(body): Json<serde_json::Value>) -> Response {

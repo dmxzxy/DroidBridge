@@ -208,6 +208,31 @@ dialog.settings .dlg-b{gap:18px;max-height:calc(100dvh - 160px);overflow:auto;ou
 .perf .bad>span:last-child{color:#ff7b7b}
 .viewer.synced{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
 .vhead .ib.on{color:var(--accent);background:var(--active)}
+dialog.files{width:min(680px,calc(100vw - 32px))}
+.fc-bar{display:flex;align-items:center;gap:6px;min-width:0}
+.fc-path{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:left;font:12px Consolas,"SF Mono",monospace;color:var(--sub);padding:0 2px}
+.fc-list{height:min(50vh,420px);overflow:auto;margin:0 -8px;padding:0 8px}
+.fc-row{display:flex;align-items:center;gap:10px;min-height:46px;padding:4px 4px 4px 6px;border-radius:6px}
+.fc-row.dir{cursor:pointer}
+.fc-row:hover{background:var(--hover)}
+.fc-ico{flex:none;display:flex;color:var(--faint)}
+.fc-row.dir .fc-ico{color:var(--accent)}
+.fc-ico svg{width:18px;height:18px}
+.fc-t{flex:1;min-width:0}
+.fc-t b{display:block;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.fc-t small{display:block;color:var(--faint);font-size:11px}
+.fc-acts{flex:none;display:flex;gap:2px;opacity:0}
+.fc-row:hover .fc-acts,.fc-row .fc-acts:focus-within,.fc-row:has(.ib[aria-expanded=true]) .fc-acts{opacity:1}
+@media (hover:none){.fc-acts{opacity:1}}
+.fc-meta{display:flex;align-items:baseline;gap:8px;min-width:0;margin-right:auto;color:var(--faint);font-size:11px;white-space:nowrap;overflow:hidden}
+.fc-meta .apps-n{flex:none}
+.fc-free{overflow:hidden;text-overflow:ellipsis}
+dialog.files .dlg-f{flex-wrap:wrap}
+dialog.files .dlg-f .btn{white-space:nowrap;flex:none}
+@media (max-width:560px){
+  dialog.files .fc-meta{flex-basis:100%;margin-bottom:2px}
+}
+.files-hide{display:none}
 dialog.apps{width:min(600px,calc(100vw - 32px))}
 .apps-bar{display:flex;gap:8px;align-items:center}
 .apps-bar .input{flex:1;min-width:0;height:32px}

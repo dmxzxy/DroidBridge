@@ -32,6 +32,7 @@ const SOURCES: &[(&str, &[u8])] = &[
     src!("src/perf.rs"),
     src!("src/control.rs"),
     src!("src/discovery.rs"),
+    src!("src/files.rs"),
     src!("src/wireless.rs"),
     src!("src/i18n.rs"),
     src!("src/icon.rs"),
@@ -54,6 +55,7 @@ const SOURCES: &[(&str, &[u8])] = &[
     src!("web/js/logcat.js"),
     src!("web/js/audio.js"),
     src!("web/js/gallery.js"),
+    src!("web/js/files.js"),
     src!("third_party/scrcpy-server"),
     src!("third_party/scrcpy-version.txt"),
 ];
