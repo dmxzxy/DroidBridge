@@ -60,6 +60,9 @@
       const p = post.path || '/sdcard';
       return json(FILES(p));
     }
+    if (u.pathname === '/api/update/check') return json({ current: '0.7.0', latest: '0.8.0', tag: 'v0.8.0', newer: true, supported: true,
+      asset: 'DroidBridge-0.8.0-windows-x64.zip', page: 'https://github.com/dmxzxy/DroidBridge/releases/tag/v0.8.0',
+      download: 'https://github.com/dmxzxy/DroidBridge/releases/download/v0.8.0/DroidBridge-0.8.0-windows-x64.zip' });
     if (u.pathname === '/api/settings') return json({ media_dir: 'C:\\DroidBridge\\data\\media' });
     return json({ error: 'not found' }, 404);
   };
@@ -204,6 +207,7 @@
     if (S === 'log') setTimeout(() => [...viewers.values()][0].toggleLog(true), 300);
     if (S === 'add') peerDialog();
     if (S === 'perf') { openViewer(L, DEV.local[0]); setTimeout(() => [...viewers.values()][0].togglePerf(), 300); }
+    if (S === 'update') { UPDATE = { current: '0.7.0', latest: '0.8.0', page: 'https://github.com/dmxzxy/DroidBridge/releases/tag/v0.8.0', supported: true }; updateDialog(); }
     if (S === 'files') { openViewer(L, DEV.local[0]); setTimeout(() => filesDialog(L, DEV.local[0]), 300); }
     if (S === 'apps') { openViewer(L, DEV.local[0]); setTimeout(() => appsDialog(L, DEV.local[0]), 300); }
     if (S === 'batch') setTimeout(() => {

@@ -35,6 +35,7 @@
 <script src="js/audio.js"></script>
 <script src="js/gallery.js"></script>
 <script src="js/files.js"></script>
+<script src="js/update.js"></script>
 <!-- 初始化脚本（必须最后加载） -->
 <script>
 // ---------------- 初始化 ----------------
@@ -67,6 +68,7 @@ addEventListener('beforeunload', () => { for (const v of viewers.values()) if (v
     if (hst) openViewer(hst, (hst.devices || []).find(d => d.serial === serial) || { serial, model: '', state: 'device' });
   }
   setInterval(() => { if (!document.hidden) refreshAll(); }, 4000);
+  if (isLocalHost()) checkUpdate();
 })();
 </script>
 </body>

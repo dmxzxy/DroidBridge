@@ -17,11 +17,13 @@ pub mod peers;
 pub mod perf;
 pub mod remote;
 pub mod scrcpy;
+pub mod update;
 pub mod util;
 pub mod wireless;
 
 use axum::body::Bytes;
 use axum::extract::ws::WebSocketUpgrade;
+use axum::extract::connect_info::ConnectInfo;
 use axum::extract::{DefaultBodyLimit, Path, Query, Request, State};
 use axum::http::{header, HeaderMap, StatusCode};
 use axum::middleware::{self, Next};
@@ -53,6 +55,7 @@ const ASSETS: &[(&str, &str, &str)] = &[
     ("js/audio.js", "text/javascript; charset=utf-8", include_str!("../web/js/audio.js")),
     ("js/gallery.js", "text/javascript; charset=utf-8", include_str!("../web/js/gallery.js")),
     ("js/files.js", "text/javascript; charset=utf-8", include_str!("../web/js/files.js")),
+    ("js/update.js", "text/javascript; charset=utf-8", include_str!("../web/js/update.js")),
 ];
 
 async fn asset_root(Path(file): Path<String>) -> Response {
@@ -363,6 +366,8 @@ fn router(state: Shared) -> Router {
         .route("/api/media/rec/{id}", axum::routing::post(media::media_rec_chunk_handler).delete(media::media_rec_abort_handler).layer(DefaultBodyLimit::max(64usize << 20)))
         .route("/api/media/{name}", axum::routing::delete(media::media_delete_handler))
         .route("/api/media/reveal", post(media::media_reveal_handler))
+        .route("/api/update/check", get(update_check))
+        .route("/api/update/apply", post(update_apply))
         .route("/api/settings", axum::routing::get(media::settings_get_handler).put(media::settings_put_handler))
         .route("/ws/stream", get(ws_stream))
         .route("/ws/logcat", get(ws_logcat))
@@ -922,6 +927,23 @@ async fn adb_qr_cancel(State(st): State<Shared>, Path(id): Path<String>, Query(q
         Ok(json!({"ok": true}))
     })
     .await
+}
+
+/// 检查更新（只读；带 ?peer= 时检查远程电脑）
+async fn update_check(State(st): State<Shared>, Query(q): Query<HashMap<String, String>>) -> Response {
+    let st2 = st.clone();
+    local_or_peer(&st, &q, "GET", "/api/update/check", b"", || async move { update::check(&st2).await }).await
+}
+
+/// 下载并安装更新：只在本机执行（远程电脑用 SSH 更新）
+async fn update_apply(State(st): State<Shared>, ConnectInfo(addr): ConnectInfo<SocketAddr>) -> Response {
+    if !addr.ip().is_loopback() {
+        return err(StatusCode::FORBIDDEN, tr!("只允许在本机执行更新", "Updates can only be started on the computer itself"));
+    }
+    match update::apply(&st).await {
+        Ok(v) => Json(v).into_response(),
+        Err(e) => err(StatusCode::BAD_REQUEST, e),
+    }
 }
 
 /// 本机 ~/.ssh 下可用的私钥文件

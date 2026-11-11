@@ -25,10 +25,18 @@ jobs:
         run: |
           $v = '${{ github.ref_name }}'.TrimStart('v')
           ./build.ps1 -Version $v
+      - name: Build installer
+        shell: pwsh
+        run: |
+          choco install innosetup --no-progress -y | Out-Null
+          $v = '${{ github.ref_name }}'.TrimStart('v')
+          ./tools/make-installer.ps1 -Version $v
       - uses: actions/upload-artifact@v4
         with:
           name: windows
-          path: dist/*.zip
+          path: |
+            dist/*.zip
+            dist/*-setup.exe
 
   macos:
     runs-on: macos-latest

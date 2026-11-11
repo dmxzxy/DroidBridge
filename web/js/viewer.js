@@ -39,6 +39,8 @@ class Viewer {
     this.dot = h('span', { class: 'dot warn' });
     this.nameEl = h('span', { class: 'name' }, this.dev.model || this.dev.serial);
     this.statEl = h('span', { class: 'fps' });
+    // 真正的键盘输入落在这个隐藏的 textarea 上（canvas 不能触发输入法）
+    this.ime = h('textarea', { class: 'ime', autocomplete: 'off', autocorrect: 'off', autocapitalize: 'off', spellcheck: 'false', 'aria-label': t('键盘输入') });
     this.textInput = h('input', { class: 'input', placeholder: t('输入文字，回车发送'), enterkeyhint: 'send' });
     this.textInput.addEventListener('keydown', e => {
       if (e.key !== 'Enter' || e.isComposing) return;
@@ -605,7 +607,8 @@ class Viewer {
     };
     c.addEventListener('pointerdown', e => {
       if (e.pointerType === 'mouse' && e.button !== 0) return;
-      e.preventDefault(); c.focus({ preventScroll: true });
+      e.preventDefault();
+      if (!isMobile()) this.ime.focus({ preventScroll: true }); else c.focus({ preventScroll: true });
       c.setPointerCapture(e.pointerId);
       this.pointers.set(e.pointerId, true);
       touch(e, 0);
@@ -627,18 +630,41 @@ class Viewer {
       const k = e.deltaMode === 1 ? 1 / 3 : 1 / 100, cl = v => Math.max(-16, Math.min(16, v));
       this.send({ t: 'scroll', ...this.pos(e), hs: cl(-e.deltaX * k), vs: cl(-e.deltaY * k) });
     }, { passive: false });
-    c.addEventListener('keydown', e => {
-      if (e.isComposing) return;
+    const down = (e) => {
+      if (e.isComposing || e.keyCode === 229) return;   // 输入法正在组词
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'v') { e.preventDefault(); this.paste(); return; }
       if (e.key === 'Escape' && !document.fullscreenElement) { e.preventDefault(); this.pressKey(AKEY.BACK); return; }
       if (e.ctrlKey && /^[a-z]$/i.test(e.key)) { e.preventDefault(); this.pressKey(29 + e.key.toLowerCase().charCodeAt(0) - 97, 0x3000); return; }
       const code = KEYMAP[e.key];
-      if (code) { e.preventDefault(); this.send({ t: 'key', action: 0, code, repeat: e.repeat ? 1 : 0, meta: e.shiftKey ? 1 : 0 }); return; }
-      if (e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey) { e.preventDefault(); this.send({ t: 'text', text: e.key }); }
-    });
-    c.addEventListener('keyup', e => {
+      if (code) {
+        e.preventDefault();
+        this.send({ t: 'key', action: 0, code, repeat: e.repeat ? 1 : 0, meta: e.shiftKey ? 1 : 0 });
+        return true;
+      }
+      return false;
+    };
+    const keyUp = (e) => {
       const code = KEYMAP[e.key];
       if (code) { e.preventDefault(); this.send({ t: 'key', action: 1, code, meta: e.shiftKey ? 1 : 0 }); }
+    };
+    // 设备端输入框里输入文字：把已确定的文字发过去并清空，避免越积越多
+    const flush = () => {
+      const v = this.ime.value;
+      if (!v) return;
+      this.ime.value = '';
+      this.send({ t: 'text', text: v });
+    };
+    c.addEventListener('keydown', e => { if (down(e) && !isMobile()) return; });
+    c.addEventListener('keyup', keyUp);
+    const ime = this.ime;
+    ime.addEventListener('keydown', down);
+    ime.addEventListener('keyup', keyUp);
+    ime.addEventListener('input', (e) => { if (!e.isComposing) flush(); });
+    // 输入法组词结束后补一次（部分输入法只发 compositionend）
+    ime.addEventListener('compositionend', () => setTimeout(flush, 0));
+    // 没有输入法时（例如直接敲键盘）也要把焦点留在 ime 上
+    this.root.addEventListener('focusin', (e) => {
+      if (e.target !== ime && e.target !== this.textInput && !isMobile()) ime.focus({ preventScroll: true });
     });
   }
 }

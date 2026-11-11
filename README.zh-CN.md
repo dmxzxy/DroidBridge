@@ -20,14 +20,14 @@
 - **AI Agent（MCP）**：让 Claude Code、Cursor 等支持 MCP 的 AI 工具读取画面并操作任意设备；每次操作都能实时看到，随时可以暂停
 - **安装 APK / 传文件**：把文件拖到设备画面上即可
 - **相册**：截图与录屏保存在节点上，可在相册中浏览（按类型/设备筛选、预览、下载、在文件管理器中显示）
-- **桌面版 + 浏览器访问**：Windows、macOS、Linux 桌面客户端；手机或其他电脑也可以直接用浏览器打开
+- **桌面版 + 浏览器访问**：Windows、macOS、Linux 桌面客户端，Windows 有安装包且桌面版能自己更新；手机或其他电脑也可以直接用浏览器打开
 
 | 设备日志 | 无线配对 | 手机浏览器 |
 |---|---|---|
 | ![](docs/screenshots/zh/8-logcat.png) | ![](docs/screenshots/zh/9-wireless.png) | ![](docs/screenshots/zh/7-mobile-view.png) |
 | ![](docs/screenshots/zh/10-gallery.png) | ![](docs/screenshots/zh/5-settings.png) | ![](docs/screenshots/zh/6-mobile-list.png) |
 | ![](docs/screenshots/zh/11-perf.png) | ![](docs/screenshots/zh/12-apps.png) | ![](docs/screenshots/zh/13-batch.png) |
-| ![](docs/screenshots/zh/14-files.png) | ![](docs/screenshots/zh/5-settings.png) | ![](docs/screenshots/zh/6-mobile-list.png) |
+| ![](docs/screenshots/zh/14-files.png) | ![](docs/screenshots/zh/15-update.png) | ![](docs/screenshots/zh/6-mobile-list.png) |
 
 > 截图使用的是模拟数据，手机画面为示意图（`tools/demo/shots.ps1` 生成）。
 
@@ -53,7 +53,7 @@
 
 | 平台 | 桌面版 | 服务版 |
 |---|---|---|
-| Windows x64 | `DroidBridge-<版本>-windows-x64.zip` → `DroidBridge.exe`（需要 WebView2，Win10/11 一般已自带） | 同一压缩包 → `droidbridge-server.exe` |
+| Windows x64 | `DroidBridge-<版本>-windows-x64-setup.exe`（安装包）或 `DroidBridge-<版本>-windows-x64.zip` → `DroidBridge.exe`（需要 WebView2，Win10/11 一般已自带） | 同一压缩包 → `droidbridge-server.exe` |
 | macOS（Apple 芯片与 Intel） | `DroidBridge-<版本>-macos-universal.zip` → `DroidBridge.app` | `droidbridge-server-<版本>-macos-universal.tar.gz` |
 | Linux x86_64 | `droidbridge-desktop-<版本>-linux-x86_64.tar.gz`（需要 WebKitGTK 4.1，如 `libwebkit2gtk-4.1-0`） | `droidbridge-server-<版本>-linux-x86_64.tar.gz` |
 
@@ -153,6 +153,12 @@
 
 - 本机：`http://localhost:8730`
 - 其他设备：`https://<电脑IP>:8731`（首次启动时生成的自签名证书，第一次访问需选择“继续访问”）
+
+### 更新 DroidBridge
+
+桌面版启动后会检查新版本，有的话标题旁会出现 **新版本** 标记。点它再点 **下载并安装**：自动下载安装包、替换程序文件（设备列表、相册、设置都会保留）并重新启动。也可以在 **设置 → 版本 → 检查更新** 手动检查。
+
+自动更新要求程序目录可写，所以 Windows 安装包默认装到当前用户目录（`%LOCALAPPDATA%\Programs\DroidBridge`），不需要管理员权限。如果程序装在只读位置，会提示并给出下载页面。
 
 ### 更新远程电脑
 

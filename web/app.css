@@ -121,6 +121,7 @@ main{flex:1;min-width:0;min-height:100vh;padding:16px;display:flex;flex-directio
 .vcol{flex:1;min-width:0;display:flex;flex-direction:column}
 .screen{position:relative;display:flex;justify-content:center;align-items:center;min-height:260px;background:#000}
 .screen canvas{display:block;width:auto;height:auto;max-width:100%;max-height:calc(100vh - 150px);touch-action:none;outline:none;cursor:default;user-select:none;-webkit-user-select:none}
+.viewer .ime{position:absolute;left:0;bottom:0;width:1px;height:1px;padding:0;border:0;opacity:0;resize:none;overflow:hidden;background:transparent;color:transparent;z-index:-1}
 .overlay{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:24px;text-align:center;color:#c4c9d1;font-size:12px;background:rgba(0,0,0,.6);word-break:break-word}
 .overlay.hide{display:none}
 .overlay .btn{color:#fff;border-color:rgba(255,255,255,.25)}
@@ -268,6 +269,16 @@ dialog.apps{width:min(600px,calc(100vw - 32px))}
 .bi-d .r svg{width:14px;height:14px;flex:none}
 .dev .wl{color:var(--faint);flex:none;display:flex}
 .dev .wl svg{width:13px;height:13px}
+.brand .upd{margin-left:auto;margin-right:2px;height:20px;padding:0 7px;border:0;border-radius:10px;background:var(--active);color:var(--accent);font-size:11px;font-weight:600;cursor:pointer}
+.brand .upd+.ib{margin-left:0}
+.brand .ib{margin-left:2px}
+.brand .ib:first-of-type{margin-left:auto}
+dialog.update .dlg-b{gap:10px}
+.upd-what{display:grid;gap:6px;color:var(--sub);font-size:12px;line-height:1.6}
+.upd-warn{color:var(--warn);font-size:12px;word-break:break-all}
+.upd-link{font-size:12px}
+.upd-link a{text-decoration:none}
+.upd-link a:hover{text-decoration:underline}
 .host .upd{flex:none;height:20px;padding:0 7px;border:0;border-radius:10px;background:var(--active);color:var(--accent);font-size:11px;font-weight:600;cursor:pointer;display:inline-flex;align-items:center;gap:4px}
 .host .upd:hover{filter:brightness(1.15)}
 .host .upd.busy{background:none;color:var(--faint);cursor:default;font-weight:400}

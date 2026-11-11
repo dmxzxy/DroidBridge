@@ -363,6 +363,7 @@ function settingsDialog() {
     group(t('AI 接入（MCP）'),
       row(t('地址'), h('span', { class: 'v mono' }, mcpUrl), ib('copy', t('复制'), () => copyText(mcpUrl)))),
     group(t('本机'),
+      updateSettingRow(),
       row(t('名称'), h('span', { class: 'v' }, INFO ? INFO.name : '—')),
       ...(ips.length ? ips : ['—']).map((a, i) => row(i ? '' : t('地址'), h('span', { class: 'v mono' }, a), a === '—' ? null : ib('copy', t('复制'), () => copyText(a))))),
     note,
