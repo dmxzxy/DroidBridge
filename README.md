@@ -241,7 +241,21 @@ src/wireless.rs     wireless adb: connect, pairing, QR pairing, background recon
 src/remote.rs       install over SSH to macOS / Linux
 src/i18n.rs         Chinese / English messages
 src/icon.rs         generated app icon
-web/index.html      UI (single file, embedded at build time)
+src/agent.rs         AI tools: screenshot, UI reading, input, apps (used by the MCP server)
+src/mcp.rs           MCP server (/mcp): tool list, device routing, remote forwarding
+web/index.html      page markup; loads app.css and js/*.js in order
+web/app.css         styles
+web/js/             UI code, split by area (classic scripts sharing one global scope):
+                    i18n: texts (Chinese as keys) / 多语言
+                    core: helpers, icons, preferences, toasts / 基础工具、图标、偏好、提示
+                    ui: menus, dialogs, clipboard / 菜单、对话框
+                    api: backend calls / 后端调用
+                    devices: computers, devices, sidebar / 电脑、设备、侧栏
+                    peers: remote computers, wireless, settings, help / 远程电脑、无线、设置、帮助
+                    viewer: mirroring, control, recording, perf overlay, group control / 投屏与控制
+                    logcat: log panel / 日志面板
+                    audio: sound playback / 声音
+                    gallery: screenshots and recordings / 相册
 third_party/        scrcpy-server v5.0.1 (see third_party/README.md)
 tools/              packaging, dependency download, screenshots
 ```
@@ -269,6 +283,7 @@ tools/              packaging, dependency download, screenshots
 | `WS /ws/logcat?serial=&peer=` | Device logs |
 | `POST /mcp` | MCP server (JSON-RPC over Streamable HTTP) |
 | `POST /api/agent/exec` `{"tool","args"}`, `POST /api/agent/pause?peer=` `{"serial","paused"}` | Run an AI tool on this node; pause / resume AI control of a device |
+| `GET /app.css`, `GET /js/{file}` | UI styles and scripts (embedded at build time) |
 | `WS /ws/perf?serial=&peer=` | Performance data, one JSON message per second |
 | `POST /api/apps?peer=` `{"serial"}` | Installed apps (`pkg`, `name`, `system`, `running`) |
 | `POST /api/apps/action?peer=` `{"serial","pkg","action"}` | `launch` / `stop` / `clear` / `uninstall` |

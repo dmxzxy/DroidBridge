@@ -4,8 +4,16 @@ $root = Split-Path (Split-Path $PSScriptRoot)
 $work = Join-Path $root 'tmp\demo'; New-Item -ItemType Directory -Force $work | Out-Null
 $out = Join-Path $root 'docs\screenshots'; New-Item -ItemType Directory -Force $out | Out-Null
 $html = [IO.File]::ReadAllText((Join-Path $root 'web\index.html'))
+# 样式与脚本拆在 web\app.css、web\js 下；截图用一个自包含的 HTML，所以这里内联进去
+$css = [IO.File]::ReadAllText((Join-Path $root 'web\app.css'))
+$html = $html.Replace('<link rel="stylesheet" href="app.css">', "<style>`n$css`n</style>")
 $mock = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'mock.js'))
 $html = $html.Replace('<head>', "<head>`n<script>`n$mock`n</script>")
+$html = [regex]::Replace($html, '<script src="js/([A-Za-z0-9_-]+)\.js"></script>', [Text.RegularExpressions.MatchEvaluator] {
+  param($m)
+  $js = [IO.File]::ReadAllText((Join-Path $root ("web\js\" + $m.Groups[1].Value + ".js")))
+  "<script>`n$js`n</script>"
+})
 [IO.File]::WriteAllText((Join-Path $work 'demo.html'), $html, [Text.UTF8Encoding]::new($false))
 $edge = @("${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe", "$env:ProgramFiles\Microsoft\Edge\Application\msedge.exe", "$env:ProgramFiles\Google\Chrome\Application\chrome.exe") | Where-Object { Test-Path $_ } | Select-Object -First 1
 if (-not $edge) { throw '需要 Microsoft Edge 或 Google Chrome' }

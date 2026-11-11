@@ -38,6 +38,37 @@ const SCRCPY_SERVER: &[u8] = include_bytes!("../third_party/scrcpy-server");
 const SCRCPY_VERSION_RAW: &str = include_str!("../third_party/scrcpy-version.txt");
 const INDEX_HTML: &str = include_str!("../web/index.html");
 
+/// 拆分出去的样式与脚本（路径, Content-Type, 内容）
+const ASSETS: &[(&str, &str, &str)] = &[
+    ("app.css", "text/css; charset=utf-8", include_str!("../web/app.css")),
+    ("js/i18n.js", "text/javascript; charset=utf-8", include_str!("../web/js/i18n.js")),
+    ("js/core.js", "text/javascript; charset=utf-8", include_str!("../web/js/core.js")),
+    ("js/ui.js", "text/javascript; charset=utf-8", include_str!("../web/js/ui.js")),
+    ("js/api.js", "text/javascript; charset=utf-8", include_str!("../web/js/api.js")),
+    ("js/devices.js", "text/javascript; charset=utf-8", include_str!("../web/js/devices.js")),
+    ("js/peers.js", "text/javascript; charset=utf-8", include_str!("../web/js/peers.js")),
+    ("js/viewer.js", "text/javascript; charset=utf-8", include_str!("../web/js/viewer.js")),
+    ("js/logcat.js", "text/javascript; charset=utf-8", include_str!("../web/js/logcat.js")),
+    ("js/audio.js", "text/javascript; charset=utf-8", include_str!("../web/js/audio.js")),
+    ("js/gallery.js", "text/javascript; charset=utf-8", include_str!("../web/js/gallery.js")),
+];
+
+async fn asset_root(Path(file): Path<String>) -> Response {
+    asset(Path(file)).await
+}
+
+async fn asset_js(Path(file): Path<String>) -> Response {
+    asset(Path(format!("js/{file}"))).await
+}
+
+/// 静态资源：内容随程序一起编译，每次都用 no-cache 返回最新版本
+async fn asset(Path(path): Path<String>) -> Response {
+    match ASSETS.iter().find(|(p, _, _)| *p == path) {
+        Some((_, ct, body)) => ([(header::CONTENT_TYPE, *ct), (header::CACHE_CONTROL, "no-cache")], *body).into_response(),
+        None => err(StatusCode::NOT_FOUND, "Not found"),
+    }
+}
+
 pub fn scrcpy_version() -> &'static str {
     SCRCPY_VERSION_RAW.trim()
 }
@@ -303,6 +334,8 @@ pub async fn start(cfg: Config) -> Result<Started, StartError> {
 fn router(state: Shared) -> Router {
     Router::new()
         .route("/", get(index))
+        .route("/{file}", get(asset_root))
+        .route("/js/{file}", get(asset_js))
         .route("/api/info", get(info))
         .route("/api/devices", get(devices))
         .route("/api/peers", get(list_peers).post(add_peer))

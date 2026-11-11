@@ -225,6 +225,8 @@ sh tools/package-linux.sh 0.2.0             # Linux
 
 发布由 GitHub Actions 完成：推送 `v*` 标签后自动构建各平台安装包，并创建 Release 草稿。
 
+前端代码按功能拆分在 `web/app.css` 和 `web/js/`（多语言、基础工具、菜单与对话框、后端调用、设备列表、远程电脑与设置、投屏查看器、日志、声音、相册），经典脚本按顺序加载、共享全局作用域。
+
 目录结构、接口说明见 [英文 README](README.md#layout)。
 
 ## 计划

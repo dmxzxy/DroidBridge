@@ -7,6 +7,11 @@ mod icon;
 fn main() {
     println!("cargo:rerun-if-changed=src/icon.rs");
     println!("cargo:rerun-if-changed=build.rs");
+    println!("cargo:rerun-if-changed=web/index.html");
+    println!("cargo:rerun-if-changed=web/app.css");
+    for entry in std::fs::read_dir("web/js").into_iter().flatten().flatten() {
+        println!("cargo:rerun-if-changed={}", entry.path().display());
+    }
     #[cfg(windows)]
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
         let out = std::path::PathBuf::from(std::env::var("OUT_DIR").unwrap()).join("droidbridge.ico");

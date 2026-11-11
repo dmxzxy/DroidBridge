@@ -41,5 +41,6 @@ jobs:
       - name: Check web UI script
         if: runner.os == 'Linux'
         run: |
-          node -e 'const s=require("fs").readFileSync("web/index.html","utf8");require("fs").writeFileSync("/tmp/ui.js",s.slice(s.indexOf("<script>")+8,s.lastIndexOf("</script>")))'
+          node -e 'const fs=require("fs");const s=fs.readFileSync("web/index.html","utf8");fs.writeFileSync("/tmp/ui.js",s.slice(s.lastIndexOf("<script>")+8,s.lastIndexOf("</script>")))'
           node --check /tmp/ui.js
+          for f in web/js/*.js; do node --check "$f" || exit 1; done
