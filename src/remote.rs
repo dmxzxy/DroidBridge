@@ -793,6 +793,10 @@ fn upload_script() -> String {
          b64() { if base64 -d </dev/null >/dev/null 2>&1; then base64 -d; else base64 -D; fi; }\n",
     );
     for (path, data) in SOURCES {
+        // 按路径创建父目录（web/js 等子目录）
+        if let Some((dir, _)) = path.rsplit_once('/') {
+            s.push_str(&format!("mkdir -p \"$D/{dir}\"\n"));
+        }
         s.push_str(&format!("b64 > \"$D/{path}\" <<'__DB_EOF__'\n"));
         s.push_str(&base64(data));
         s.push_str("__DB_EOF__\n");
