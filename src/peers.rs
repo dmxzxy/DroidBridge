@@ -241,9 +241,9 @@ pub async fn get_json(peer: &Peer, path: &str) -> Result<serde_json::Value, Stri
     parse_json_reply(code, &body)
 }
 
-/// 把文件转发到远程节点的 /api/push
-pub async fn post_file(peer: &Peer, query: &str, body: &[u8]) -> Result<serde_json::Value, String> {
-    let path = with_token(&format!("/api/push?{query}"), &peer.token);
+/// 把文件转发到远程节点：endpoint 为 "/api/push"（安装 APK / 传到 Download）或 "/api/files/upload"（传到指定目录）
+pub async fn post_file(peer: &Peer, endpoint: &str, query: &str, body: &[u8]) -> Result<serde_json::Value, String> {
+    let path = with_token(&format!("{endpoint}?{query}"), &peer.token);
     let (code, resp) = http_request(&peer.addr, "POST", &path, body, Duration::from_secs(600)).await?;
     parse_json_reply(code, &resp)
 }

@@ -33,6 +33,23 @@ const FILE_PLACES = [
   ['/sdcard/Movies', '视频'], ['/sdcard/Documents', '文档'], ['/sdcard/Android/data', '应用数据'],
 ];
 
+/** 带进度的上传；失败时抛出服务端返回的错误信息 */
+function xhrUpload(url, file, onProgress) {
+  return new Promise((resolve, reject) => {
+    const x = new XMLHttpRequest();
+    x.open('POST', url);
+    x.upload.onprogress = (e) => { if (e.lengthComputable && onProgress) onProgress(Math.round(e.loaded / e.total * 100)); };
+    x.onload = () => {
+      let j = {};
+      try { j = JSON.parse(x.responseText); } catch {}
+      if (x.status >= 200 && x.status < 300 && !j.error) resolve(j);
+      else reject(new Error(j.error || ('HTTP ' + x.status)));
+    };
+    x.onerror = () => reject(new Error(t('网络错误')));
+    x.send(file);
+  });
+}
+
 class FileBrowser {
   /** opts.compact：侧栏模式（窄）；opts.onClose：侧栏的关闭按钮 */
   constructor(hst, dev, opts = {}) {
@@ -84,15 +101,27 @@ class FileBrowser {
       ib('sort', t('排序与显示'), sortMenu), this.viewBtn,
       ib('upload', t('上传文件'), () => this.picker.click()),
       ib('folderPlus', t('新建文件夹'), () => this.newFolder()));
-    this.el = h('div', { class: 'fb' + (c ? ' compact' : ''), 'data-drop': '' }, this.head, this.bar, this.list, this.status, this.picker);
+    this.dropHint = h('div', { class: 'fb-drop' });
+    this.el = h('div', { class: 'fb' + (c ? ' compact' : '') }, this.head, this.bar, this.list, this.status, this.picker, this.dropHint);
 
     // 键盘：回车打开、Backspace 上一级、Delete 删除、F2 重命名、↑↓ 移动选择
     this.list.addEventListener('keydown', (e) => this.onKey(e));
     // 拖放上传
     let depth = 0;
-    this.el.addEventListener('dragenter', (e) => { if ([...(e.dataTransfer?.types || [])].includes('Files')) { depth++; this.el.classList.add('dropping'); e.preventDefault(); } });
-    this.el.addEventListener('dragover', (e) => { if ([...(e.dataTransfer?.types || [])].includes('Files')) { e.preventDefault(); e.stopPropagation(); e.dataTransfer.dropEffect = 'copy'; } });
-    this.el.addEventListener('dragleave', () => { if (--depth <= 0) { depth = 0; this.el.classList.remove('dropping'); } });
+    const isFiles = (e) => [...(e.dataTransfer?.types || [])].includes('Files');
+    this.el.addEventListener('dragenter', (e) => {
+      if (!isFiles(e)) return;
+      e.preventDefault(); e.stopPropagation();
+      depth++;
+      this.dropHint.textContent = t('松开上传到 {0}', this.path);
+      this.el.classList.add('dropping');
+    });
+    this.el.addEventListener('dragover', (e) => { if (isFiles(e)) { e.preventDefault(); e.stopPropagation(); e.dataTransfer.dropEffect = 'copy'; } });
+    this.el.addEventListener('dragleave', (e) => { e.stopPropagation(); if (--depth <= 0) { depth = 0; this.el.classList.remove('dropping'); } });
+    const reset = () => { depth = 0; this.el.classList.remove('dropping'); };
+    addEventListener('drop', reset, true);
+    addEventListener('dragend', reset, true);
+    document.addEventListener('dragleave', (e) => { if (!e.relatedTarget) reset(); });
     this.el.addEventListener('drop', (e) => {
       const files = [...(e.dataTransfer?.files || [])];
       if (!files.length) return;
@@ -402,9 +431,7 @@ class FileBrowser {
       tt.set(t('正在上传 {0}（{1}/{2}）', f.name, i + 1, files.length));
       try {
         const qs = new URLSearchParams({ serial: this.dev.serial, peer: this.hst.id, path: dir, name: f.name, lang: LANG });
-        const r = await fetch(withToken('/api/files/upload?' + qs), { method: 'POST', body: f });
-        const j = await r.json().catch(() => ({}));
-        if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
+        await xhrUpload(withToken('/api/files/upload?' + qs), f, (pct) => tt.set(t('正在上传 {0}（{1}/{2}）', f.name, i + 1, files.length) + ' ' + pct + '%'));
         ok++;
       } catch (e) {
         tt.set(t('上传 {0} 失败：', f.name) + e.message, 'bad');

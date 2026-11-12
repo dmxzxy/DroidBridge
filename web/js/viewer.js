@@ -604,12 +604,21 @@ class Viewer {
     }
   }
   bindDrop() {
-    let depth = 0;
+    // 只有拖到画面区域才是“安装 APK / 传到手机”；拖到文件面板等其他区域由它们自己处理
+    const zone = this.root.querySelector('.screen');
     const r = this.root;
-    r.addEventListener('dragenter', e => { if (e.dataTransfer && [...e.dataTransfer.types].includes('Files')) { depth++; r.classList.add('dropping'); } });
-    r.addEventListener('dragleave', () => { if (--depth <= 0) { depth = 0; r.classList.remove('dropping'); } });
-    r.addEventListener('dragover', e => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; });
-    r.addEventListener('drop', e => {
+    let depth = 0;
+    const isFiles = e => e.dataTransfer && [...e.dataTransfer.types].includes('Files');
+    zone.addEventListener('dragenter', e => { if (isFiles(e)) { depth++; r.classList.add('dropping'); } });
+    zone.addEventListener('dragleave', () => { if (--depth <= 0) { depth = 0; r.classList.remove('dropping'); } });
+    zone.addEventListener('dragover', e => { if (isFiles(e)) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; } });
+    // 拖放被取消（Esc、拖出窗口）时浏览器不一定发 dragleave：任何地方 drop / dragend 后都清掉提示
+    const reset = () => { depth = 0; r.classList.remove('dropping'); };
+    addEventListener('drop', reset, true);
+    addEventListener('dragend', reset, true);
+    document.addEventListener('dragleave', e => { if (!e.relatedTarget) reset(); });
+    zone.addEventListener('drop', e => {
+      if (!isFiles(e)) return;
       e.preventDefault(); e.stopPropagation(); depth = 0; r.classList.remove('dropping');
       const files = [...(e.dataTransfer.files || [])];
       if (files.length) this.upload(files);

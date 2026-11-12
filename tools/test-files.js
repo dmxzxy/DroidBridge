@@ -148,6 +148,25 @@ const check = (l, ok, d) => { console.log((ok ? '✓ ' : '✗ ') + l + (d !== un
   check('双击图片打开预览', (await ev(`!!document.querySelector('dialog.fb-preview img.fb-pv-img')`)) === true);
   check('预览可以左右切换', (await ev(`document.querySelectorAll('dialog.fb-preview .fb-pv-bar .ib').length`)) >= 3);
 
+  // 拖放：拖到侧栏文件面板时，画面不应出现“安装 APK / 传到手机”的蓝框，文件面板显示上传目录
+  await ev(`document.querySelectorAll('dialog[open]').forEach(d => d.close()); [...viewers.values()][0].toggleFiles(true); 1`);
+  await sleep(600);
+  const tmpFile = path.join(os.tmpdir(), 'db-drop.txt');
+  fs.writeFileSync(tmpFile, 'drop test');
+  const lp = JSON.parse(await ev(`JSON.stringify((() => { const r = document.querySelector('.vlog .fb-list').getBoundingClientRect(); return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) }; })())`));
+  const dragData = { items: [], files: [tmpFile], dragOperationsMask: 1 };
+  await send('Input.dispatchDragEvent', { type: 'dragEnter', x: lp.x, y: lp.y, data: dragData });
+  await send('Input.dispatchDragEvent', { type: 'dragOver', x: lp.x, y: lp.y, data: dragData });
+  await sleep(200);
+  check('拖到文件面板：画面没有蓝框', (await ev(`[...viewers.values()][0].root.classList.contains('dropping')`)) === false);
+  check('拖到文件面板：显示上传目录', (await ev(`document.querySelector('.vlog .fb').classList.contains('dropping') && document.querySelector('.vlog .fb-drop').textContent`)).startsWith('松开上传到 /sdcard'));
+  await ev(`window.__uploaded = []; const u = FileBrowser.prototype.upload; FileBrowser.prototype.upload = function (files) { window.__uploaded = files.map(f => f.name); }; 1`);
+  await send('Input.dispatchDragEvent', { type: 'drop', x: lp.x, y: lp.y, data: dragData });
+  await sleep(300);
+  check('松开后上传到当前目录', (await ev(`window.__uploaded.join(',')`)) === 'db-drop.txt');
+  check('松开后提示消失', (await ev(`document.querySelector('.vlog .fb').classList.contains('dropping')`)) === false);
+  fs.unlinkSync(tmpFile);
+
   console.log(errs.length ? 'page errors: ' + errs.join(' | ') : 'page errors: none');
   console.log(fails ? `\n${fails} 项失败` : '\n全部通过');
   ws.close(); p.kill(); srv.close(); process.exit(fails ? 1 : 0);

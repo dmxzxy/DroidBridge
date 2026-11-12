@@ -664,7 +664,7 @@ async fn push_file(State(st): State<Shared>, Query(q): Query<HashMap<String, Str
             return err(StatusCode::NOT_FOUND, tr!("远程电脑不存在", "Remote computer not found"));
         };
         let query = format!("serial={}&name={}", util::url_encode(serial), util::url_encode(&name));
-        return match peers::post_file(&peer, &query, &body).await {
+        return match peers::post_file(&peer, "/api/push", &query, &body).await {
             Ok(v) => Json(v).into_response(),
             Err(e) => err(StatusCode::BAD_GATEWAY, e),
         };
@@ -854,7 +854,7 @@ async fn files_upload(State(st): State<Shared>, Query(q): Query<HashMap<String, 
             return err(StatusCode::NOT_FOUND, tr!("远程电脑不存在", "Remote computer not found"));
         };
         let query = format!("serial={}&path={}&name={}", util::url_encode(serial), util::url_encode(q.get("path").map(String::as_str).unwrap_or("")), util::url_encode(name));
-        return match peers::post_file(&peer, &query, &body).await {
+        return match peers::post_file(&peer, "/api/files/upload", &query, &body).await {
             Ok(v) => Json(v).into_response(),
             Err(e) => err(StatusCode::BAD_GATEWAY, e),
         };
