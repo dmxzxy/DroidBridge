@@ -12,7 +12,7 @@ use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::io::Cursor;
 use std::process::Stdio;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
@@ -36,11 +36,20 @@ pub struct AgentState {
     /// (serial, 事件 JSON)
     pub events: broadcast::Sender<(String, Value)>,
     devs: Mutex<HashMap<String, DevState>>,
+    /// 每台设备一把锁：AI 客户端常常并行发多个工具调用，而 uiautomator 同一时间只能有一个
+    /// （并发时设备端报 "UiAutomationService already registered" 并崩溃），输入事件也需要按顺序执行
+    locks: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
 }
 
 impl Default for AgentState {
     fn default() -> Self {
-        Self { events: broadcast::channel(64).0, devs: Mutex::new(HashMap::new()) }
+        Self { events: broadcast::channel(64).0, devs: Mutex::new(HashMap::new()), locks: Mutex::new(HashMap::new()) }
+    }
+}
+
+impl AgentState {
+    fn lock_for(&self, serial: &str) -> Arc<tokio::sync::Mutex<()>> {
+        self.locks.lock().unwrap().entry(serial.to_string()).or_default().clone()
     }
 }
 
@@ -97,6 +106,24 @@ pub async fn exec(st: &AppState, tool: &str, args: &Value) -> Result<Vec<Value>,
             "The user has paused AI control of this device. Tell the user and wait until they click Resume in DroidBridge; read-only tools (screenshot, read_screen, …) still work."
         ));
     }
+    if tool == "wait" {
+        let secs = arg_f64(args, "seconds").unwrap_or(1.0).clamp(0.1, 30.0);
+        tokio::time::sleep(Duration::from_secs_f64(secs)).await;
+        return Ok(vec![text(tr!("已等待 {secs} 秒", "Waited {secs} s"))]);
+    }
+    let lock = st.agent.lock_for(s);
+    let _guard = match tokio::time::timeout(Duration::from_secs(90), lock.lock()).await {
+        Ok(g) => g,
+        Err(_) => return Err(tr!("这台设备上还有别的操作在执行，请稍后重试", "Another operation is still running on this device; try again shortly")),
+    };
+    match tokio::time::timeout(Duration::from_secs(100), run_tool(st, s, &serial, tool, args)).await {
+        Ok(r) => r,
+        Err(_) => Err(tr!("操作超时（设备没有响应），请检查设备连接后重试", "The operation timed out (the device did not respond); check the connection and retry")),
+    }
+}
+
+async fn run_tool(st: &AppState, s: &str, serial: &str, tool: &str, args: &Value) -> Result<Vec<Value>, String> {
+    let serial = serial.to_string();
     match tool {
         "screenshot" => screenshot(st, s).await,
         "read_screen" => read_screen(st, s).await,
@@ -119,11 +146,6 @@ pub async fn exec(st: &AppState, tool: &str, args: &Value) -> Result<Vec<Value>,
             Ok(vec![text(format_perf(&perf::snapshot(st, s).await?))])
         }
         "shell" => shell(st, s, args).await,
-        "wait" => {
-            let secs = arg_f64(args, "seconds").unwrap_or(1.0).clamp(0.1, 30.0);
-            tokio::time::sleep(Duration::from_secs_f64(secs)).await;
-            Ok(vec![text(tr!("已等待 {secs} 秒", "Waited {secs} s"))])
-        }
         other => Err(tr!("未知工具：{other}", "Unknown tool: {other}")),
     }
 }
@@ -281,9 +303,18 @@ async fn foreground(st: &AppState, s: &str) -> String {
 
 async fn read_screen(st: &AppState, s: &str) -> Result<Vec<Value>, String> {
     st.agent.emit(s, json!({"action": "look", "label": tr!("读取界面", "Reading the screen")}));
-    let cmd = format!("uiautomator dump --compressed {UI_XML} >/dev/null 2>&1; cat {UI_XML}; rm -f {UI_XML}");
-    let xml = adb::run_timeout(&st.cfg.adb, &["-s", s, "shell", &cmd], Duration::from_secs(20)).await.unwrap_or_default();
-    let nodes = parse_nodes(&xml);
+    let file = format!("{UI_XML}.{:08x}", util::random_scid());
+    let cmd = format!("uiautomator dump --compressed {file} >/dev/null 2>&1; cat {file} 2>/dev/null; rm -f {file}");
+    let mut nodes = Vec::new();
+    for attempt in 0..2 {
+        let xml = adb::run_timeout(&st.cfg.adb, &["-s", s, "shell", &cmd], Duration::from_secs(25)).await.unwrap_or_default();
+        nodes = parse_nodes(&xml);
+        if !nodes.is_empty() || attempt == 1 {
+            break;
+        }
+        // 上一个 uiautomator 刚退出时偶尔会失败，稍等再试一次
+        tokio::time::sleep(Duration::from_millis(600)).await;
+    }
     if nodes.is_empty() {
         return Err(tr!(
             "无法读取界面结构（画面一直在变化、游戏或安全界面时常见）。请改用 screenshot。",
@@ -634,6 +665,18 @@ mod tests {
         assert!(lines[0].ends_with("click"));
         assert!(lines[1].contains("desc=\"用户名\"") && lines[1].contains("edit") && lines[1].contains("focused"), "{}", lines[1]);
         assert_eq!(elems[0], (540, 1570, "登录 & 注册".to_string()));
+    }
+
+    #[tokio::test]
+    async fn per_device_lock_serializes() {
+        let st = AgentState::default();
+        let (a, b) = (st.lock_for("dev1"), st.lock_for("dev1"));
+        assert!(Arc::ptr_eq(&a, &b), "same device → same lock");
+        assert!(!Arc::ptr_eq(&a, &st.lock_for("dev2")), "different devices run independently");
+        let g = a.lock().await;
+        assert!(b.try_lock().is_err(), "second call on the same device waits");
+        drop(g);
+        assert!(b.try_lock().is_ok());
     }
 
     #[test]
