@@ -30,7 +30,9 @@ let fails = 0;
 const check = (label, ok, detail) => { console.log((ok ? '✓ ' : '✗ ') + label + (detail ? '  ' + detail : '')); if (!ok) fails++; };
 (async () => {
   let tabs;
-  for (let i = 0; i < 40; i++) { try { tabs = await (await fetch('http://127.0.0.1:9339/json')).json(); if (tabs.length) break; } catch {} await sleep(300); }
+  // 浏览器冷启动可能较慢（CI 上可能超过 10 秒），最多等 60 秒
+  for (let i = 0; i < 240; i++) { try { tabs = await (await fetch('http://127.0.0.1:9339/json')).json(); if (tabs && tabs.some(t => t.type === 'page')) break; } catch {} await sleep(250); }
+  if (!tabs || !tabs.some(t => t.type === 'page')) { console.error('浏览器没有启动（60 秒内未打开调试端口）'); p.kill(); process.exit(3); }
   const ws = new WebSocket(tabs.find(t => t.type === 'page').webSocketDebuggerUrl);
   await new Promise(r => ws.onopen = r);
   let id = 0; const pend = new Map(); const errs = [];
