@@ -158,6 +158,7 @@ main{flex:1;min-width:0;min-height:100vh;padding:16px;display:flex;flex-directio
 .menu{position:fixed;z-index:50;min-width:176px;padding:4px;background:var(--raised);border:1px solid var(--line);border-radius:8px;box-shadow:var(--shadow)}
 .menu button{display:flex;align-items:center;gap:10px;width:100%;height:32px;padding:0 10px;border:0;border-radius:5px;background:none;text-align:left;white-space:nowrap}
 .menu button:hover{background:var(--hover)}
+.menu button:disabled{opacity:.4;cursor:default;background:none}
 .menu button svg{width:15px;height:15px;color:var(--sub)}
 .menu button.danger,.menu button.danger svg{color:var(--bad)}
 .menu .sep{height:1px;margin:4px 6px;background:var(--line)}

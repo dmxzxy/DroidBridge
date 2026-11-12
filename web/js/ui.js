@@ -19,13 +19,19 @@ function menu(anchor, items) {
   const el = h('div', { class: 'menu', role: 'menu' });
   for (const it of items) {
     if (it === '-') { el.append(h('div', { class: 'sep' })); continue; }
-    el.append(h('button', { class: it.danger ? 'danger' : '', type: 'button', role: 'menuitem', onclick: () => { closeMenu(); it.fn(); } },
+    el.append(h('button', { class: it.danger ? 'danger' : '', type: 'button', role: 'menuitem', disabled: !!it.disabled,
+      // mousedown 时不让输入框失去焦点和选区（右键菜单里的剪切/复制/粘贴需要它们）
+      onmousedown: e => e.preventDefault(),
+      onclick: () => { closeMenu(); it.fn(); } },
       h('span', { html: svg(it.icon) }).firstChild, it.label));
   }
   (anchor.closest('dialog[open]') || document.body).append(el);
   const r = anchor.getBoundingClientRect(), mw = el.offsetWidth, mh = el.offsetHeight;
-  let left = Math.min(r.right - mw, innerWidth - mw - 8); if (left < 8) left = Math.min(r.left, innerWidth - mw - 8);
-  let top = r.bottom + 4; if (top + mh > innerHeight - 8) top = Math.max(8, r.top - mh - 4);
+  const point = r.width <= 1 && r.height <= 1;   // 右键菜单：锚点就是鼠标位置
+  let left = point ? Math.min(r.left, innerWidth - mw - 8) : Math.min(r.right - mw, innerWidth - mw - 8);
+  if (left < 8) left = Math.min(r.left, innerWidth - mw - 8);
+  let top = point ? r.top : r.bottom + 4;
+  if (top + mh > innerHeight - 8) top = Math.max(8, (point ? r.top : r.top - 4) - mh);
   el.style.left = left + 'px'; el.style.top = top + 'px';
   anchor.setAttribute('aria-expanded', 'true');
   openMenu = { el, anchor, w: innerWidth, h: innerHeight };

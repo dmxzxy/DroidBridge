@@ -58,6 +58,7 @@ const SOURCES: &[(&str, &[u8])] = &[
     src!("web/js/gallery.js"),
     src!("web/js/files.js"),
     src!("web/js/update.js"),
+    src!("web/js/contextmenu.js"),
     src!("third_party/scrcpy-server"),
     src!("third_party/scrcpy-version.txt"),
 ];
