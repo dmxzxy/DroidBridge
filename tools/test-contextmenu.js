@@ -126,6 +126,16 @@ const check = (l, ok, d) => { console.log((ok ? '✓ ' : '✗ ') + l + (d ? '  '
   check('对话框里的输入框也有菜单', items.startsWith('剪切'), items);
   check('菜单显示在对话框上层', (await ev(`(() => { const m = document.querySelector('.menu'); const r = m.getBoundingClientRect(); return m.contains(document.elementFromPoint(r.left + 10, r.top + 10)); })()`)) === true);
 
+  // 6. 对话框不出现横向滚动：设置页里很长的路径 / 地址
+  await ev(`document.querySelectorAll('dialog[open]').forEach(d => d.close()); 1`);
+  await ev(`(() => { const f = window.fetch; window.fetch = async (u, o) => String(u).includes('/api/settings') ? new Response(JSON.stringify({ media_dir: 'C:\\Users\\someone-with-a-long-name\\AppData\\Local\\Programs\\DroidBridge\\data\\media\\screenshots' }), { headers: { 'content-type': 'application/json' } }) : f(u, o); return 1; })()`);
+  await ev(`settingsDialog(); 1`);
+  await sleep(600);
+  const ov = await ev(`(() => { const b = document.querySelector('dialog.settings .dlg-b'); return b.clientWidth + '/' + b.scrollWidth; })()`);
+  const [cw, sw] = ov.split('/').map(Number);
+  check('设置页没有横向滚动（长路径）', sw <= cw + 1, ov);
+  await ev(`document.querySelector('dialog.settings').close(); 1`);
+
   console.log(errs.length ? 'page errors: ' + errs.join(' | ') : 'page errors: none');
   console.log(fails ? `\n${fails} 项失败` : '\n全部通过');
   ws.close(); p.kill(); srv.close(); process.exit(fails ? 1 : 0);
