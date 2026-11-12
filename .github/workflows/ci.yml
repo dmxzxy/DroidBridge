@@ -53,5 +53,8 @@ jobs:
       - name: Check web UI
         if: runner.os == 'Linux'
         run: node tools/check-ui.js
+      - name: Keyboard and IME test
+        if: runner.os == 'Linux'
+        run: node tools/test-input.js
 
 

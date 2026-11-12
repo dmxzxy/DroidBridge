@@ -46,7 +46,7 @@ class Viewer {
       if (e.key !== 'Enter' || e.isComposing) return;
       e.preventDefault();
       const v = this.textInput.value;
-      if (v) { this.send({ t: 'text', text: v }); this.textInput.value = ''; } else this.pressKey(66);
+      if (v) { this.typeText(v); this.textInput.value = ''; } else this.pressKey(66);
     });
     this.typing = h('div', { class: 'typing' }, this.textInput);
     this.kbBtn = ib('keyboard', t('输入文字'), () => this.toggleTyping());
@@ -71,7 +71,7 @@ class Viewer {
       h('div', { class: 'vmain' },
       h('div', { class: 'vbody' },
         h('div', { class: 'vcol' },
-          h('div', { class: 'screen' }, this.canvas, this.overlay, this.perfEl, this.aiBar, h('div', { class: 'drop' }, t('松开以安装 APK 或传到手机'))),
+          h('div', { class: 'screen' }, this.canvas, this.ime, this.overlay, this.perfEl, this.aiBar, h('div', { class: 'drop' }, t('松开以安装 APK 或传到手机'))),
           h('div', { class: 'nav' }, ib('back', t('返回'), key(AKEY.BACK)), ib('home', t('主页'), key(AKEY.HOME)), ib('recent', t('最近任务'), key(AKEY.APP_SWITCH))),
           this.typing),
         h('div', { class: 'vtools' },
@@ -311,6 +311,12 @@ class Viewer {
     this.frames = 0; this.bytes = 0;
   }
 
+  /** 把文字输入到设备：ASCII 直接注入按键，其他文字（中文、emoji…）通过剪贴板粘贴 */
+  typeText(text) {
+    if (!text) return;
+    if (/^[ -~]*$/.test(text)) { this.send({ t: 'text', text }); return; }
+    this.send({ t: 'clipboard', text, paste: true });
+  }
   sendRaw(obj) { if (this.ws && this.ws.readyState === 1) this.ws.send(JSON.stringify(obj)); }
   /** 发送控制消息；开启群控时同步给其他群控设备（坐标按各自分辨率等比换算） */
   send(obj) {
@@ -652,7 +658,7 @@ class Viewer {
       const v = this.ime.value;
       if (!v) return;
       this.ime.value = '';
-      this.send({ t: 'text', text: v });
+      this.typeText(v);
     };
     c.addEventListener('keydown', e => { if (down(e) && !isMobile()) return; });
     c.addEventListener('keyup', keyUp);
@@ -663,9 +669,8 @@ class Viewer {
     // 输入法组词结束后补一次（部分输入法只发 compositionend）
     ime.addEventListener('compositionend', () => setTimeout(flush, 0));
     // 没有输入法时（例如直接敲键盘）也要把焦点留在 ime 上
-    this.root.addEventListener('focusin', (e) => {
-      if (e.target !== ime && e.target !== this.textInput && !isMobile()) ime.focus({ preventScroll: true });
-    });
+    // 焦点落到画面本身时交给 ime（键盘、输入法都从这里进入）
+    c.addEventListener('focus', () => { if (!isMobile()) ime.focus({ preventScroll: true }); });
   }
 }
 
