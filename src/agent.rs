@@ -181,8 +181,42 @@ fn parse_nodes(xml: &str) -> Vec<HashMap<String, String>> {
     out
 }
 
+/// 解码 XML 实体：命名实体与数字实体（&#128512; / &#x1F600;，emoji 等）；换行显示为空格
 fn unescape(s: &str) -> String {
-    s.replace("&#10;", " ").replace("&#13;", "").replace("&quot;", "\"").replace("&apos;", "'").replace("&lt;", "<").replace("&gt;", ">").replace("&amp;", "&")
+    let mut out = String::with_capacity(s.len());
+    let mut rest = s;
+    while let Some(i) = rest.find('&') {
+        out.push_str(&rest[..i]);
+        rest = &rest[i..];
+        let Some(end) = rest.find(';').filter(|e| *e <= 12) else {
+            out.push('&');
+            rest = &rest[1..];
+            continue;
+        };
+        let ent = &rest[1..end];
+        let ch = match ent {
+            "quot" => Some('"'),
+            "apos" => Some('\''),
+            "lt" => Some('<'),
+            "gt" => Some('>'),
+            "amp" => Some('&'),
+            _ => ent
+                .strip_prefix("#x")
+                .or_else(|| ent.strip_prefix("#X"))
+                .and_then(|h| u32::from_str_radix(h, 16).ok())
+                .or_else(|| ent.strip_prefix('#').and_then(|d| d.parse().ok()))
+                .and_then(char::from_u32),
+        };
+        match ch {
+            Some('\n') => out.push(' '),
+            Some('\r') => {}
+            Some(c) => out.push(c),
+            None => out.push_str(&rest[..=end]),
+        }
+        rest = &rest[end + 1..];
+    }
+    out.push_str(rest);
+    out
 }
 
 /// "[0,0][1080,2400]" → (x1, y1, x2, y2)
@@ -600,6 +634,14 @@ mod tests {
         assert!(lines[0].ends_with("click"));
         assert!(lines[1].contains("desc=\"用户名\"") && lines[1].contains("edit") && lines[1].contains("focused"), "{}", lines[1]);
         assert_eq!(elems[0], (540, 1570, "登录 & 注册".to_string()));
+    }
+
+    #[test]
+    fn entities() {
+        assert_eq!(unescape("hi 你好&#128512;"), "hi 你好😀");
+        assert_eq!(unescape("&#x1F600;&lt;a&gt; &amp;&quot;x&apos;"), "😀<a> &\"x'");
+        assert_eq!(unescape("line&#10;two&#13;"), "line two");
+        assert_eq!(unescape("AT&T & co"), "AT&T & co");
     }
 
     #[test]
