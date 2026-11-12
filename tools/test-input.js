@@ -16,8 +16,16 @@ html = html.replace(/<script src="js\/([A-Za-z0-9_-]+)\.js"><\/script>/g, (m, n)
 const page = path.join(os.tmpdir(), 'db-input-test.html');
 fs.writeFileSync(page, html);
 const srv = require('http').createServer((q, r) => { r.setHeader('content-type', 'text/html; charset=utf-8'); r.end(fs.readFileSync(page)); }).listen(8894);
-const edge = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe';
-const p = spawn(edge, ['--headless=new', '--disable-gpu', '--remote-debugging-port=9339', '--user-data-dir=' + process.cwd() + '\\tmp\\demo\\cdp5', '--window-size=1440,900', 'about:blank']);
+// 浏览器：环境变量 BROWSER，或常见的 Chrome / Edge / Chromium 位置
+const browser = process.env.BROWSER || [
+  '/usr/bin/google-chrome', '/usr/bin/google-chrome-stable', '/usr/bin/chromium', '/usr/bin/chromium-browser',
+  '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+  'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',
+  'C:/Program Files/Google/Chrome/Application/chrome.exe',
+].find(f => fs.existsSync(f));
+if (!browser) { console.error('未找到 Chrome / Edge / Chromium，可用 BROWSER 环境变量指定'); process.exit(2); }
+const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'db-input-'));
+const p = spawn(browser, ['--headless=new', '--disable-gpu', '--no-sandbox', '--remote-debugging-port=9339', '--user-data-dir=' + profile, '--window-size=1440,900', 'about:blank']);
 let fails = 0;
 const check = (label, ok, detail) => { console.log((ok ? '✓ ' : '✗ ') + label + (detail ? '  ' + detail : '')); if (!ok) fails++; };
 (async () => {
