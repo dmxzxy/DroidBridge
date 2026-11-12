@@ -31,7 +31,7 @@ function menuAt(x, y, items) {
   (document.querySelector('dialog[open]') || document.body).append(anchor);
   menu(anchor, items);
   // 菜单关闭后移除临时锚点
-  const tick = setInterval(() => { if (!openMenu || openMenu.anchor !== anchor) { clearInterval(tick); anchor.remove(); } }, 300);
+  const tick = setInterval(() => { if (!openMenu || openMenu.anchor !== anchor) { clearInterval(tick); anchor.remove(); document.querySelectorAll('.ctx-on').forEach(x => x.classList.remove('ctx-on')); } }, 150);
 }
 
 // 右键按下时 Chromium 会先移动光标、清掉选区，所以在 mousedown 时记下选区，菜单里用它
@@ -44,10 +44,37 @@ document.addEventListener('mousedown', (e) => {
     : { el: null, text: String(window.getSelection() || '') };
 }, true);
 
+/** 给元素注册右键菜单：fn() 返回菜单项（与“⋯”按钮的菜单相同） */
+function ctxMenu(el, fn) { el._ctx = fn; el.classList.add('has-ctx'); return el; }
+
 document.addEventListener('contextmenu', (e) => {
   // 设备画面自己处理（右键 = 返回）
   if (e.target.closest && e.target.closest('.screen canvas')) return;
   e.preventDefault();
+  // 优先级：输入框 → 右键点在选中的文字上（复制）→ 注册了右键菜单的元素
+  const onSelection = (() => {
+    const txt = ctxSel && !ctxSel.el ? ctxSel.text : '';
+    if (!txt.trim()) return false;
+    const range = window.getSelection();
+    if (!range || !range.rangeCount) return false;
+    const rects = [...range.getRangeAt(0).getClientRects()];
+    return rects.some(r => e.clientX >= r.left - 2 && e.clientX <= r.right + 2 && e.clientY >= r.top - 2 && e.clientY <= r.bottom + 2);
+  })();
+  if (!onSelection && !(e.target.closest && e.target.closest('input, textarea'))) {
+    let el = e.target;
+    while (el && el !== document && !el._ctx) el = el.parentNode;
+    if (el && el._ctx) {
+      const items = (el._ctx() || []).filter(Boolean);
+      // 去掉开头、结尾和连续的分隔线
+      const clean = items.filter((it, i, a) => it !== '-' || (i > 0 && i < a.length - 1 && a[i - 1] !== '-'));
+      if (clean.length) {
+        document.querySelectorAll('.ctx-on').forEach(x => x.classList.remove('ctx-on'));
+        el.classList.add('ctx-on');
+        menuAt(e.clientX, e.clientY, clean);
+      }
+      return;
+    }
+  }
   const el = e.target.closest ? e.target.closest('input, textarea') : null;
   const editable = el && !el.readOnly && !el.disabled && !['checkbox', 'radio', 'range', 'file', 'button', 'submit', 'color'].includes(el.type)
     && !el.classList.contains('ime');

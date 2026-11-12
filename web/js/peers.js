@@ -11,16 +11,18 @@ async function addFound(f) {
   } catch (e) { toast(e.message, { kind: 'bad', ms: 4000 }); }
 }
 
-function hostMenu(anchor, r) {
-  menu(anchor, [
+function hostMenu(anchor, r) { menu(anchor, hostItems(r)); }
+function hostItems(r) {
+  return [
     ...(needsUpdate(r) ? [{ icon: 'download', label: t('更新到 {0}', INFO.version), fn: () => updatePeer(r) }, '-'] : []),
     { icon: 'wifi', label: t('无线连接设备…'), fn: () => wirelessDialog(r) },
     { icon: 'refresh', label: t('刷新'), fn: async () => { await refreshHost(r); renderSide(); if (r.error) toast(r.error, { kind: 'bad', ms: 4000 }); } },
     { icon: 'edit', label: t('编辑'), fn: () => peerDialog(r) },
     { icon: 'download', label: t('通过 SSH 重新安装…'), fn: () => peerDialog(r, { install: true }) },
+    { icon: 'copy', label: t('复制地址'), fn: () => copyText(r.addr) },
     '-',
     { icon: 'trash', label: t('移除'), danger: true, fn: () => removePeer(r) },
-  ]);
+  ];
 }
 
 // 添加 / 编辑远程电脑。opts.install=true：直接进入“通过 SSH 安装”
@@ -392,19 +394,25 @@ function appsDialog(hst, dev) {
       render();
     } catch (e) { tt.set(e.message, 'bad'); tt.close(7000); }
   };
-  const more = (btn, a) => menu(btn, [
+  const moreItems = (a) => [
     { icon: 'stop', label: t('强制停止'), fn: () => call(a, 'stop', t('正在停止')) },
     { icon: 'eraser', label: t('清除数据…'), fn: async () => { if (await confirmDialog(t('清除“{0}”的数据？', a.name || a.pkg), t('应用的全部数据、账号和设置都会被删除，无法恢复。'), t('清除数据'), true)) call(a, 'clear', t('正在清除')); } },
     a.system ? null : { icon: 'trash', label: t('卸载…'), danger: true, fn: async () => { if (await confirmDialog(t('卸载“{0}”？', a.name || a.pkg), t('应用及其数据会从设备上删除。'), t('卸载'), true)) call(a, 'uninstall', t('正在卸载')); } },
-  ].filter(Boolean));
+  ].filter(Boolean);
+  const more = (btn, a) => menu(btn, moreItems(a));
   function render() {
     const q = search.value.trim().toLowerCase();
     const shown = apps.filter(a => (kind === 'system') === a.system && (!q || a.pkg.toLowerCase().includes(q) || (a.name || '').toLowerCase().includes(q)));
     count.textContent = t('{0} 个应用', shown.length);
     if (!shown.length) { list.replaceChildren(h('div', { class: 'apps-empty' }, q ? t('没有匹配的应用') : t('没有应用'))); return; }
-    list.replaceChildren(...shown.map(a => h('div', { class: 'app' },
+    list.replaceChildren(...shown.map(a => ctxMenu(h('div', { class: 'app' },
       h('div', { class: 't' }, h('b', {}, h('span', {}, a.name || a.pkg), a.running ? h('span', { class: 'run', title: t('正在运行') }, '● ' + t('运行中')) : null), a.name ? h('small', {}, a.pkg) : null),
-      h('div', { class: 'acts' }, ib('play', t('启动'), () => call(a, 'launch', t('正在启动'))), ib('more', t('更多'), e => more(e.currentTarget, a))))));
+      h('div', { class: 'acts' }, ib('play', t('启动'), () => call(a, 'launch', t('正在启动'))), ib('more', t('更多'), e => more(e.currentTarget, a)))), () => [
+      { icon: 'play', label: t('启动'), fn: () => call(a, 'launch', t('正在启动')) },
+      ...moreItems(a),
+      '-',
+      { icon: 'copy', label: t('复制包名'), fn: () => copyText(a.pkg) },
+    ])));
   }
   async function load() {
     list.replaceChildren(h('div', { class: 'apps-empty' }, h('span', { class: 'spin' }), t('正在读取应用列表…')));

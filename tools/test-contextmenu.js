@@ -45,12 +45,14 @@ const check = (l, ok, d) => { console.log((ok ? '✓ ' : '✗ ') + l + (d ? '  '
     await sleep(250);
   };
   const menuItems = () => ev(`(() => { const m = document.querySelector('.menu'); return m ? [...m.querySelectorAll('button')].map(b => b.textContent + (b.disabled ? '(禁用)' : '')).join('/') : ''; })()`);
+  // 等页面脚本加载完、设备列表渲染出来
+  const waitReady = async () => { await sleep(500); for (let i = 0; i < 40; i++) { if ((await ev(`typeof viewers === 'object' && document.querySelectorAll('.dev').length > 0 && typeof ctxMenu === 'function'`)) === true) break; await sleep(250); } await sleep(1200); };
   const center = async (sel) => JSON.parse(await ev(`JSON.stringify((() => { const r = document.querySelector(${JSON.stringify(sel)}).getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; })())`));
   await send('Runtime.enable');
   await send('Browser.grantPermissions', { permissions: ['clipboardReadWrite', 'clipboardSanitizedWrite'], origin: 'http://127.0.0.1:8892' }).catch(() => {});
 
   await send('Page.navigate', { url: 'http://127.0.0.1:8892/?s=mview&lang=zh' });
-  await sleep(2600);
+  await waitReady();
   // 1. 空白处：不出浏览器菜单，也不出我们的菜单
   const prevented = await ev(`(() => { let p = null; const h = e => { p = e.defaultPrevented; }; addEventListener('contextmenu', h); const ev = new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 700, clientY: 850 }); document.querySelector('main').dispatchEvent(ev); removeEventListener('contextmenu', h); return ev.defaultPrevented; })()`);
   check('空白处右键：屏蔽浏览器菜单', prevented === true);
@@ -126,7 +128,62 @@ const check = (l, ok, d) => { console.log((ok ? '✓ ' : '✗ ') + l + (d ? '  '
   check('对话框里的输入框也有菜单', items.startsWith('剪切'), items);
   check('菜单显示在对话框上层', (await ev(`(() => { const m = document.querySelector('.menu'); const r = m.getBoundingClientRect(); return m.contains(document.elementFromPoint(r.left + 10, r.top + 10)); })()`)) === true);
 
-  // 6. 对话框不出现横向滚动：设置页里很长的路径 / 地址
+  // 6. 列表项的右键菜单：设备、远程电脑、发现的电脑、投屏标题栏、应用、文件、相册
+  const rmenu = async (sel, x = 0.3, keepDialogs = false) => {
+    await ev(keepDialogs ? `closeMenu(); 1` : `document.querySelectorAll('dialog[open]').forEach(d => d.close()); closeMenu(); 1`);
+    const pt = await ev(`(() => { const el = document.querySelector(${JSON.stringify(sel)}); if (!el) return null; const r = el.getBoundingClientRect(); return JSON.stringify({ x: r.left + r.width * ${x}, y: r.top + r.height / 2 }); })()`);
+    if (!pt) return 'NOT FOUND';
+    const c = JSON.parse(pt);
+    await rclick(c.x, c.y);
+    return menuItems();
+  };
+  await send('Page.navigate', { url: 'http://127.0.0.1:8892/?s=desk&lang=zh' });
+  await waitReady();
+  items = await rmenu('.dev.open');
+  check('已投屏的设备：关闭投屏/应用/文件/复制序列号', items === '关闭投屏/应用管理…/文件管理…/复制序列号', items);
+  check('右键时高亮该行', (await ev(`!!document.querySelector('.dev.ctx-on')`)) === true);
+  // 关掉一个投屏，再右键它
+  await ev(`closeMenu(); [...viewers.values()][0].close(); 1`);
+  await sleep(300);
+  items = await rmenu('.dev:not(.open):not(.na)');
+  check('未投屏的设备：开始投屏', items.startsWith('开始投屏/'), items);
+  items = await rmenu('.dev.na');
+  check('离线 / 未授权设备：只有复制序列号', items === '复制序列号', items);
+  items = await rmenu('.host');
+  check('远程电脑：与⋯菜单相同并可复制地址', items.includes('编辑') && items.includes('复制地址') && items.includes('移除'), items);
+  items = await rmenu('.found');
+  check('局域网发现的电脑：添加/复制地址', items === '添加/复制地址', items);
+  items = await rmenu('.sec');
+  check('“本机”标题：无线连接/刷新', items === '无线连接设备…/刷新', items);
+  items = await rmenu('.vhead', 0.15);
+  check('投屏标题栏：更多菜单', items.startsWith('应用管理…/文件管理…') && items.endsWith('关闭投屏'), items);
+  await ev(`closeMenu(); appsDialog(hosts.get('local'), __DEV.local[0]); 1`);
+  for (let i = 0; i < 20 && !(await ev(`!!document.querySelector('dialog.apps .app')`)); i++) await sleep(250);
+  await rclick(...Object.values(JSON.parse(await ev(`JSON.stringify((() => { const r = document.querySelector('dialog.apps .app').getBoundingClientRect(); return { x: r.left + 60, y: r.top + r.height / 2 }; })())`))));
+  items = await menuItems();
+  check('应用列表：启动/强制停止/…/复制包名', items.startsWith('启动/强制停止') && items.endsWith('复制包名'), items);
+  await ev(`document.querySelectorAll('dialog[open]').forEach(d => d.close()); closeMenu(); filesDialog(hosts.get('local'), __DEV.local[0]); 1`);
+  await sleep(600);
+  await rclick(...Object.values(JSON.parse(await ev(`JSON.stringify((() => { const r = [...document.querySelectorAll('dialog.files .fc-row')].find(x => !x.classList.contains('dir')).getBoundingClientRect(); return { x: r.left + 80, y: r.top + r.height / 2 }; })())`))));
+  items = await menuItems();
+  check('文件：下载/重命名/复制路径/删除', items === '下载到电脑/重命名…/复制路径/删除…', items);
+  await ev(`closeMenu(); 1`);
+  await rclick(...Object.values(JSON.parse(await ev(`JSON.stringify((() => { const r = document.querySelector('dialog.files .fc-row.dir').getBoundingClientRect(); return { x: r.left + 80, y: r.top + r.height / 2 }; })())`))));
+  items = await menuItems();
+  check('文件夹：打开', items.startsWith('打开/'), items);
+  await ev(`closeMenu(); 1`);
+  await ev(`document.querySelectorAll('dialog[open]').forEach(d => d.close()); openGallery(); 1`);
+  for (let i = 0; i < 20 && !(await ev(`!!document.querySelector('.gal-card')`)); i++) await sleep(250);
+  items = await rmenu('.gal-card', 0.5, true);
+  check('相册：查看/下载/…/删除', items.startsWith('查看/下载') && items.endsWith('删除…'), items);
+  await ev(`document.querySelectorAll('dialog[open]').forEach(d => d.close()); closeMenu(); 1`);
+  // 点菜单项真的执行：设备行“复制序列号”
+  await rmenu('.dev.na');
+  await ev(`[...document.querySelectorAll('.menu button')].find(b => b.textContent === '复制序列号').click(); 1`);
+  await sleep(300);
+  check('“复制序列号”可用', (await ev(`navigator.clipboard.readText().catch(e => '')`)) === '7HX5T19B28');
+
+  // 7. 对话框不出现横向滚动：设置页里很长的路径 / 地址
   await ev(`document.querySelectorAll('dialog[open]').forEach(d => d.close()); 1`);
   await ev(`(() => { const f = window.fetch; window.fetch = async (u, o) => String(u).includes('/api/settings') ? new Response(JSON.stringify({ media_dir: 'C:\\Users\\someone-with-a-long-name\\AppData\\Local\\Programs\\DroidBridge\\data\\media\\screenshots' }), { headers: { 'content-type': 'application/json' } }) : f(u, o); return 1; })()`);
   await ev(`settingsDialog(); 1`);

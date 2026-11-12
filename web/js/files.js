@@ -46,6 +46,14 @@ function filesDialog(hst, dev) {
   function row(e) {
     const full = (path.replace(/\/$/, '') + '/' + e.name);
     const click = () => { if (e.dir) load(full); };
+    const items = () => [
+      e.dir ? { icon: 'folder', label: t('打开'), fn: () => load(full) } : { icon: 'download', label: t('下载到电脑'), fn: () => download(full, e) },
+      '-',
+      { icon: 'edit', label: t('重命名…'), fn: () => rename(full, e) },
+      { icon: 'copy', label: t('复制路径'), fn: () => copyText(full) },
+      '-',
+      { icon: 'trash', label: t('删除…'), danger: true, fn: () => remove(full, e) },
+    ];
     const acts = h('div', { class: 'fc-acts' },
       e.dir ? null : ib('download', t('下载到电脑'), (ev) => { ev.stopPropagation(); download(full, e); }),
       ib('more', t('更多'), (ev) => {
@@ -55,10 +63,10 @@ function filesDialog(hst, dev) {
           { icon: 'trash', label: t('删除…'), danger: true, fn: () => remove(full, e) },
         ]);
       }));
-    return h('div', { class: 'fc-row' + (e.dir ? ' dir' : ''), onclick: click, title: full },
+    return ctxMenu(h('div', { class: 'fc-row' + (e.dir ? ' dir' : ''), onclick: click, title: full },
       h('span', { class: 'fc-ico', html: svg(e.dir ? 'folder' : 'file') }),
       h('div', { class: 'fc-t' }, h('b', {}, e.name), h('small', {}, fmtTime(e.mtime) + (e.dir ? '' : ' · ' + fmtSize(e.size)))),
-      acts);
+      acts), items);
   }
 
   function render() {
@@ -158,6 +166,11 @@ function filesDialog(hst, dev) {
     } catch (err) { toast(err.message, { kind: 'bad', ms: 5000 }); }
   };
 
+  ctxMenu(list, () => [
+    { icon: 'upload', label: t('上传文件…'), fn: () => picker.click() },
+    { icon: 'folder', label: t('新建文件夹…'), fn: () => newFolder() },
+    { icon: 'refresh', label: t('刷新'), fn: () => load(path) },
+  ]);
   const body = [
     h('div', { class: 'fc-bar' }, upBtn, titleEl, ib('refresh', t('刷新'), () => load(path))),
     list,

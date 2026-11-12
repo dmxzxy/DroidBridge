@@ -172,8 +172,17 @@ async function openGallery(locate) {
         if (it.kind === 'shot' || it.url.startsWith('data:')) thumb = h('img', { class: 'thumb', src: url, loading: 'lazy' });
         else thumb = h('video', { class: 'thumb', src: url, preload: 'metadata', muted: true });
         const idx = list.indexOf(it);
-        const card = h('div', { class: 'gal-card', onclick: () => openPreview(idx) }, thumb,
-          h('div', { class: 'meta' }, h('span', { class: 'dev' }, it.device), h('div', { class: 'time' }, fmtTime(it.time))));
+        const card = ctxMenu(h('div', { class: 'gal-card', onclick: () => openPreview(idx) }, thumb,
+          h('div', { class: 'meta' }, h('span', { class: 'dev' }, it.device), h('div', { class: 'time' }, fmtTime(it.time)))), () => [
+          { icon: 'max', label: t('查看'), fn: () => openPreview(idx) },
+          { icon: 'download', label: t('下载'), fn: () => { const a = h('a', { href: withToken(it.url), download: it.name }); document.body.append(a); a.click(); a.remove(); } },
+          isLocalHost() ? { icon: 'folder', label: t('打开所在文件夹'), fn: () => api('/api/media/reveal?name=' + encodeURIComponent(it.name), { method: 'POST', body: '{}' }).catch(e => toast(e.message, { kind: 'bad' })) } : null,
+          '-',
+          { icon: 'trash', label: t('删除…'), danger: true, fn: async () => {
+            if (!await confirmDialog(t('删除'), t('确定要删除这个文件吗？'), t('删除'), true)) return;
+            try { await api('/api/media/' + encodeURIComponent(it.name), { method: 'DELETE' }); await load(); } catch (e) { toast(e.message, { kind: 'bad' }); }
+          } },
+        ]);
         // 录屏：在卡片右上角叠播放标记 + 时长（video 子元素不渲染，需放在卡片上）
         if (it.kind === 'rec') {
           const flag = h('span', { class: 'vid-flag' }, h('span', { html: svg('play') }).firstChild, h('span', { class: 'dur' }, ''));

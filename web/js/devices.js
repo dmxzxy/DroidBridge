@@ -92,18 +92,33 @@ function devRows(hst, emptyEl) {
   if (!hst.devices.length) return [emptyEl];
   return hst.devices.map(d => {
     const ready = d.state === 'device';
-    return h('div', {
+    return ctxMenu(h('div', {
       class: 'dev' + ([...viewers.values()].some(v => v.host.id === hst.id && v.dev.serial === d.serial) ? ' open' : '') + (ready ? '' : ' na'), title: d.serial,
       onclick: () => ready ? openViewer(hst, d) : toast(STATE_HINT[d.state] || (t('设备状态：') + d.state)),
     }, h('span', { class: 'dot ' + (ready ? 'ok' : 'warn') }),
       h('div', { class: 't' }, h('b', {}, d.model || d.serial), d.model ? h('small', {}, d.serial) : null),
       d.wireless ? h('span', { class: 'wl', title: t('无线连接'), html: svg('wifi') }) : null,
       ready ? null : h('span', { class: 'st' }, STATE_TEXT[d.state] || d.state),
-      ready ? ib('more', t('更多'), e => { e.stopPropagation(); deviceMenu(e.currentTarget, hst, d); }) : null);
+      ready ? ib('more', t('更多'), e => { e.stopPropagation(); deviceMenu(e.currentTarget, hst, d); }) : null), () => deviceItems(hst, d));
   });
 }
 
-/** 设备菜单：不打开投屏也能管理应用和文件 */
+/** 设备菜单项：不打开投屏也能管理应用和文件 */
+function deviceItems(hst, dev) {
+  const ready = dev.state === 'device';
+  const open = findViewer(hst, dev);
+  return [
+    ready ? (open
+      ? { icon: 'x', label: t('关闭投屏'), fn: () => open.close() }
+      : { icon: 'phone', label: t('开始投屏'), fn: () => openViewer(hst, dev) }) : null,
+    ready ? '-' : null,
+    ready ? { icon: 'grid', label: t('应用管理…'), fn: () => appsDialog(hst, dev) } : null,
+    ready ? { icon: 'folder', label: t('文件管理…'), fn: () => filesDialog(hst, dev) } : null,
+    ready ? '-' : null,
+    { icon: 'copy', label: t('复制序列号'), fn: () => copyText(dev.serial) },
+  ];
+}
+/** “⋯”按钮：只放管理类操作（点设备行本身就是开始投屏） */
 function deviceMenu(anchor, hst, dev) {
   menu(anchor, [
     { icon: 'grid', label: t('应用管理…'), fn: () => appsDialog(hst, dev) },
@@ -116,9 +131,15 @@ function renderSide() {
   if (openMenu && $('#lists').contains(openMenu.anchor)) { renderPending = true; return; }
   renderPending = false;
   const local = hosts.get('local');
-  const out = [h('div', { class: 'sec' }, t('本机'), local ? ib('wifi', t('无线连接设备'), () => wirelessDialog(local)) : null)];
+  const out = [ctxMenu(h('div', { class: 'sec' }, t('本机'), local ? ib('wifi', t('无线连接设备'), () => wirelessDialog(local)) : null), () => [
+    local ? { icon: 'wifi', label: t('无线连接设备…'), fn: () => wirelessDialog(local) } : null,
+    { icon: 'refresh', label: t('刷新'), fn: async () => { if (local) { await refreshHost(local); renderSide(); } } },
+  ])];
   if (local) out.push(...devRows(local, h('div', { class: 'empty' }, t('未检测到设备 · '), h('a', { href: '#', onclick: e => { e.preventDefault(); helpDialog(); } }, t('如何连接')))));
-  out.push(h('div', { class: 'sec' }, t('远程电脑'), ib('plus', t('添加远程电脑'), () => peerDialog())));
+  out.push(ctxMenu(h('div', { class: 'sec' }, t('远程电脑'), ib('plus', t('添加远程电脑'), () => peerDialog())), () => [
+    { icon: 'plus', label: t('添加远程电脑…'), fn: () => peerDialog() },
+    { icon: 'refresh', label: t('全部刷新'), fn: () => refreshAll() },
+  ]));
   const remotes = [...hosts.values()].filter(x => x.remote);
   if (!remotes.length && !FOUND.length) out.push(h('div', { class: 'empty' }, t('添加局域网内运行 DroidBridge 的电脑')));
   for (const r of remotes) {
@@ -126,18 +147,21 @@ function renderSide() {
     const upd = r.updating
       ? h('span', { class: 'upd busy' }, h('span', { class: 'spin sm' }), t('更新中'))
       : needsUpdate(r) ? h('button', { class: 'upd', type: 'button', title: t('对方 {0}，本机 {1}，点击更新', r.info.version, INFO.version), onclick: () => updatePeer(r) }, t('可更新')) : null;
-    out.push(h('div', { class: 'host', title: r.addr + (r.info ? ' · v' + r.info.version : '') + (r.error ? '\n' + r.error : '') },
+    out.push(ctxMenu(h('div', { class: 'host', title: r.addr + (r.info ? ' · v' + r.info.version : '') + (r.error ? '\n' + r.error : '') },
       h('span', { class: 'hn' }, r.name),
       h('span', { class: 'meta' + (short ? ' err' : '') }, short || r.addr),
       upd,
-      ib('more', t('更多'), e => hostMenu(e.currentTarget, r))));
+      ib('more', t('更多'), e => hostMenu(e.currentTarget, r))), () => hostItems(r)));
     if (!r.error) out.push(...devRows(r, h('div', { class: 'empty' }, t('没有设备'))));
   }
   if (FOUND.length) {
     out.push(h('div', { class: 'found-t' }, t('在局域网中发现')));
-    for (const f of FOUND) out.push(h('div', { class: 'found', title: f.addr, onclick: () => addFound(f) },
+    for (const f of FOUND) out.push(ctxMenu(h('div', { class: 'found', title: f.addr, onclick: () => addFound(f) },
       h('span', { class: 'hn' }, f.name), h('span', { class: 'meta' }, f.addr),
-      ib('plus', t('添加'), e => { e.stopPropagation(); addFound(f); })));
+      ib('plus', t('添加'), e => { e.stopPropagation(); addFound(f); })), () => [
+      { icon: 'plus', label: t('添加'), fn: () => addFound(f) },
+      { icon: 'copy', label: t('复制地址'), fn: () => copyText(f.addr) },
+    ]));
   }
   $('#lists').replaceChildren(...out);
 }

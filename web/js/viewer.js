@@ -66,8 +66,8 @@ class Viewer {
     this.syncBtn.hidden = viewers.size < 1;
     this.vlog = h('div', { class: 'vlog' });
     this.root = h('div', { class: 'viewer' },
-      h('div', { class: 'vhead' }, this.dot, this.nameEl, this.recEl, h('span', { class: 'sub' }, this.host.remote ? this.host.name : ''), this.statEl,
-        this.syncBtn, ib('max', t('全屏'), () => this.fullscreen()), ib('x', t('关闭'), () => this.close())),
+      ctxMenu(h('div', { class: 'vhead' }, this.dot, this.nameEl, this.recEl, h('span', { class: 'sub' }, this.host.remote ? this.host.name : ''), this.statEl,
+        this.syncBtn, ib('max', t('全屏'), () => this.fullscreen()), ib('x', t('关闭'), () => this.close())), () => this.moreItems()),
       h('div', { class: 'vmain' },
       h('div', { class: 'vbody' },
         h('div', { class: 'vcol' },
@@ -85,8 +85,9 @@ class Viewer {
     this.bindDrop();
   }
 
-  moreMenu() {
-    menu(this.moreBtn, [
+  moreMenu() { menu(this.moreBtn, this.moreItems()); }
+  moreItems() {
+    return [
       { icon: 'grid', label: t('应用管理…'), fn: () => appsDialog(this.host, this.dev) },
       { icon: 'folder', label: t('文件管理…'), fn: () => filesDialog(this.host, this.dev) },
       '-',
@@ -103,7 +104,8 @@ class Viewer {
         ? { icon: 'wifiOff', label: t('断开无线连接'), fn: () => wirelessAction(this, '/api/adb/disconnect', t('正在断开…')) }
         : { icon: 'wifi', label: t('切换为无线连接'), fn: () => wirelessAction(this, '/api/adb/tcpip', t('正在切换为无线连接…')) },
       { icon: 'refresh', label: t('重新连接'), fn: () => this.reconnect() },
-    ]);
+      { icon: 'x', label: t('关闭投屏'), fn: () => this.close() },
+    ];
   }
 
   wsUrl() {
