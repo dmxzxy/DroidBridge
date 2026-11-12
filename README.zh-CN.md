@@ -15,7 +15,7 @@
 - **设备日志**：在画面旁实时查看 logcat，可按级别、关键字、应用过滤
 - **性能浮层**：在画面上显示前台应用的帧率、CPU、内存，以及温度和电量
 - **应用管理**：列出已安装应用，启动、强制停止、清除数据、卸载
-- **文件管理**：浏览手机存储，上传、下载、新建文件夹、重命名、删除
+- **文件管理**：可放在画面旁边的侧栏或单独窗口，打开快；缩略图、预览、多选、上传、下载、重命名、删除、安装 APK
 - **批量安装与群控**：一个 APK 一次装到多台设备；在多台设备上同步点击和按键
 - **AI Agent（MCP）**：让 Claude Code、Cursor 等支持 MCP 的 AI 工具读取画面并操作任意设备；每次操作都能实时看到，随时可以暂停
 - **安装 APK / 传文件**：把文件拖到设备画面上即可
@@ -27,7 +27,7 @@
 | ![](docs/screenshots/zh/8-logcat.png) | ![](docs/screenshots/zh/9-wireless.png) | ![](docs/screenshots/zh/7-mobile-view.png) |
 | ![](docs/screenshots/zh/10-gallery.png) | ![](docs/screenshots/zh/5-settings.png) | ![](docs/screenshots/zh/6-mobile-list.png) |
 | ![](docs/screenshots/zh/11-perf.png) | ![](docs/screenshots/zh/12-apps.png) | ![](docs/screenshots/zh/13-batch.png) |
-| ![](docs/screenshots/zh/14-files.png) | ![](docs/screenshots/zh/15-update.png) | ![](docs/screenshots/zh/6-mobile-list.png) |
+| ![](docs/screenshots/zh/16-files-panel.png) | ![](docs/screenshots/zh/14-files.png) | ![](docs/screenshots/zh/15-update.png) |
 
 > 截图使用的是模拟数据，手机画面为示意图（`tools/demo/shots.ps1` 生成）。
 
@@ -133,14 +133,17 @@
 
 ### 文件管理
 
-点设备旁的 **⋯**（或在投屏窗口的 **更多 → 文件管理…**），浏览手机存储：
+在投屏窗口右侧图标栏点 **文件夹** 图标，文件浏览器会出现在画面旁边（和日志面板同一位置，一次只显示一个）；也可以在设备的 **⋯ → 文件管理…** 里以单独窗口打开。
 
-- 浏览文件夹（默认从 `/sdcard` 开始），窗口底部显示剩余空间
-- **上传**：在对话框里选择本机的一个或多个文件，进度在提示条里显示
-- **下载**：把文件下载到本机
-- 每行的 ⋯ 菜单里有**新建文件夹**（底部按钮）、**重命名**、**删除**（删除需确认）
+- 速度快：每个目录只用一条命令读取（几百个文件约 0.2 秒）；看过的目录从缓存立即显示，后台再刷新
+- 面包屑路径、后退、上一级，**常用位置** 菜单（下载、相机、图片、视频、文档、应用数据）；每台设备记住上次打开的目录
+- 筛选，按名称 / 修改时间 / 大小排序，显示隐藏文件，列表或缩略图视图；图片缩略图滚动到可见时才加载
+- 单击文件夹进入；双击文件（或再次单击已选中的文件）预览图片、视频、音频和文本，图片可用 ← / → 切换
+- Ctrl / Shift 点击多选，可批量下载或删除；右键：打开、下载、安装（APK）、重命名、复制路径、删除
+- 把文件拖到面板上即可上传；新建文件夹、重命名、删除可在工具栏或菜单中操作
+- 键盘：↑ ↓ 移动，Enter 打开，Backspace 上一级，Delete 删除，F2 重命名，Ctrl+A 全选
 
-只能访问共享存储（`/sdcard`、`/storage/emulated/0`），路径在服务端校验，无法访问系统目录。上传时先写成临时文件名，完成后再改名，中途中断不会留下半截文件。
+只能访问共享存储（`/sdcard`、`/storage/emulated/0`），路径在服务端校验。上传时先写成临时文件名，完成后再改名。
 
 ### 批量安装与群控
 

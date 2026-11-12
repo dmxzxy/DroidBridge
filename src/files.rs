@@ -107,16 +107,21 @@ struct Entry {
     mtime: u64,
 }
 
+/// 解析 `stat -c '%F|%s|%Y|%n'` 的输出（toybox stat）。
+/// 文件名里可能有 |，所以只按前 3 个 | 切分；符号链接按文件处理。
 fn parse_list(out: &str) -> Vec<Entry> {
     out.lines()
         .filter_map(|l| {
             let l = l.strip_suffix('\r').unwrap_or(l);
-            let mut it = l.splitn(4, '\t');
-            let (Some(t), Some(size), Some(mtime), Some(name)) = (it.next(), it.next(), it.next(), it.next()) else { return None };
-            if name.is_empty() {
+            if l.starts_with("stat: ") {
+                return None; // 通配符没匹配到时 stat 的报错
+            }
+            let mut it = l.splitn(4, '|');
+            let (Some(kind), Some(size), Some(mtime), Some(name)) = (it.next(), it.next(), it.next(), it.next()) else { return None };
+            if name.is_empty() || name == "." || name == ".." {
                 return None;
             }
-            Some(Entry { name: name.to_string(), dir: t == "d", size: size.parse().unwrap_or(0), mtime: mtime.parse().unwrap_or(0) })
+            Some(Entry { name: name.to_string(), dir: kind == "directory", size: size.parse().unwrap_or(0), mtime: mtime.parse().unwrap_or(0) })
         })
         .collect()
 }
@@ -127,23 +132,21 @@ fn sort_entries(list: &mut [Entry]) {
 
 pub async fn list(st: &AppState, r: ListReq) -> Result<serde_json::Value, String> {
     let path = check_path(&r.path, true)?;
-    // 设备端脚本：列出目录项，输出 类型<TAB>大小<TAB>修改时间<TAB>名称
+    // 一次 adb 调用：进入目录、一次 stat 读出所有项（含隐藏文件），再带上剩余空间
     let cmd = format!(
-        "cd '{path}' 2>/dev/null || {{ echo 'DroidBridge: cannot open'; exit 1; }}; for f in * .[!.]*; do [ \"$f\" = '*' ] && continue; [ -e \"$f\" ] || continue; if [ -d \"$f\" ]; then t=d; else t=f; fi; printf '%s\\t%s\\t%s\\t%s\\n' \"$t\" \"$(stat -c%s \"$f\" 2>/dev/null || echo 0)\" \"$(stat -c%Y \"$f\" 2>/dev/null || echo 0)\" \"$f\"; done"
+        "cd '{path}' 2>/dev/null || {{ echo 'DroidBridge: cannot open'; exit 1; }}; stat -c '%F|%s|%Y|%n' -- * .[!.]* ..?* 2>/dev/null; echo '@@df'; df -k /sdcard 2>/dev/null | tail -1"
     );
     let out = sh(st, &r.serial, &cmd, 30).await?;
     if out.contains("DroidBridge: cannot open") {
         return Err(tr!("无法打开 {path}", "Cannot open {path}"));
     }
-    let mut entries = parse_list(&out);
+    let (listing, df) = out.split_once("@@df").unwrap_or((out.as_str(), ""));
+    let mut entries = parse_list(listing);
     sort_entries(&mut entries);
     let items: Vec<_> = entries.iter().map(|e| json!({"name": e.name, "dir": e.dir, "size": e.size, "mtime": e.mtime})).collect();
-    // 剩余空间（读不到就不显示）
-    let space = sh(st, &r.serial, "df -k '/sdcard' | tail -1", 15).await.ok().and_then(|o| {
-        let v: Vec<u64> = o.split_whitespace().skip(1).filter_map(|x| x.parse().ok()).collect();
-        // df -k 的列：文件系统 1K 块总数 已用 可用
-        (v.len() >= 3).then(|| json!({"total": v[0] * 1024, "free": v[2] * 1024}))
-    });
+    // 剩余空间（读不到就不显示）；df -k 的列：文件系统 1K 块总数 已用 可用
+    let v: Vec<u64> = df.split_whitespace().skip(1).filter_map(|x| x.parse().ok()).collect();
+    let space = (v.len() >= 3).then(|| json!({"total": v[0] * 1024, "free": v[2] * 1024}));
     Ok(json!({"path": path, "parent": parent_of(&path), "items": items, "space": space}))
 }
 
@@ -218,6 +221,73 @@ pub async fn upload(st: &AppState, serial: &str, dir: &str, name: &str, body: &[
         return Err(tr!("无法写入 {dest}（可能没有权限）", "Cannot write {dest} (maybe no permission)"));
     }
     Ok(json!({"ok": true, "path": dest}))
+}
+
+/// 安装设备上的 APK（pm install 直接读设备上的文件，不用先下载）
+pub async fn install(st: &AppState, r: TwoReq) -> Result<serde_json::Value, String> {
+    let path = check_path(&r.path, false)?;
+    if !path.to_ascii_lowercase().ends_with(".apk") {
+        return Err(tr!("只能安装 .apk 文件", "Only .apk files can be installed"));
+    }
+    // /sdcard 下的文件 pm 不一定有权限直接读：先复制到 /data/local/tmp
+    let tmp = format!("/data/local/tmp/droidbridge-{:08x}.apk", crate::util::random_scid());
+    let out = sh(st, &r.serial, &format!("cp '{path}' '{tmp}' && pm install -r -t '{tmp}' 2>&1; rm -f '{tmp}'"), 300).await?;
+    if out.contains("Success") {
+        Ok(json!({"ok": true, "msg": tr!("已安装", "Installed")}))
+    } else {
+        let e = out.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or("").trim().to_string();
+        Err(tr!("安装失败：{e}", "Install failed: {e}"))
+    }
+}
+
+/// 预览 / 缩略图：直接用 exec-out cat 读到内存（不写临时文件，比 pull 快），
+/// 图片按 size 缩放成 JPEG。文本最多读 512 KB，原图最多 40 MB。
+pub async fn preview(st: &AppState, serial: &str, path: &str, thumb: Option<u32>) -> Result<Response, String> {
+    let path = check_path(path, false)?;
+    let lower = path.to_ascii_lowercase();
+    let ext = lower.rsplit('.').next().unwrap_or("");
+    let is_img = matches!(ext, "jpg" | "jpeg" | "png" | "webp" | "gif" | "bmp");
+    let limit: u64 = if is_img { 40 << 20 } else { 512 << 10 };
+    // head -c 限制读取量；toybox 的 head 支持 -c
+    let cmd = format!("head -c {limit} '{path}'");
+    let data = adb::run_bytes(&st.cfg.adb, &["-s", serial, "exec-out", &cmd], Duration::from_secs(60)).await?;
+    let mime = match ext {
+        "jpg" | "jpeg" => "image/jpeg",
+        "png" => "image/png",
+        "webp" => "image/webp",
+        "gif" => "image/gif",
+        "bmp" => "image/bmp",
+        "mp4" | "m4v" => "video/mp4",
+        "webm" => "video/webm",
+        "mp3" => "audio/mpeg",
+        "m4a" => "audio/mp4",
+        "json" => "application/json; charset=utf-8",
+        _ => "text/plain; charset=utf-8",
+    };
+    let (body, mime) = match thumb.filter(|_| is_img) {
+        Some(size) => match image::load_from_memory(&data) {
+            Ok(img) => {
+                let small = img.thumbnail(size, size);
+                let mut jpg = Vec::new();
+                small
+                    .to_rgb8()
+                    .write_with_encoder(image::codecs::jpeg::JpegEncoder::new_with_quality(&mut std::io::Cursor::new(&mut jpg), 78))
+                    .map_err(|e| e.to_string())?;
+                (jpg, "image/jpeg")
+            }
+            Err(_) => (data, mime),
+        },
+        None => (data, mime),
+    };
+    Ok((
+        [
+            (axum::http::header::CONTENT_TYPE, mime.to_string()),
+            // 同一路径的缩略图在会话期间可以复用
+            (axum::http::header::CACHE_CONTROL, if thumb.is_some() { "private, max-age=600".to_string() } else { "no-cache".to_string() }),
+        ],
+        body,
+    )
+        .into_response())
 }
 
 /// 下载：adb pull 到临时文件后以流的方式返回（大文件不占内存）
@@ -295,12 +365,13 @@ mod tests {
 
     #[test]
     fn listing() {
-        let out = "d\t4096\t1700000000\tDCIM\r\nf\t12345\t1700000001\ta.jpg\nf\t0\t1700000002\t就是\t名字.txt\nbroken line\n";
+        let out = "directory|4096|1700000000|DCIM\r\nregular file|12345|1700000001|a.jpg\nregular empty file|0|1700000002|就是|名字 一.txt\nsymbolic link|20|1700000003|link\nstat: '.[!.]*': No such file or directory\nbroken line\n";
         let mut e = parse_list(out);
-        assert_eq!(e.len(), 3);
+        assert_eq!(e.len(), 4);
         sort_entries(&mut e);
-        assert!(e[0].dir);
+        assert!(e[0].dir && e[0].name == "DCIM");
         assert_eq!(e[1].name, "a.jpg");
-        assert_eq!(e[2].name, "就是\t名字.txt", "名称里的制表符保留");
+        assert_eq!(e[1].size, 12345);
+        assert_eq!(e[3].name, "就是|名字 一.txt", "名称里的 | 和空格保留");
     }
 }

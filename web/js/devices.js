@@ -113,7 +113,7 @@ function deviceItems(hst, dev) {
       : { icon: 'phone', label: t('开始投屏'), fn: () => openViewer(hst, dev) }) : null,
     ready ? '-' : null,
     ready ? { icon: 'grid', label: t('应用管理…'), fn: () => appsDialog(hst, dev) } : null,
-    ready ? { icon: 'folder', label: t('文件管理…'), fn: () => filesDialog(hst, dev) } : null,
+    ready ? { icon: 'folder', label: t('文件管理…'), fn: () => open ? open.toggleFiles(true) : filesDialog(hst, dev) } : null,
     ready ? '-' : null,
     { icon: 'copy', label: t('复制序列号'), fn: () => copyText(dev.serial) },
   ];

@@ -381,6 +381,8 @@ fn router(state: Shared) -> Router {
         .route("/api/files/delete", post(files_delete))
         .route("/api/files/upload", post(files_upload).layer(DefaultBodyLimit::max(2usize << 30)))
         .route("/api/files/download", get(files_download))
+        .route("/api/files/preview", get(files_preview))
+        .route("/api/files/install", post(files_install))
         .route("/api/agent/pause", post(agent_pause))
         .route("/api/apps", post(apps_list))
         .route("/api/apps/action", post(apps_action))
@@ -839,6 +841,7 @@ adb_post!(files_list, files::ListReq, "/api/files/list", files::list);
 adb_post!(files_mkdir, files::TwoReq, "/api/files/mkdir", files::mkdir);
 adb_post!(files_rename, files::TwoReq, "/api/files/rename", files::rename);
 adb_post!(files_delete, files::DeleteReq, "/api/files/delete", files::delete);
+adb_post!(files_install, files::TwoReq, "/api/files/install", files::install);
 
 /// 上传文件到设备：?path=目录&name=文件名，body 为文件内容
 async fn files_upload(State(st): State<Shared>, Query(q): Query<HashMap<String, String>>, body: Bytes) -> Response {
@@ -872,6 +875,31 @@ async fn files_download(State(st): State<Shared>, Query(q): Query<HashMap<String
         return err(StatusCode::BAD_REQUEST, tr!("缺少 path 参数", "Missing path parameter"));
     };
     match files::download(&st, serial, path).await {
+        Ok(r) => r,
+        Err(e) => err(StatusCode::BAD_REQUEST, e),
+    }
+}
+
+/// 预览 / 缩略图：?serial=&path=&thumb=像素（可选）；带 ?peer= 时转发给远程电脑
+async fn files_preview(State(st): State<Shared>, Query(q): Query<HashMap<String, String>>, uri: axum::http::Uri) -> Response {
+    let Some(serial) = q.get("serial").filter(|s| !s.is_empty()) else {
+        return err(StatusCode::BAD_REQUEST, tr!("缺少 serial 参数", "Missing serial parameter"));
+    };
+    let Some(path) = q.get("path").filter(|p| !p.is_empty()) else {
+        return err(StatusCode::BAD_REQUEST, tr!("缺少 path 参数", "Missing path parameter"));
+    };
+    if let Some(id) = remote_id(&q) {
+        let Some(peer) = st.peers.get(id).await else {
+            return err(StatusCode::NOT_FOUND, tr!("远程电脑不存在", "Remote computer not found"));
+        };
+        let query: Vec<String> = util::parse_query(uri.query()).into_iter().filter(|(k, _)| k != "peer" && k != "token").map(|(k, v)| format!("{}={}", util::url_encode(&k), util::url_encode(&v))).collect();
+        return match peers::forward_raw(&peer, &format!("/api/files/preview?{}", query.join("&")), std::time::Duration::from_secs(90)).await {
+            Ok((code, ct, body)) => (StatusCode::from_u16(code).unwrap_or(StatusCode::BAD_GATEWAY), [(header::CONTENT_TYPE, ct)], body).into_response(),
+            Err(e) => err(StatusCode::BAD_GATEWAY, e),
+        };
+    }
+    let thumb = q.get("thumb").and_then(|v| v.parse::<u32>().ok()).map(|v| v.clamp(32, 1024));
+    match files::preview(&st, serial, path, thumb).await {
         Ok(r) => r,
         Err(e) => err(StatusCode::BAD_REQUEST, e),
     }

@@ -248,6 +248,38 @@ pub async fn post_file(peer: &Peer, query: &str, body: &[u8]) -> Result<serde_js
     parse_json_reply(code, &resp)
 }
 
+/// GET 转发并保留 Content-Type（图片等二进制内容）
+pub async fn forward_raw(peer: &Peer, path_query: &str, timeout: Duration) -> Result<(u16, String, Vec<u8>), String> {
+    let addr = &peer.addr;
+    let path = with_token(path_query, &peer.token);
+    let fut = async {
+        let mut s = tokio::time::timeout(Duration::from_secs(3), TcpStream::connect(addr.as_str()))
+            .await
+            .map_err(|_| tr!("连接 {addr} 超时", "Connection to {addr} timed out"))?
+            .map_err(|e| tr!("无法连接 {addr}：{e}", "Cannot connect to {addr}: {e}"))?;
+        let req = format!("GET {path} HTTP/1.1\r\nHost: {addr}\r\nX-Lang: {}\r\nConnection: close\r\n\r\n", crate::i18n::code());
+        s.write_all(req.as_bytes()).await.map_err(|e| e.to_string())?;
+        let mut buf = Vec::new();
+        s.read_to_end(&mut buf).await.map_err(|e| e.to_string())?;
+        Ok::<_, String>(buf)
+    };
+    let buf = tokio::time::timeout(timeout, fut).await.map_err(|_| tr!("请求 {addr} 超时", "Request to {addr} timed out"))??;
+    let split = buf.windows(4).position(|w| w == b"\r\n\r\n").ok_or_else(|| tr!("对端响应格式错误", "Malformed response"))?;
+    let head = String::from_utf8_lossy(&buf[..split]).to_string();
+    let mut body = buf[split + 4..].to_vec();
+    let status: u16 = head.split_whitespace().nth(1).and_then(|s| s.parse().ok()).ok_or_else(|| tr!("对端响应格式错误", "Malformed response"))?;
+    let lower = head.to_ascii_lowercase();
+    let ct = lower
+        .lines()
+        .find_map(|l| l.strip_prefix("content-type:"))
+        .map(|v| v.trim().to_string())
+        .unwrap_or_else(|| "application/octet-stream".into());
+    if lower.contains("transfer-encoding: chunked") {
+        body = dechunk(&body);
+    }
+    Ok((status, ct, body))
+}
+
 /// 把请求原样转发给远程节点（自动附加令牌），返回 (状态码, body)
 pub async fn forward(peer: &Peer, method: &str, path_query: &str, body: &[u8], timeout: Duration) -> Result<(u16, Vec<u8>), String> {
     http_request(&peer.addr, method, &with_token(path_query, &peer.token), body, timeout).await

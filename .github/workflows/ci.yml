@@ -58,5 +58,6 @@ jobs:
         run: |
           node tools/test-input.js
           node tools/test-contextmenu.js
+          node tools/test-files.js
 
 

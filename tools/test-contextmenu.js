@@ -163,12 +163,12 @@ const check = (l, ok, d) => { console.log((ok ? '✓ ' : '✗ ') + l + (d ? '  '
   items = await menuItems();
   check('应用列表：启动/强制停止/…/复制包名', items.startsWith('启动/强制停止') && items.endsWith('复制包名'), items);
   await ev(`document.querySelectorAll('dialog[open]').forEach(d => d.close()); closeMenu(); filesDialog(hosts.get('local'), __DEV.local[0]); 1`);
-  await sleep(600);
-  await rclick(...Object.values(JSON.parse(await ev(`JSON.stringify((() => { const r = [...document.querySelectorAll('dialog.files .fc-row')].find(x => !x.classList.contains('dir')).getBoundingClientRect(); return { x: r.left + 80, y: r.top + r.height / 2 }; })())`))));
+  for (let i = 0; i < 20 && !(await ev(`!!document.querySelector('dialog.files .fb-row:not(.dir)')`)); i++) await sleep(200);
+  await rclick(...Object.values(JSON.parse(await ev(`JSON.stringify((() => { const r = [...document.querySelectorAll('dialog.files .fb-row')].find(x => !x.classList.contains('dir')).getBoundingClientRect(); return { x: r.left + 80, y: r.top + r.height / 2 }; })())`))));
   items = await menuItems();
-  check('文件：下载/重命名/复制路径/删除', items === '下载到电脑/重命名…/复制路径/删除…', items);
+  check('文件：预览/下载/重命名/复制路径/删除', items === '预览/下载到电脑/重命名…/复制路径/删除…', items);
   await ev(`closeMenu(); 1`);
-  await rclick(...Object.values(JSON.parse(await ev(`JSON.stringify((() => { const r = document.querySelector('dialog.files .fc-row.dir').getBoundingClientRect(); return { x: r.left + 80, y: r.top + r.height / 2 }; })())`))));
+  await rclick(...Object.values(JSON.parse(await ev(`JSON.stringify((() => { const r = document.querySelector('dialog.files .fb-row.dir').getBoundingClientRect(); return { x: r.left + 80, y: r.top + r.height / 2 }; })())`))));
   items = await menuItems();
   check('文件夹：打开', items.startsWith('打开/'), items);
   await ev(`closeMenu(); 1`);

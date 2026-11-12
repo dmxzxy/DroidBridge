@@ -53,6 +53,7 @@ class Viewer {
     this.fileInput = h('input', { type: 'file', multiple: true, hidden: true, onchange: () => { this.upload([...this.fileInput.files]); this.fileInput.value = ''; } });
     this.moreBtn = ib('more', t('更多'), () => this.moreMenu());
     this.logBtn = ib('logs', t('日志'), () => this.toggleLog());
+    this.filesBtn = ib('folder', t('文件'), () => this.toggleFiles());
     this.audioBtn = ib('headphones', t('转发声音'), () => this.toggleAudio());
     this.audioBtn.classList.toggle('on', this.audioOn);
     this.recBtn = ib('record', t('录制屏幕'), () => this.toggleRecord());
@@ -78,7 +79,7 @@ class Viewer {
           ib('power', t('电源键'), key(AKEY.POWER)), ib('volUp', t('音量 +'), key(AKEY.VOLUME_UP)), ib('volDown', t('音量 −'), key(AKEY.VOLUME_DOWN)),
           ib('rotate', t('旋转屏幕'), () => this.send({ t: 'cmd', name: 'rotate' })),
           h('div', { class: 'sep' }),
-          ib('camera', t('截取屏幕'), () => this.screenshot()), this.recBtn, this.kbBtn, this.audioBtn, this.logBtn, this.perfBtn, this.moreBtn)),
+          ib('camera', t('截取屏幕'), () => this.screenshot()), this.recBtn, this.kbBtn, this.audioBtn, this.logBtn, this.filesBtn, this.perfBtn, this.moreBtn)),
       this.vlog),
       this.fileInput);
     this.bindInput();
@@ -89,7 +90,8 @@ class Viewer {
   moreItems() {
     return [
       { icon: 'grid', label: t('应用管理…'), fn: () => appsDialog(this.host, this.dev) },
-      { icon: 'folder', label: t('文件管理…'), fn: () => filesDialog(this.host, this.dev) },
+      { icon: 'folder', label: t('文件管理…'), fn: () => this.toggleFiles(true) },
+      { icon: 'max', label: t('在新窗口中管理文件'), fn: () => filesDialog(this.host, this.dev) },
       '-',
       { icon: 'bell', label: t('下拉通知栏'), fn: () => this.send({ t: 'cmd', name: 'notif' }) },
       { icon: 'sliders', label: t('快捷设置'), fn: () => this.send({ t: 'cmd', name: 'settings' }) },
@@ -181,6 +183,7 @@ class Viewer {
     this.perfOn = false; this.closePerf();
     if (this.recording) this.stopRecord();
     if (this.log) this.log.destroy();
+    if (this.files) this.files.destroy();
     this.teardown();
     clearInterval(this.statTimer);
     if (document.fullscreenElement === this.root) document.exitFullscreen();
@@ -198,10 +201,23 @@ class Viewer {
 
   toggleLog(force) {
     const open = force === undefined ? !this.log : force;
+    if (open && this.files) this.toggleFiles(false);   // 侧栏同一时间只放一个
     if (open && !this.log) { this.log = new LogPanel(this); this.vlog.append(this.log.el); }
     if (!open && this.log) { this.log.destroy(); this.log = null; this.vlog.replaceChildren(); }
-    this.root.classList.toggle('with-log', !!this.log);
+    this.root.classList.toggle('with-log', !!(this.log || this.files));
     this.logBtn.classList.toggle('on', !!this.log);
+    this.fit();
+  }
+  toggleFiles(force) {
+    const open = force === undefined ? !this.files : force;
+    if (open && this.log) this.toggleLog(false);
+    if (open && !this.files) {
+      this.files = new FileBrowser(this.host, this.dev, { compact: true, onClose: () => this.toggleFiles(false) });
+      this.vlog.append(this.files.el);
+    }
+    if (!open && this.files) { this.files.destroy(); this.files = null; this.vlog.replaceChildren(); }
+    this.root.classList.toggle('with-log', !!(this.log || this.files));
+    this.filesBtn.classList.toggle('on', !!this.files);
     this.fit();
   }
 
@@ -211,7 +227,7 @@ class Viewer {
     if (!this.vw || !this.vh || isMobile()) { r.style.width = ''; this.vlog.style.width = ''; r.classList.remove('log-bottom'); return; }
     const avail = $('main').clientWidth - 32;
     const cw = Math.min(this.vw, (innerHeight - 150) * this.vw / this.vh);
-    if (!this.log) { r.classList.remove('log-bottom'); r.style.width = Math.round(Math.max(300, Math.min(cw + 46, avail))) + 'px'; return; }
+    if (!this.log && !this.files) { r.classList.remove('log-bottom'); r.style.width = Math.round(Math.max(300, Math.min(cw + 46, avail))) + 'px'; return; }
     const side = avail - (cw + 46);
     const portrait = this.vh >= this.vw;
     if (side >= 360 || portrait || avail - 46 - 400 >= cw * 0.7) {

@@ -56,6 +56,17 @@
     }
     if (u.pathname === '/api/apps') return json({ named: true, apps: APPS() });
     if (u.pathname === '/api/apps/action') return json({ ok: true, msg: LANG === 'en' ? 'Done' : '完成' });
+    if (u.pathname === '/api/files/preview') {
+      // 缩略图：用 canvas 画一张渐变图
+      const c = document.createElement('canvas'); c.width = c.height = 160; const g = c.getContext('2d');
+      const n = (u.searchParams.get('path') || '').length;
+      const gr = g.createLinearGradient(0, 0, 160, 160); gr.addColorStop(0, ['#1d3b7a', '#0b6e4f', '#5a2d82', '#b05a2c'][n % 4]); gr.addColorStop(1, ['#a8426b', '#1b4332', '#2a1b3d', '#7a3b1d'][n % 4]);
+      g.fillStyle = gr; g.fillRect(0, 0, 160, 160);
+      g.fillStyle = 'rgba(255,255,255,.5)'; g.beginPath(); g.arc(110, 50, 18, 0, 7); g.fill();
+      g.fillStyle = 'rgba(0,0,0,.25)'; g.beginPath(); g.moveTo(0, 160); g.lineTo(60, 80); g.lineTo(120, 160); g.fill();
+      const blob = await new Promise(r => c.toBlob(r, 'image/jpeg'));
+      return new Response(blob, { headers: { 'content-type': 'image/jpeg' } });
+    }
     if (u.pathname === '/api/files/list') {
       const p = post.path || '/sdcard';
       return json(FILES(p));
@@ -208,7 +219,8 @@
     if (S === 'add') peerDialog();
     if (S === 'perf') { openViewer(L, DEV.local[0]); setTimeout(() => [...viewers.values()][0].togglePerf(), 300); }
     if (S === 'update') { UPDATE = { current: '0.7.0', latest: '0.8.0', page: 'https://github.com/dmxzxy/DroidBridge/releases/tag/v0.8.0', supported: true }; updateDialog(); }
-    if (S === 'files') { openViewer(L, DEV.local[0]); setTimeout(() => filesDialog(L, DEV.local[0]), 300); }
+    if (S === 'files') { setTimeout(() => { filesDialog(L, DEV.local[0]); setTimeout(() => { const fb = document.querySelector('dialog.files .fb'); [...fb.querySelectorAll('.fb-row.dir')].find(r => r.innerText.includes('DCIM')).click(); setTimeout(() => [...fb.querySelectorAll('.fb-row.dir')].find(r => r.innerText.includes('Camera')).click(), 200); }, 300); }, 300); }
+    if (S === 'files-side') { openViewer(L, DEV.local[0]); setTimeout(() => { const v = [...viewers.values()][0]; v.toggleFiles(true); }, 500); }
     if (S === 'apps') { openViewer(L, DEV.local[0]); setTimeout(() => appsDialog(L, DEV.local[0]), 300); }
     if (S === 'batch') setTimeout(() => {
       batchInstallDialog(new File([new Uint8Array(23 * 1048576)], 'example-game-2.4.1.apk'));
