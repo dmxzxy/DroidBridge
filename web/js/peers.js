@@ -2,15 +2,6 @@
 // 由 web/index.html 拆分而来；经典脚本，按 index.html 中的顺序加载，共享全局作用域。
 'use strict';
 
-async function addFound(f) {
-  if (f.auth) return peerDialog({ addr: f.addr, name: f.name, prefill: true, auth: true });
-  try {
-    const res = await api('/api/peers', { method: 'POST', body: JSON.stringify({ addr: f.addr, name: '' }) });
-    toast(t('已添加 ') + res.name, { kind: 'ok' });
-    refreshAll();
-  } catch (e) { toast(e.message, { kind: 'bad', ms: 4000 }); }
-}
-
 function hostMenu(anchor, r) { menu(anchor, hostItems(r)); }
 function hostItems(r) {
   return [
@@ -66,6 +57,55 @@ function peerDialog(p, opts = {}) {
   tokenLink.hidden = editing || showToken;
   const runBox = h('div', { class: 'grid-b' }, nameField, h('div', {}, tokenLink), tokenField);
 
+  // ---- 局域网发现：只在“已运行”模式下添加时显示，点一下就能添加 ----
+  const foundList = h('div', { class: 'pf-list' });
+  const foundState = h('span', { class: 'pf-state' });
+  const foundBox = h('div', { class: 'pf' }, h('div', { class: 'pf-h' }, h('span', {}, t('在局域网中发现')), foundState), foundList);
+  const manualTitle = h('div', { class: 'pf-or' }, t('或手动输入地址'));
+  let foundEnabled = true, searchedAt = Date.now(), adding = null;
+  function renderFound() {
+    foundState.replaceChildren(foundEnabled && FOUND.length ? '' : foundEnabled ? h('span', { class: 'spin sm' }) : '');
+    if (!foundEnabled) { foundList.replaceChildren(h('div', { class: 'pf-empty' }, t('本机未开启局域网发现，请手动输入地址'))); return; }
+    if (!FOUND.length) {
+      foundList.replaceChildren(h('div', { class: 'pf-empty' }, Date.now() - searchedAt < 6000
+        ? t('正在搜索局域网内运行 DroidBridge 的电脑…')
+        : t('暂未发现其他电脑。对方需要运行 DroidBridge 并在同一网络，也可以在下面手动输入地址。')));
+      return;
+    }
+    foundList.replaceChildren(...FOUND.map(f => {
+      const busy = adding === f.addr;
+      return ctxMenu(h('div', { class: 'found', title: f.addr, onclick: () => pickFound(f) },
+        h('span', { class: 'hn' }, f.name), h('span', { class: 'meta' }, f.addr),
+        f.auth ? h('span', { class: 'lock', title: t('需要访问令牌') }, t('需令牌')) : null,
+        busy ? h('span', { class: 'spin sm' }) : h('button', { class: 'btn sm', type: 'button', onclick: e => { e.stopPropagation(); pickFound(f); } }, t('添加'))), () => [
+        { icon: 'plus', label: t('添加'), fn: () => pickFound(f) },
+        { icon: 'copy', label: t('复制地址'), fn: () => copyText(f.addr) },
+      ]);
+    }));
+  }
+  async function pickFound(f) {
+    if (adding) return;
+    err.textContent = '';
+    // 对方设置了访问令牌：填好地址，等用户输入令牌
+    if (f.auth) { addr.value = f.addr; name.value = name.value || f.name; tokenLink.hidden = true; tokenField.hidden = false; token.focus(); return; }
+    adding = f.addr; renderFound();
+    try {
+      const res = await api('/api/peers', { method: 'POST', body: JSON.stringify({ addr: f.addr, name: '' }) });
+      dlg.close();
+      toast(t('已添加 ') + res.name, { kind: 'ok' });
+      refreshAll();
+    } catch (e) { err.textContent = e.message; }
+    adding = null; if (dlg.open) renderFound();
+  }
+  async function pollFound() {
+    while (dlg.open) {
+      try { const r = await api('/api/discovered'); FOUND = r.list || []; foundEnabled = r.enabled !== false; } catch {}
+      if (!dlg.open) break;
+      renderFound(); renderSideFoot();
+      await new Promise(r => setTimeout(r, 2500));
+    }
+  }
+
   // ---- “SSH 安装”模式 ----
   const AUTHS = [['agent', t('本机密钥')], ['password', t('密码')], ['key', t('密钥文件')]];
   const authBtns = {};
@@ -89,7 +129,7 @@ function peerDialog(p, opts = {}) {
 
   const dlg = dialog({
     title: editing ? t('编辑远程电脑') : opts.install ? t('通过 SSH 重新安装') : t('添加远程电脑'),
-    body: editing ? [addrField, runBox, err] : [seg, intro, addrField, runBox, sshBox, err],
+    body: editing ? [addrField, runBox, err] : [seg, intro, foundBox, manualTitle, addrField, runBox, sshBox, err],
     actions: [cancel, ok], onsubmit: submit,
   });
   dlg.classList.add('wide');
@@ -99,6 +139,7 @@ function peerDialog(p, opts = {}) {
     for (const k in tabs) tabs[k].classList.toggle('on', k === m);
     const ssh = m === 'ssh';
     runBox.hidden = ssh; sshBox.hidden = !ssh;
+    foundBox.hidden = ssh; manualTitle.hidden = ssh;
     intro.textContent = ssh
       ? t('用 SSH 登录一台 macOS 或 Linux 电脑，自动安装 DroidBridge 并设为开机启动，然后添加到列表。Windows 电脑请在对方直接运行安装包。')
       : t('对方电脑已经运行着 DroidBridge（桌面版或服务版），并与本机在同一局域网。');
@@ -147,7 +188,7 @@ function peerDialog(p, opts = {}) {
   }
 
   if (editing) { ok.textContent = t('保存'); nameSlot.append(name); tokenSlot.append(token); token.placeholder = p.has_token ? t('已设置，留空保持不变') : ''; addrHint.textContent = t('端口默认 8730，可写成 IP:端口'); }
-  else setMode(mode);
+  else { setMode(mode); renderFound(); pollFound(); }
 
   // ---- SSH 安装：表单替换为步骤进度 ----
   async function runInstall() {

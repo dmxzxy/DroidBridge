@@ -384,7 +384,21 @@ const EN = {"分辨率":"Resolution",
   "更新中":"Updating",
   "对方 {0}，本机 {1}，点击更新":"It runs {0}, this computer {1}; click to update",
   "可更新":"Update",
-  "更新到 {0}":"Update to {0}"
+  "更新到 {0}":"Update to {0}",
+  "最小化":"Minimize",
+  "无线":"Wi-Fi",
+  "{0} 台设备":"{0} device(s)",
+  "{0} 台投屏中":"{0} mirroring",
+  "最大化":"Maximize",
+  "还原":"Restore",
+  "新版本 {0}":"Update {0}",
+  "在局域网中发现 {0} 台电脑":"{0} computer(s) found on your network",
+  "发现 {0} 台":"{0} found",
+  "需令牌":"Token",
+  "或手动输入地址":"Or enter an address",
+  "本机未开启局域网发现，请手动输入地址":"Network discovery is off on this computer; enter an address below",
+  "正在搜索局域网内运行 DroidBridge 的电脑…":"Looking for computers running DroidBridge on your network…",
+  "暂未发现其他电脑。对方需要运行 DroidBridge 并在同一网络，也可以在下面手动输入地址。":"No other computers found yet. They need to run DroidBridge on the same network; you can also enter an address below."
 };
 // 界面语言：?lang= > 手动选择 > 服务端语言（桌面版通过 ?lang= 传入）> 浏览器语言
 let LANG = (() => {

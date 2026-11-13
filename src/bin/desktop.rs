@@ -6,8 +6,8 @@
 use droidbridge::{tr, Config, StartError};
 use tao::dpi::LogicalSize;
 use tao::event::{Event, WindowEvent};
-use tao::event_loop::{ControlFlow, EventLoop};
-use tao::window::{Icon, WindowBuilder};
+use tao::event_loop::{ControlFlow, EventLoopBuilder};
+use tao::window::{Icon, ResizeDirection, WindowBuilder};
 use wry::{NewWindowResponse, WebContext, WebViewBuilder};
 
 fn main() {
@@ -68,19 +68,71 @@ async fn launch(cfg: Config, args: Vec<String>) -> Result<String, String> {
     }
 }
 
+/// 网页标题栏发来的窗口操作（window.ipc.postMessage）
+#[derive(Debug)]
+enum WinCmd {
+    Drag,
+    Minimize,
+    ToggleMaximize,
+    Close,
+    Resize(ResizeDirection),
+}
+
+impl WinCmd {
+    fn parse(s: &str) -> Option<Self> {
+        Some(match s {
+            "drag" => Self::Drag,
+            "min" => Self::Minimize,
+            "max" => Self::ToggleMaximize,
+            "close" => Self::Close,
+            _ => Self::Resize(match s.strip_prefix("resize:")? {
+                "n" => ResizeDirection::North,
+                "s" => ResizeDirection::South,
+                "e" => ResizeDirection::East,
+                "w" => ResizeDirection::West,
+                "ne" => ResizeDirection::NorthEast,
+                "nw" => ResizeDirection::NorthWest,
+                "se" => ResizeDirection::SouthEast,
+                "sw" => ResizeDirection::SouthWest,
+                _ => return None,
+            }),
+        })
+    }
+}
+
+/// 网页据此决定标题栏样式：mac 保留系统红绿灯按钮，其他平台由网页绘制最小化 / 最大化 / 关闭
+const CHROME: &str = if cfg!(target_os = "macos") { "mac" } else if cfg!(windows) { "win" } else { "linux" };
+
 fn run_window(target: Result<String, String>, data_dir: &std::path::Path) -> Result<(), String> {
-    let event_loop = EventLoop::new();
+    let event_loop = EventLoopBuilder::<WinCmd>::with_user_event().build();
     #[cfg(target_os = "macos")]
     let _menu = mac_menu();
 
-    let window = WindowBuilder::new()
+    // 正常启动时使用网页绘制的标题栏；启动失败的错误页保留系统标题栏，方便关闭窗口
+    let custom = target.is_ok();
+    let builder = WindowBuilder::new()
         .with_title("DroidBridge")
         .with_inner_size(LogicalSize::new(1280.0, 820.0))
         .with_min_inner_size(LogicalSize::new(640.0, 480.0))
-        .with_window_icon(app_icon())
-        .build(&event_loop)
-        .map_err(|e| e.to_string())?;
+        .with_window_icon(app_icon());
+    #[cfg(target_os = "macos")]
+    let builder = {
+        use tao::platform::macos::WindowBuilderExtMacOS;
+        builder
+            .with_titlebar_transparent(custom)
+            .with_title_hidden(custom)
+            .with_fullsize_content_view(custom)
+    };
+    #[cfg(not(target_os = "macos"))]
+    let builder = builder.with_decorations(!custom);
+    #[cfg(windows)]
+    let builder = {
+        use tao::platform::windows::WindowBuilderExtWindows;
+        builder.with_undecorated_shadow(true)
+    };
+    let window = builder.build(&event_loop).map_err(|e| e.to_string())?;
 
+    let proxy = event_loop.create_proxy();
     let mut ctx = WebContext::new(Some(data_dir.join("webview")));
     let builder = WebViewBuilder::new_with_web_context(&mut ctx)
         .with_background_color((15, 17, 21, 255))
@@ -88,6 +140,17 @@ fn run_window(target: Result<String, String>, data_dir: &std::path::Path) -> Res
             open_external(&url);
             NewWindowResponse::Deny
         });
+    let builder = if custom {
+        builder
+            .with_initialization_script(format!("window.__DB_CHROME={CHROME:?};"))
+            .with_ipc_handler(move |req| {
+                if let Some(cmd) = WinCmd::parse(req.body()) {
+                    let _ = proxy.send_event(cmd);
+                }
+            })
+    } else {
+        builder
+    };
     #[cfg(windows)]
     let builder = {
         use wry::WebViewBuilderExtWindows;
@@ -123,11 +186,36 @@ fn run_window(target: Result<String, String>, data_dir: &std::path::Path) -> Res
         }
     })?;
 
+    let mut last_state = (false, true);
     event_loop.run(move |event, _, control_flow| {
-        let _keep = (&webview, &ctx, &window);
+        let _keep = (&webview, &ctx);
         *control_flow = ControlFlow::Wait;
-        if let Event::WindowEvent { event: WindowEvent::CloseRequested, .. } = event {
-            *control_flow = ControlFlow::Exit;
+        match event {
+            Event::WindowEvent { event: WindowEvent::CloseRequested, .. } | Event::UserEvent(WinCmd::Close) => {
+                *control_flow = ControlFlow::Exit;
+            }
+            Event::UserEvent(WinCmd::Drag) => {
+                let _ = window.drag_window();
+            }
+            Event::UserEvent(WinCmd::Minimize) => window.set_minimized(true),
+            Event::UserEvent(WinCmd::ToggleMaximize) => window.set_maximized(!window.is_maximized()),
+            Event::UserEvent(WinCmd::Resize(dir)) => {
+                if !window.is_maximized() {
+                    let _ = window.drag_resize_window(dir);
+                }
+            }
+            // 把最大化 / 焦点状态告诉网页：切换“还原”图标、标题栏变暗
+            Event::WindowEvent { event: WindowEvent::Resized(_) | WindowEvent::Focused(_), .. } if custom => {
+                let state = (window.is_maximized(), window.is_focused());
+                if state != last_state {
+                    last_state = state;
+                    let _ = webview.evaluate_script(&format!(
+                        "window.__dbWinState&&window.__dbWinState({{max:{},focus:{}}})",
+                        state.0, state.1
+                    ));
+                }
+            }
+            _ => {}
         }
     });
 }

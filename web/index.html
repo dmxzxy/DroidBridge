@@ -7,6 +7,7 @@
 <link rel="stylesheet" href="app.css">
 </head>
 <body>
+<header class="titlebar" id="titlebar" hidden></header>
 <div class="topbar">
   <button class="ib back" id="mBack"></button>
   <span class="logo" id="mLogo"></span><span id="mTitle">DroidBridge</span>
@@ -17,6 +18,7 @@
   <div class="brand"><span class="logo" id="logo"></span>DroidBridge<button class="ib" id="batch"></button><button class="ib" id="gallery"></button><button class="ib" id="gear"></button></div>
   <div id="noticeSide"></div>
   <div class="lists" id="lists"></div>
+  <div class="side-foot" id="sideFoot"></div>
 </aside>
 <main>
   <div id="notice"></div>
@@ -36,6 +38,7 @@
 <script src="js/gallery.js"></script>
 <script src="js/files.js"></script>
 <script src="js/update.js"></script>
+<script src="js/titlebar.js"></script>
 <script src="js/contextmenu.js"></script>
 <!-- 初始化脚本（必须最后加载） -->
 <script>
@@ -50,6 +53,7 @@ $('#mGear').replaceWith(ib('gear', t('设置'), settingsDialog));
 $('#mGallery').replaceWith(ib('images', t('相册'), () => openGallery(), 'gear'));
 $('#mBack').innerHTML = svg('chevLeft');
 $('#mBack').onclick = () => document.body.classList.remove('viewing');
+setupTitlebar();
 $('#placeholder').append(h('span', { html: svg('phone') }).firstChild, h('div', {}, t('选择设备开始投屏')), t('设备需开启 USB 调试并连接到电脑'));
 addEventListener('resize', () => { for (const v of viewers.values()) v.fit(); });
 addEventListener('dragover', e => e.preventDefault());
@@ -60,6 +64,7 @@ addEventListener('beforeunload', () => { for (const v of viewers.values()) if (v
   try {
     INFO = await api('/api/info');
     document.title = 'DroidBridge · ' + INFO.name;
+    setTitlebarVersion();
   } catch (e) { toast(t('无法连接 DroidBridge：') + e.message, { kind: 'bad', ms: 5000 }); }
   if (!window.VideoDecoder || !isSecureContext) showNotice();
   await refreshAll();
@@ -69,7 +74,11 @@ addEventListener('beforeunload', () => { for (const v of viewers.values()) if (v
     if (hst) openViewer(hst, (hst.devices || []).find(d => d.serial === serial) || { serial, model: '', state: 'device' });
   }
   setInterval(() => { if (!document.hidden) refreshAll(); }, 4000);
-  if (isLocalHost()) checkUpdate();
+  if (isLocalHost()) {
+    checkUpdate();
+    // 一直开着的窗口也能收到新版本提示：每 6 小时再检查一次
+    setInterval(() => { if (!(UPDATE && UPDATE.newer)) checkUpdate(); }, 6 * 3600e3);
+  }
 })();
 </script>
 </body>

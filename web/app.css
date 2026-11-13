@@ -49,13 +49,28 @@ aside{width:252px;flex:none;height:100vh;position:sticky;top:0;display:flex;flex
 .sec:first-child{margin-top:4px}
 .sec .ib{margin-left:auto;width:24px;height:24px}
 .sec .ib svg{width:15px;height:15px}
-.host{display:flex;align-items:center;gap:6px;height:30px;margin-top:4px;padding:0 4px 0 8px;font-size:12px}
-.host .hn{color:var(--sub);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:60%}
-.host .meta{color:var(--faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;min-width:0}
-.host .meta.err{color:var(--bad)}
-.host .ib{width:24px;height:24px;opacity:0}
-.host:hover .ib,.host .ib[aria-expanded=true]{opacity:1}
-@media (hover:none){.host .ib{opacity:1}}
+.grp{padding-bottom:6px}
+.grp+.grp{margin-top:4px;padding-top:6px;border-top:1px solid var(--line)}
+.lists>.grp:first-child{margin-top:4px}
+.host{position:relative;display:flex;align-items:center;gap:8px;min-height:42px;padding:4px 4px 4px 2px;border-radius:6px;cursor:pointer;user-select:none}
+.host:hover{background:var(--hover)}
+.host .chev{flex:none;display:grid;place-items:center;width:14px;color:var(--faint);transition:transform .15s}
+.host .chev svg{width:13px;height:13px}
+.grp.folded .host .chev{transform:rotate(-90deg)}
+.host .hi{flex:none;display:grid;place-items:center;width:28px;height:28px;border-radius:7px;background:var(--active);color:var(--accent)}
+.host .hi svg{width:16px;height:16px}
+.host .hi.err{background:rgba(229,83,75,.12);color:var(--bad)}
+.host .t{flex:1;min-width:0;line-height:1.35}
+.host b{display:block;font-weight:600;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.host .sub{display:flex;align-items:center;gap:6px;min-width:0}
+.host small{display:block;min-width:0;font-size:11px;color:var(--faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.host small.err{color:var(--bad)}
+.host .sub .upd{height:16px;padding:0 6px;border-radius:8px;font-size:10px}
+.host .acts{position:absolute;top:0;bottom:0;right:0;display:none;align-items:center;gap:2px;padding:0 4px 0 18px;border-radius:0 6px 6px 0;background:linear-gradient(90deg,transparent,var(--hover) 18px),linear-gradient(90deg,transparent,var(--side) 18px)}
+.host:hover .acts,.host.ctx-on .acts,.host:has(.ib[aria-expanded=true]) .acts{display:flex}
+@media (hover:none){.host .acts{position:static;display:flex;background:none;padding:0}}
+.host .ib{width:24px;height:24px;flex:none}
+.grp>.dev,.grp>.empty{margin-left:16px}
 .dev{position:relative;display:flex;align-items:center;gap:10px;padding:6px 8px;border-radius:6px;cursor:pointer;user-select:none}
 .dev:hover{background:var(--hover)}
 .dev.open{background:var(--active)}
@@ -328,7 +343,26 @@ dialog.update .dlg-b{gap:10px}
 .host .upd{flex:none;height:20px;padding:0 7px;border:0;border-radius:10px;background:var(--active);color:var(--accent);font-size:11px;font-weight:600;cursor:pointer;display:inline-flex;align-items:center;gap:4px}
 .host .upd:hover{filter:brightness(1.15)}
 .host .upd.busy{background:none;color:var(--faint);cursor:default;font-weight:400}
-.found-t{margin:10px 0 2px;padding:0 8px;color:var(--faint);font-size:11px}
+.found-n{flex:none;height:18px;padding:0 7px;border-radius:9px;background:var(--active);color:var(--accent);font-size:11px;line-height:18px;font-weight:600}
+/* 侧栏底部：添加远程电脑 */
+.side-foot{flex:none;padding:8px;border-top:1px solid var(--line)}
+.side-foot:empty{display:none}
+.add-peer{display:flex;align-items:center;gap:8px;width:100%;height:34px;padding:0 8px 0 10px;border:1px dashed var(--line2);border-radius:8px;background:none;color:var(--sub);font-size:12px}
+.add-peer:hover{background:var(--hover);color:var(--text);border-color:var(--accent)}
+.add-peer svg{width:15px;height:15px}
+.add-peer .t{flex:1;min-width:0;text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* 添加窗口里的局域网发现 */
+.pf{border:1px solid var(--line);border-radius:8px;background:var(--surface);overflow:hidden}
+.pf[hidden],.pf-or[hidden]{display:none}
+.pf-h{display:flex;align-items:center;gap:8px;height:30px;padding:0 10px;border-bottom:1px solid var(--line);color:var(--faint);font-size:11px;font-weight:600;letter-spacing:.04em}
+.pf-state{margin-left:auto;display:flex}
+.pf-list{max-height:176px;overflow:auto;padding:4px}
+.pf-list .found{height:38px;margin:0;border:0;padding:0 6px 0 8px}
+.pf-list .found .hn{color:var(--text);font-weight:500}
+.found .lock{flex:none;color:var(--warn);font-size:11px}
+.pf-empty{padding:10px 8px;color:var(--faint);font-size:12px;line-height:1.6}
+.pf-or{margin-bottom:-6px;color:var(--faint);font-size:11px}
+.btn.sm{height:26px;padding:0 10px;font-size:12px;flex:none}
 .found{display:flex;align-items:center;gap:6px;height:30px;padding:0 4px 0 8px;border-radius:6px;font-size:12px;cursor:pointer;border:1px dashed var(--line2);margin-top:4px}
 .found:hover{background:var(--hover)}
 .found .hn{color:var(--sub);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:55%}
@@ -415,6 +449,46 @@ dialog.gallery .dlg-d{flex:none}
 /* 顶栏（仅窄屏） */
 .topbar{display:none}
 
+/* 桌面版自定义标题栏（仅桌面客户端） */
+.titlebar{display:none}
+body.has-tb{--tb-h:36px;padding-top:var(--tb-h)}
+body.has-tb .titlebar{position:fixed;top:0;left:0;right:0;z-index:40;display:flex;align-items:center;gap:6px;height:var(--tb-h);padding-left:12px;background:var(--side);border-bottom:1px solid var(--line);user-select:none;-webkit-user-select:none;cursor:default}
+body.tb-mac .titlebar{padding-left:80px;padding-right:8px}
+body.has-tb aside{height:calc(100vh - var(--tb-h));top:var(--tb-h)}
+body.has-tb aside .brand{display:none}
+body.has-tb aside .lists{padding-top:6px}
+body.has-tb main{min-height:calc(100vh - var(--tb-h))}
+body.has-tb .screen canvas{max-height:calc(100vh - 150px - var(--tb-h))}
+.tb-brand{display:flex;align-items:center;gap:7px;margin-right:2px;font-weight:600;font-size:13px}
+.tb-brand .logo{color:var(--accent)}
+.tb-brand .logo svg{width:16px;height:16px}
+.tb-ver{display:flex;align-items:center;gap:6px;height:22px;padding:0 8px;border:0;border-radius:11px;background:none;color:var(--faint);font:11px Consolas,"SF Mono",Menlo,monospace}
+.tb-ver:hover{background:var(--hover);color:var(--sub)}
+.tb-ver:disabled{cursor:default;background:none}
+.tb-upd{display:flex;align-items:center;gap:6px;height:22px;padding:0 9px;border:0;border-radius:11px;background:var(--active);color:var(--accent);font-size:11px;font-weight:600}
+.tb-upd:hover{filter:brightness(1.15)}
+.tb-upd .dot{background:var(--accent);animation:aipulse 1.6s ease-in-out infinite}
+.tb-ver[hidden],.tb-upd[hidden]{display:none}
+.tb-fill{flex:1;align-self:stretch}
+.tb-tools{display:flex;gap:2px}
+.tb-tools .ib{width:30px;height:28px}
+.tb-win{display:flex;align-self:stretch;margin-left:6px}
+.tb-w{width:46px;padding:0;border:0;background:none;color:var(--sub);display:grid;place-items:center}
+.tb-w svg{width:16px;height:16px;stroke-width:1.3}
+.tb-w:hover{background:var(--hover);color:var(--text)}
+.tb-w.close:hover{background:#e81123;color:#fff}
+body.win-blur .tb-brand,body.win-blur .tb-w{opacity:.55}
+.tb-edge{position:fixed;z-index:45}
+.tb-edge.n{top:0;left:6px;right:6px;height:4px;cursor:ns-resize}
+.tb-edge.s{bottom:0;left:6px;right:6px;height:4px;cursor:ns-resize}
+.tb-edge.e{top:6px;bottom:6px;right:0;width:4px;cursor:ew-resize}
+.tb-edge.w{top:6px;bottom:6px;left:0;width:4px;cursor:ew-resize}
+.tb-edge.nw{top:0;left:0;width:6px;height:6px;cursor:nwse-resize}
+.tb-edge.ne{top:0;right:0;width:6px;height:6px;cursor:nesw-resize}
+.tb-edge.sw{bottom:0;left:0;width:6px;height:6px;cursor:nesw-resize}
+.tb-edge.se{bottom:0;right:0;width:6px;height:6px;cursor:nwse-resize}
+body.win-max .tb-edge{display:none}
+
 @media (max-width:720px){
   body{display:block}
   .topbar{display:flex;align-items:center;gap:6px;position:sticky;top:0;z-index:10;height:48px;padding:0 8px 0 12px;background:var(--side);border-bottom:1px solid var(--line);font-weight:600;font-size:14px}
@@ -439,4 +513,10 @@ dialog.gallery .dlg-d{flex:none}
   .vtools .sep{width:1px;height:18px;margin:0 2px}
   .screen canvas{max-height:calc(100dvh - 190px)}
   .notice{margin:8px 8px 0}
+  body.has-tb .topbar{display:none}
+  body.has-tb aside{height:auto}
+  body.has-tb main{min-height:0}
+  body.has-tb.viewing .topbar{display:flex;top:var(--tb-h)}
+  body.has-tb .topbar>:not(.back){display:none}
+  body.has-tb .screen canvas{max-height:calc(100dvh - 190px - var(--tb-h))}
 }

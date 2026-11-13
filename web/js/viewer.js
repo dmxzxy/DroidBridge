@@ -226,7 +226,7 @@ class Viewer {
     const r = this.root;
     if (!this.vw || !this.vh || isMobile()) { r.style.width = ''; this.vlog.style.width = ''; r.classList.remove('log-bottom'); return; }
     const avail = $('main').clientWidth - 32;
-    const cw = Math.min(this.vw, (innerHeight - 150) * this.vw / this.vh);
+    const cw = Math.min(this.vw, (innerHeight - 150 - (hasTitlebar() ? 36 : 0)) * this.vw / this.vh);
     if (!this.log && !this.files) { r.classList.remove('log-bottom'); r.style.width = Math.round(Math.max(300, Math.min(cw + 46, avail))) + 'px'; return; }
     const side = avail - (cw + 46);
     const portrait = this.vh >= this.vw;

@@ -151,11 +151,14 @@ const check = (l, ok, d) => { console.log((ok ? '✓ ' : '✗ ') + l + (d ? '  '
   check('未投屏的设备：开始投屏', items.startsWith('开始投屏/'), items);
   items = await rmenu('.dev.na');
   check('离线 / 未授权设备：只有复制序列号', items === '复制序列号', items);
-  items = await rmenu('.host');
+  items = await rmenu('.host:not(.local)');
   check('远程电脑：与⋯菜单相同并可复制地址', items.includes('编辑') && items.includes('复制地址') && items.includes('移除'), items);
-  items = await rmenu('.found');
-  check('局域网发现的电脑：添加/复制地址', items === '添加/复制地址', items);
-  items = await rmenu('.sec');
+  await ev(`document.querySelectorAll('dialog[open]').forEach(d => d.close()); closeMenu(); peerDialog(); 1`);
+  for (let i = 0; i < 20 && !(await ev(`!!document.querySelector('dialog .found')`)); i++) await sleep(150);
+  check('侧栏不再平铺局域网发现的电脑', (await ev(`!document.querySelector('#lists .found')`)) === true);
+  items = await rmenu('dialog .found', 0.3, true);
+  check('添加窗口里局域网发现的电脑：添加/复制地址', items === '添加/复制地址', items);
+  items = await rmenu('.host.local');
   check('“本机”标题：无线连接/刷新', items === '无线连接设备…/刷新', items);
   items = await rmenu('.vhead', 0.15);
   check('投屏标题栏：更多菜单', items.startsWith('应用管理…/文件管理…') && items.endsWith('关闭投屏'), items);

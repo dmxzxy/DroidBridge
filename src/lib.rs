@@ -56,6 +56,7 @@ const ASSETS: &[(&str, &str, &str)] = &[
     ("js/gallery.js", "text/javascript; charset=utf-8", include_str!("../web/js/gallery.js")),
     ("js/files.js", "text/javascript; charset=utf-8", include_str!("../web/js/files.js")),
     ("js/update.js", "text/javascript; charset=utf-8", include_str!("../web/js/update.js")),
+    ("js/titlebar.js", "text/javascript; charset=utf-8", include_str!("../web/js/titlebar.js")),
     ("js/contextmenu.js", "text/javascript; charset=utf-8", include_str!("../web/js/contextmenu.js")),
 ];
 

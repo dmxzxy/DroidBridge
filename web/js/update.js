@@ -21,11 +21,12 @@ async function checkUpdate(silent = true) {
 }
 
 function showUpdateBadge() {
+  if (showTitlebarUpdate()) return;
   if (updateBadge || !UPDATE || !UPDATE.newer) return;
   updateBadge = h('button', { class: 'upd local', type: 'button', title: t('有新版本 {0}，点击查看', UPDATE.latest), onclick: () => updateDialog() }, t('新版本'));
   const brand = document.querySelector('.brand');
-  const gear = $('#gear');
-  if (brand && gear) brand.insertBefore(updateBadge, gear);
+  const first = brand && brand.querySelector('.ib');
+  if (brand && first) brand.insertBefore(updateBadge, first);
 }
 
 function updateDialog() {
@@ -76,8 +77,9 @@ async function retryConnect() {
   }
 }
 
-/** 设置页里的一项：版本号 + 检查更新 */
+/** 设置页里的一项：版本号 + 检查更新（桌面版放在标题栏，不再出现在设置里） */
 function updateSettingRow() {
+  if (hasTitlebar()) return null;
   const ver = h('span', { class: 'v mono' }, 'v' + (INFO ? INFO.version : '?'));
   const btn = h('button', { class: 'btn', type: 'button' }, t('检查更新'));
   btn.onclick = async () => {

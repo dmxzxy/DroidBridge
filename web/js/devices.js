@@ -86,18 +86,29 @@ function findViewer(hst, dev) {
   return null;
 }
 
+/** 设备行副标题：连接方式 + 简短标识（无线设备的 mDNS 名称太长，只显示“无线”） */
+function devSub(d) {
+  if (!d.wireless) return 'USB · ' + d.serial;
+  return d.serial.includes('._adb-tls') ? t('无线') : t('无线') + ' · ' + d.serial.replace(/:5555$/, '');
+}
+
 function devRows(hst, emptyEl) {
   if (!hst.loaded) return [h('div', { class: 'empty' }, t('正在读取…'))];
-  if (hst.error) return [h('div', { class: 'empty err' }, hst.error)];
+  // 详细错误放在标题行的提示里，这里只给出处理入口
+  if (hst.error) return [h('div', { class: 'empty' },
+    h('button', { class: 'linkbtn', type: 'button', onclick: async () => { await refreshHost(hst); renderSide(); if (hst.error) toast(hst.error, { kind: 'bad', ms: 5000 }); } }, t('重试')),
+    hst.remote ? [' · ', h('button', { class: 'linkbtn', type: 'button', onclick: () => peerDialog(hst) }, t('编辑'))] : null)];
   if (!hst.devices.length) return [emptyEl];
-  return hst.devices.map(d => {
+  // 可用的设备排在前面，未授权 / 离线的放后面
+  const list = [...hst.devices].sort((a, b) => (a.state !== 'device') - (b.state !== 'device'));
+  return list.map(d => {
     const ready = d.state === 'device';
+    const open = [...viewers.values()].some(v => v.host.id === hst.id && v.dev.serial === d.serial);
     return ctxMenu(h('div', {
-      class: 'dev' + ([...viewers.values()].some(v => v.host.id === hst.id && v.dev.serial === d.serial) ? ' open' : '') + (ready ? '' : ' na'), title: d.serial,
+      class: 'dev' + (open ? ' open' : '') + (ready ? '' : ' na'), title: d.serial,
       onclick: () => ready ? openViewer(hst, d) : toast(STATE_HINT[d.state] || (t('设备状态：') + d.state)),
     }, h('span', { class: 'dot ' + (ready ? 'ok' : 'warn') }),
-      h('div', { class: 't' }, h('b', {}, d.model || d.serial), d.model ? h('small', {}, d.serial) : null),
-      d.wireless ? h('span', { class: 'wl', title: t('无线连接'), html: svg('wifi') }) : null,
+      h('div', { class: 't' }, h('b', {}, d.model || d.serial), h('small', {}, ready ? devSub(d) : (STATE_HINT[d.state] || d.serial))),
       ready ? null : h('span', { class: 'st' }, STATE_TEXT[d.state] || d.state),
       ready ? ib('more', t('更多'), e => { e.stopPropagation(); deviceMenu(e.currentTarget, hst, d); }) : null), () => deviceItems(hst, d));
   });
@@ -131,37 +142,53 @@ function renderSide() {
   if (openMenu && $('#lists').contains(openMenu.anchor)) { renderPending = true; return; }
   renderPending = false;
   const local = hosts.get('local');
-  const out = [ctxMenu(h('div', { class: 'sec' }, t('本机'), local ? ib('wifi', t('无线连接设备'), () => wirelessDialog(local)) : null), () => [
-    local ? { icon: 'wifi', label: t('无线连接设备…'), fn: () => wirelessDialog(local) } : null,
-    { icon: 'refresh', label: t('刷新'), fn: async () => { if (local) { await refreshHost(local); renderSide(); } } },
-  ])];
-  if (local) out.push(...devRows(local, h('div', { class: 'empty' }, t('未检测到设备 · '), h('a', { href: '#', onclick: e => { e.preventDefault(); helpDialog(); } }, t('如何连接')))));
-  out.push(ctxMenu(h('div', { class: 'sec' }, t('远程电脑'), ib('plus', t('添加远程电脑'), () => peerDialog())), () => [
-    { icon: 'plus', label: t('添加远程电脑…'), fn: () => peerDialog() },
-    { icon: 'refresh', label: t('全部刷新'), fn: () => refreshAll() },
-  ]));
   const remotes = [...hosts.values()].filter(x => x.remote);
-  if (!remotes.length && !FOUND.length) out.push(h('div', { class: 'empty' }, t('添加局域网内运行 DroidBridge 的电脑')));
-  for (const r of remotes) {
-    const short = r.error ? (/令牌|token/i.test(r.error) ? t('令牌错误') : t('无法连接')) : null;
-    const upd = r.updating
-      ? h('span', { class: 'upd busy' }, h('span', { class: 'spin sm' }), t('更新中'))
-      : needsUpdate(r) ? h('button', { class: 'upd', type: 'button', title: t('对方 {0}，本机 {1}，点击更新', r.info.version, INFO.version), onclick: () => updatePeer(r) }, t('可更新')) : null;
-    out.push(ctxMenu(h('div', { class: 'host', title: r.addr + (r.info ? ' · v' + r.info.version : '') + (r.error ? '\n' + r.error : '') },
-      h('span', { class: 'hn' }, r.name),
-      h('span', { class: 'meta' + (short ? ' err' : '') }, short || r.addr),
-      upd,
-      ib('more', t('更多'), e => hostMenu(e.currentTarget, r))), () => hostItems(r)));
-    if (!r.error) out.push(...devRows(r, h('div', { class: 'empty' }, t('没有设备'))));
-  }
-  if (FOUND.length) {
-    out.push(h('div', { class: 'found-t' }, t('在局域网中发现')));
-    for (const f of FOUND) out.push(ctxMenu(h('div', { class: 'found', title: f.addr, onclick: () => addFound(f) },
-      h('span', { class: 'hn' }, f.name), h('span', { class: 'meta' }, f.addr),
-      ib('plus', t('添加'), e => { e.stopPropagation(); addFound(f); })), () => [
-      { icon: 'plus', label: t('添加'), fn: () => addFound(f) },
-      { icon: 'copy', label: t('复制地址'), fn: () => copyText(f.addr) },
-    ]));
-  }
+  const out = [];
+  if (local) out.push(hostGroup(local, h('div', { class: 'empty' }, t('未检测到设备 · '), h('a', { href: '#', onclick: e => { e.preventDefault(); helpDialog(); } }, t('如何连接')))));
+  for (const r of remotes) out.push(hostGroup(r, h('div', { class: 'empty' }, t('没有设备'))));
   $('#lists').replaceChildren(...out);
+  renderSideFoot();
+}
+
+/** 一台电脑一组：标题行（名称 + 设备数 / 状态，可折叠）+ 设备列表 */
+function hostGroup(hst, emptyEl) {
+  const local = !hst.remote;
+  const key = 'fold_' + hst.id;
+  const folded = pref.get(key, '0') === '1';
+  const devs = hst.devices || [];
+  const viewing = [...viewers.values()].filter(v => v.host.id === hst.id).length;
+  const short = hst.error ? (/令牌|token/i.test(hst.error) ? t('令牌错误') : t('无法连接')) : null;
+  const status = short || (!hst.loaded ? t('正在读取…') : !devs.length ? t('没有设备')
+    : t('{0} 台设备', devs.length) + (viewing ? ' · ' + t('{0} 台投屏中', viewing) : ''));
+  const upd = local ? null : hst.updating
+    ? h('span', { class: 'upd busy' }, h('span', { class: 'spin sm' }), t('更新中'))
+    : needsUpdate(hst) ? h('button', { class: 'upd', type: 'button', title: t('对方 {0}，本机 {1}，点击更新', hst.info.version, INFO.version), onclick: e => { e.stopPropagation(); updatePeer(hst); } }, t('可更新')) : null;
+  const tip = local ? (INFO ? INFO.name : '') : hst.name + '\n' + hst.addr + (hst.info ? ' · v' + hst.info.version : '') + (hst.error ? '\n' + hst.error : '');
+  const head = ctxMenu(h('div', {
+    class: 'host' + (local ? ' local' : ''), title: tip,
+    onclick: () => { pref.set(key, folded ? '0' : '1'); renderSide(); },
+  },
+    h('span', { class: 'chev', html: svg('chevDown') }),
+    h('span', { class: 'hi' + (short ? ' err' : ''), html: svg('monitor') }),
+    h('div', { class: 't' }, h('b', {}, local ? t('本机') : hst.name),
+      h('div', { class: 'sub' }, h('small', { class: short ? 'err' : '' }, status), upd)),
+    // 操作按钮悬停时浮在右侧，平时不占宽度，名称可以显示完整
+    h('div', { class: 'acts' },
+      hst.error ? null : ib('wifi', t('无线连接设备'), e => { e.stopPropagation(); wirelessDialog(hst); }),
+      local ? null : ib('more', t('更多'), e => { e.stopPropagation(); hostMenu(e.currentTarget, hst); }))),
+  () => local ? [
+    { icon: 'wifi', label: t('无线连接设备…'), fn: () => wirelessDialog(hst) },
+    { icon: 'refresh', label: t('刷新'), fn: async () => { await refreshHost(hst); renderSide(); } },
+  ] : hostItems(hst));
+  return h('div', { class: 'grp' + (folded ? ' folded' : '') }, head, folded ? null : devRows(hst, emptyEl));
+}
+
+/** 侧栏底部：添加远程电脑。局域网里发现的电脑放在添加窗口里，这里只提示数量 */
+function renderSideFoot() {
+  const foot = $('#sideFoot');
+  if (!foot) return;
+  const n = FOUND.length;
+  foot.replaceChildren(h('button', { class: 'add-peer', type: 'button', onclick: () => peerDialog() },
+    h('span', { html: svg('plus') }).firstChild, h('span', { class: 't' }, t('添加远程电脑')),
+    n ? h('span', { class: 'found-n', title: t('在局域网中发现 {0} 台电脑', n) }, t('发现 {0} 台', n)) : null));
 }
