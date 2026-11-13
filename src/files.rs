@@ -134,11 +134,14 @@ pub async fn list(st: &AppState, r: ListReq) -> Result<serde_json::Value, String
     let path = check_path(&r.path, true)?;
     // 一次 adb 调用：进入目录、一次 stat 读出所有项（含隐藏文件），再带上剩余空间
     let cmd = format!(
-        "cd '{path}' 2>/dev/null || {{ echo 'DroidBridge: cannot open'; exit 1; }}; stat -c '%F|%s|%Y|%n' -- * .[!.]* ..?* 2>/dev/null; echo '@@df'; df -k /sdcard 2>/dev/null | tail -1"
+        "if [ ! -e '{path}' ]; then echo '@@missing'; elif ! cd '{path}' 2>/dev/null; then echo '@@denied'; else stat -c '%F|%s|%Y|%n' -- * .[!.]* ..?* 2>/dev/null; echo '@@df'; df -k /sdcard 2>/dev/null | tail -1; fi; true"
     );
     let out = sh(st, &r.serial, &cmd, 30).await?;
-    if out.contains("DroidBridge: cannot open") {
-        return Err(tr!("无法打开 {path}", "Cannot open {path}"));
+    if out.contains("@@missing") {
+        return Err(tr!("文件夹不存在：{path}", "Folder not found: {path}"));
+    }
+    if out.contains("@@denied") {
+        return Err(tr!("没有权限打开：{path}（安卓 11 起应用的私有目录无法通过 adb 访问）", "Permission denied: {path} (since Android 11, app-private folders are not reachable over adb)"));
     }
     let (listing, df) = out.split_once("@@df").unwrap_or((out.as_str(), ""));
     let mut entries = parse_list(listing);

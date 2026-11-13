@@ -158,11 +158,20 @@ class FileBrowser {
     try {
       const r = await this.call('list', { path: p });
       if (seq !== this.loadSeq) return;               // 期间又打开了别的目录
+      this.opened = true;
       this.cache.set(r.path, r);
       if (this.cache.size > 60) this.cache.delete(this.cache.keys().next().value);
       this.show(r.path, r, keepSel || !!cached);
     } catch (e) {
       if (seq !== this.loadSeq) return;
+      this.cache.delete(p);
+      // 打开的是记住的 / 历史里的目录，而它已经被删掉或无权访问：往上退到能打开的目录
+      if (!this.opened && p !== '/sdcard') {
+        const up = p.replace(/\/[^/]+\/?$/, '') || '/sdcard';
+        toast(e.message, { kind: 'bad', ms: 4000 });
+        this.load(up.startsWith('/sdcard') || up.startsWith('/storage/emulated/0') ? up : '/sdcard');
+        return;
+      }
       if (cached) { toast(e.message, { kind: 'bad', ms: 4000 }); return; }
       this.list.replaceChildren(h('div', { class: 'fb-empty' }, h('span', {}, e.message), h('button', { class: 'btn', type: 'button', onclick: () => this.load(p, { force: true }) }, t('重试'))));
     } finally { if (seq === this.loadSeq) this.el.classList.remove('loading'); }

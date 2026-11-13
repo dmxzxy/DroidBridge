@@ -169,6 +169,13 @@ const check = (l, ok, d) => { console.log((ok ? '✓ ' : '✗ ') + l + (d !== un
   check('松开后提示消失', (await ev(`document.querySelector('.vlog .fb').classList.contains('dropping')`)) === false);
   fs.unlinkSync(tmpFile);
 
+  // 记住的目录已经不存在：自动退回上一级可用目录（模拟服务端返回“文件夹不存在”）
+  await ev(`[...viewers.values()][0].toggleFiles(false); localStorage.setItem('db_files_path_R5CT20ABCDE', '/sdcard/Download/gone'); 1`);
+  await ev(`(() => { const f = window.fetch; window.fetch = async (u, o) => { if (String(u).includes('/api/files/list') && JSON.parse(o.body).path === '/sdcard/Download/gone') return new Response(JSON.stringify({ error: '文件夹不存在：/sdcard/Download/gone' }), { status: 400, headers: { 'content-type': 'application/json' } }); return f(u, o); }; return 1; })()`);
+  await ev(`[...viewers.values()][0].toggleFiles(true); 1`);
+  for (let i = 0; i < 20; i++) { await sleep(200); if ((await ev(`[...viewers.values()][0].files.opened === true`)) === true) break; }
+  check('记住的目录不存在时退回上一级', (await ev(`[...viewers.values()][0].files.path`)) === '/sdcard/Download', await ev(`[...viewers.values()][0].files.path`));
+
   console.log(errs.length ? 'page errors: ' + errs.join(' | ') : 'page errors: none');
   console.log(fails ? `\n${fails} 项失败` : '\n全部通过');
   ws.close(); p.kill(); srv.close(); process.exit(fails ? 1 : 0);
