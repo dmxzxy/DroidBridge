@@ -1334,14 +1334,15 @@ fn tool_text(v: &Value) -> String {
 pub(crate) fn open_dir(dir: &Path) -> Result<(), String> {
     let _ = std::fs::create_dir_all(dir);
     let d = dir.to_string_lossy().to_string();
-    let res = if cfg!(windows) {
+    #[cfg(windows)]
+    let res = {
         use std::os::windows::process::CommandExt;
         std::process::Command::new("explorer").arg(&d).creation_flags(0x0800_0000).spawn()
-    } else if cfg!(target_os = "macos") {
-        std::process::Command::new("open").arg(&d).spawn()
-    } else {
-        std::process::Command::new("xdg-open").arg(&d).spawn()
     };
+    #[cfg(target_os = "macos")]
+    let res = std::process::Command::new("open").arg(&d).spawn();
+    #[cfg(not(any(windows, target_os = "macos")))]
+    let res = std::process::Command::new("xdg-open").arg(&d).spawn();
     res.map(|_| ()).map_err(|e| tr!("无法打开文件管理器：{e}", "Cannot open the file manager: {e}"))
 }
 
