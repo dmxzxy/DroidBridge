@@ -45,8 +45,8 @@
 <!-- 初始化脚本（必须最后加载） -->
 <script>
 // ---------------- 初始化 ----------------
-$('#logo').innerHTML = svg('phone');
-$('#mLogo').innerHTML = svg('phone');
+$('#logo').innerHTML = LOGO_SVG; $('#logo').classList.add('app');
+$('#mLogo').innerHTML = LOGO_SVG; $('#mLogo').classList.add('app');
 $('#gear').replaceWith(Object.assign(ib('gear', t('设置'), settingsDialog), { id: 'gear' }));
 $('#batch').replaceWith(ib('package', t('批量安装 APK'), () => batchInstallDialog()));
 $('#mBatch').replaceWith(ib('package', t('批量安装 APK'), () => batchInstallDialog()));

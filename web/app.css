@@ -104,6 +104,14 @@ main{flex:1;min-width:0;min-height:calc(100vh - var(--sb-h));padding:16px;displa
 .vhead .rec{color:var(--bad);font-size:12px;font-weight:600;flex:none;display:flex;align-items:center;gap:4px}
 .vhead .rec[hidden]{display:none}
 .vhead .rec::before{content:"";width:8px;height:8px;border-radius:50%;background:var(--bad);flex:none}
+/* 观看者标记：标题栏里的眼睛 + 人数（只有自己时隐藏） */
+.vhead .vwatch{display:inline-flex;align-items:center;gap:3px;flex:none;height:20px;padding:0 6px;border-radius:10px;background:var(--hover);color:var(--sub);font-size:11px;line-height:20px;font-variant-numeric:tabular-nums}
+.vhead .vwatch[hidden]{display:none}
+.vhead .vwatch .ico{display:flex}
+.vhead .vwatch svg{width:13px;height:13px}
+/* 别人正在操作：画面顶部的一条细提示，absolute 定位，不影响画面尺寸 */
+.ctlbar{position:absolute;left:0;right:0;top:0;z-index:3;padding:3px 10px;background:rgba(20,22,28,.72);color:#e8eaed;font-size:11px;line-height:1.5;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;pointer-events:none;-webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px)}
+.ctlbar[hidden]{display:none}
 .ib.rec{color:var(--bad)}
 .ib.rec:hover{color:var(--bad)}
 .vbody{display:flex}
@@ -345,6 +353,10 @@ dialog.apps{width:min(600px,calc(100vw - 32px))}
 .bi-d .r svg{width:14px;height:14px;flex:none}
 .dev .wl{color:var(--faint);flex:none;display:flex}
 .dev .wl svg{width:13px;height:13px}
+/* 侧栏设备行：别人也在看这个设备（眼睛 + 人数） */
+.dev .watch{display:inline-flex;align-items:center;gap:3px;flex:none;height:17px;padding:0 6px;border-radius:9px;background:var(--active);color:var(--accent);font-size:11px;line-height:17px;font-variant-numeric:tabular-nums}
+.dev .watch .ico{display:flex}
+.dev .watch svg{width:12px;height:12px}
 .brand .upd{margin-left:auto;margin-right:2px;height:20px;padding:0 7px;border:0;border-radius:10px;background:var(--active);color:var(--accent);font-size:11px;font-weight:600;cursor:pointer}
 .brand .upd+.ib{margin-left:0}
 .brand .ib{margin-left:2px}
@@ -477,6 +489,9 @@ body.has-tb .screen canvas{max-height:calc(100vh - 150px - var(--tb-h) - var(--s
 .tb-brand{display:flex;align-items:center;gap:7px;margin-right:2px;font-weight:600;font-size:13px}
 .tb-brand .logo{color:var(--accent)}
 .tb-brand .logo svg{width:16px;height:16px}
+/* 应用图标：黑白两色，跟随主题反色（浅色主题为黑底白线，深色主题为浅底深线） */
+.logo.app{color:var(--text) !important;display:inline-flex}
+.logo.app svg{--logo-fg:var(--bg)}
 .tb-ver{display:flex;align-items:center;gap:6px;height:22px;padding:0 8px;border:0;border-radius:11px;background:none;color:var(--faint);font:11px Consolas,"SF Mono",Menlo,monospace}
 .tb-ver:hover{background:var(--hover);color:var(--sub)}
 .tb-ver:disabled{cursor:default;background:none}
@@ -521,6 +536,10 @@ body.win-max .tb-edge{display:none}
   body.viewing aside{display:none}
   body.viewing main{display:flex}
   .viewer{width:100% !important}
+  .vhead{gap:6px}
+  .vhead .vwatch{height:18px;padding:0 5px;gap:2px;line-height:18px}
+  .vhead .vwatch svg{width:12px;height:12px}
+  .ctlbar{padding:2px 8px}
   .vbody{flex-direction:column}
   .vmain{flex-direction:column}
   .vlog{width:auto !important;height:45dvh;border-left:0;border-top:1px solid var(--line)}

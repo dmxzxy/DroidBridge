@@ -29,7 +29,7 @@ function setupTitlebar() {
       h('button', { class: 'tb-w close', type: 'button', title: t('关闭'), 'aria-label': t('关闭'), html: svg('wclose'), onclick: () => winCmd('close') })));
   }
   bar.replaceChildren(
-    h('div', { class: 'tb-brand' }, h('span', { class: 'logo', html: svg('phone') }), 'DroidBridge'),
+    h('div', { class: 'tb-brand' }, h('span', { class: 'logo app', html: LOGO_SVG }), 'DroidBridge'),
     tbVer, tbUpd,
     h('div', { class: 'tb-fill' }),
     tools, ...win);
@@ -47,6 +47,38 @@ function setupTitlebar() {
   for (const d of edges) {
     document.body.append(h('div', { class: 'tb-edge ' + d, onmousedown: e => { if (e.button === 0) { e.preventDefault(); winCmd('resize:' + d); } } }));
   }
+}
+
+/** 关闭窗口时的选择（桌面版启动时注入）：tray 最小化到托盘 / quit 退出 / ask 询问 */
+let CLOSE_PREF = window.__DB_CLOSE || 'ask';
+/** Rust 端在用户第一次关闭窗口（还没选过）时调用 */
+window.__dbAskClose = () => {
+  if (document.querySelector('dialog.close-ask')) return;
+  const remember = h('input', { type: 'checkbox' }); remember.checked = true;
+  let choice = null;
+  const dlg = dialog({
+    title: t('关闭窗口'),
+    desc: t('DroidBridge 可以在后台继续运行：其他电脑和浏览器仍能连接本机的设备，AI 工具也能继续使用。之后可在托盘图标里重新打开或退出。'),
+    body: [h('label', { class: 'check' }, remember, h('span', {}, t('记住我的选择（可在设置中修改）')))],
+    cls: 'close-ask',
+    actions: [h('button', { class: 'btn', type: 'button', onclick: () => { choice = 'quit'; dlg.close(); } }, t('退出 DroidBridge')),
+      h('button', { class: 'btn primary', type: 'submit' }, t('最小化到托盘'))],
+    onsubmit: () => { choice = 'tray'; dlg.close(); },
+  });
+  dlg.addEventListener('close', () => {
+    if (!choice) return;
+    if (remember.checked) CLOSE_PREF = choice;
+    winCmd('close:' + choice + (remember.checked ? ':save' : ''));
+  });
+};
+
+/** 设置里的“关闭窗口时”（只在桌面版显示） */
+function closePrefRow(row) {
+  if (!CHROME || !window.__DB_TRAY) return null;
+  const s = h('select', { class: 'select', 'aria-label': t('关闭窗口时'), onchange: () => { CLOSE_PREF = s.value; winCmd('closepref:' + s.value); } },
+    h('option', { value: 'tray' }, t('最小化到托盘')), h('option', { value: 'quit' }, t('退出程序')), h('option', { value: 'ask' }, t('每次询问')));
+  s.value = CLOSE_PREF;
+  return row(t('关闭窗口时'), s);
 }
 
 /** Rust 端在窗口最大化 / 失去焦点时调用 */

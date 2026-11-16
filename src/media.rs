@@ -672,6 +672,7 @@ mod tests {
             agent: crate::agent::AgentState::default(),
             access: crate::access::Access::load(dir, vec![], &[]),
             plugins: crate::plugins::Plugins::new(dir),
+            mirrors: crate::scrcpy::Mirrors::default(),
             cfg,
         })
     }

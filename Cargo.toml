@@ -1,6 +1,6 @@
 [package]
 name = "droidbridge"
-version = "0.9.0"
+version = "0.9.1"
 edition = "2024"
 description = "Mirror and control Android devices attached to any computer on your LAN, from a desktop app or browser."
 repository = "https://github.com/dmxzxy/DroidBridge"
@@ -30,12 +30,13 @@ tower-http = { version = "0.6.6", features = ["fs"] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 wry = { version = "0.57.1", optional = true }
+tray-icon = { version = "0.26", optional = true }
 mlua = { version = "0.12", features = ["lua54", "vendored", "serialize"] }
 ureq = { version = "3", default-features = false, features = ["rustls"] }
 
 [features]
 # 桌面客户端（WebView2 窗口）：cargo build --release --features desktop
-desktop = ["dep:wry", "dep:tao", "dep:muda"]
+desktop = ["dep:wry", "dep:tao", "dep:muda", "dep:tray-icon", "dep:windows-sys"]
 
 [lib]
 name = "droidbridge"
@@ -56,6 +57,9 @@ strip = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 muda = { version = "0.21.2", optional = true }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", optional = true, features = ["Win32_UI_WindowsAndMessaging", "Win32_System_Registry"] }
 
 [target."cfg(windows)".build-dependencies]
 winresource = "0.1.34"

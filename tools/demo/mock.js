@@ -50,6 +50,8 @@
       if (peer === 'pC') return json({ error: (LANG === "en" ? "Cannot reach 192.168.1.30:8730: connection refused (os error 111)" : "无法访问 192.168.1.30:8730：由于目标计算机积极拒绝，无法连接。 (os error 10061)") }, 502);
       return json(DEV[peer] || []);
     }
+    // 共享会话概况：谁在看、谁在操作
+    if (u.pathname === '/api/mirrors') return json({ list: MIRRORS[u.searchParams.get('peer') || 'local'] || [] });
     if (u.pathname === '/api/media') {
       SHOTS.forEach((s, i) => { if (!s.url) s.url = thumb(i, s.device); });
       return json({ dir: 'C:\\DroidBridge\\data\\media', items: SHOTS });
@@ -125,6 +127,11 @@
   };
   const KIND = { 'R5CT20ABCDE': 'home', '2A281FDH3000XY': 'settings', '192.168.1.31:5555': 'error' };
   const NAME = { 'R5CT20ABCDE': 'SM-S9180', '2A281FDH3000XY': 'Pixel 7' };
+  // 侧栏的共享会话概况（/api/mirrors）；画面里的观看者消息由下方的 FakeWS 发送
+  const MIRRORS = {
+    local: [{ serial: 'R5CT20ABCDE', viewers: ['Studio-PC', '小王'], controller: '小王' }],
+    pB: [{ serial: '2A281FDH3000XY', viewers: ['小王'], controller: null }],
+  };
   class FakeWS {
     constructor(url) { this.readyState = 0; this.isLog = url.includes('/ws/logcat'); this.isPerf = url.includes('/ws/perf'); if (this.isPerf) { this.readyState = 1; const hist = () => { for (let i = 0; i < 30; i++) this.emit(perfSample()); }; setTimeout(hist, 50); this.timer = setInterval(() => this.emit(perfSample()), 1000); return; } this.serial = new URLSearchParams(url.split('?')[1] || '').get('serial'); setTimeout(() => this.isLog ? this.startLog() : this.start(), 50); }
     startLog() {
@@ -146,6 +153,9 @@
       }
       this.emit({ type: 'meta', device_name: NAME[this.serial] || this.serial, codec: 'h264', serial: this.serial });
       this.emit({ type: 'session', width: 720, height: 1600 });
+      // 演示“谁在看、谁在操作”：一个别的观看者正在操作
+      const me = [...viewers.values()].find(v => v.ws === this);
+      if (me && this.serial === 'R5CT20ABCDE') this.emit({ type: 'viewers', you: me.vid, list: [{ id: me.vid, name: INFO.name, audio: false }, { id: 'w2', name: '小王', audio: true }], controller: 'w2', controller_name: '小王' });
       setTimeout(() => { for (const v of viewers.values()) if (v.ws === this) paint(v, kind); }, 100);
     }
     send(d) { (this.sent || (this.sent = [])).push(d); }

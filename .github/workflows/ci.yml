@@ -60,5 +60,6 @@ jobs:
           node tools/test-contextmenu.js
           node tools/test-files.js
           node tools/test-plugins.js
+          node tools/test-viewers.js
 
 

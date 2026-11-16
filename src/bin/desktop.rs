@@ -34,7 +34,12 @@ fn main() {
         .build()
         .expect("tokio runtime");
     let target = match cfg {
-        Ok(cfg) => rt.block_on(launch(cfg, args)),
+        Ok(cfg) => match rt.block_on(launch(cfg, args)) {
+            // 已有一个 DroidBridge 在运行，并且已经把它的窗口显示出来了
+            Ok(None) => return,
+            Ok(Some(url)) => Ok(url),
+            Err(e) => Err(e),
+        },
         Err(e) => Err(e),
     };
     if let Err(e) = &target {
@@ -48,25 +53,39 @@ fn main() {
     drop(rt);
 }
 
-/// 启动内置服务；端口被另一个 DroidBridge 占用时直接连接它，被其他程序占用时改用随机端口。
-async fn launch(cfg: Config, args: Vec<String>) -> Result<String, String> {
+/// 启动内置服务；端口被另一个 DroidBridge 占用时：它是桌面版就让它显示窗口（返回 None），
+/// 否则直接连接它；被其他程序占用时改用随机端口。
+async fn launch(cfg: Config, args: Vec<String>) -> Result<Option<String>, String> {
     let port = cfg.port;
+    let token = cfg.token.clone();
     match droidbridge::start(cfg).await {
         Ok(s) => {
             tracing::info!("server started: http://127.0.0.1:{}", s.port);
-            Ok(format!("http://127.0.0.1:{}/?app=desktop&lang={}", s.port, droidbridge::i18n::code()))
+            Ok(Some(format!("http://127.0.0.1:{}/?app=desktop&lang={}", s.port, droidbridge::i18n::code())))
         }
         Err(StartError::AddrInUse(_)) => {
-            if droidbridge::probe(&format!("127.0.0.1:{port}")).await {
+            let addr = format!("127.0.0.1:{port}");
+            if droidbridge::probe(&addr).await {
+                // 已在运行的桌面版（可能缩在托盘里）：让它显示窗口，本进程退出。
+                // Windows 只允许前台进程把别的窗口切到前面：先把这个权限让给它
+                #[cfg(windows)]
+                unsafe {
+                    use windows_sys::Win32::UI::WindowsAndMessaging::{AllowSetForegroundWindow, ASFW_ANY};
+                    AllowSetForegroundWindow(ASFW_ANY);
+                }
+                if droidbridge::request_show(&addr, token.as_deref()).await {
+                    tracing::info!("DroidBridge is already running on port {port}; showed its window");
+                    return Ok(None);
+                }
                 tracing::info!("DroidBridge is already running on port {port}; connecting to it");
-                return Ok(format!("http://127.0.0.1:{port}/?app=desktop&lang={}", droidbridge::i18n::code()));
+                return Ok(Some(format!("http://127.0.0.1:{port}/?app=desktop&lang={}", droidbridge::i18n::code())));
             }
             tracing::warn!("port {port} is used by another program; using a random port (other computers cannot add this one)");
             let mut cfg = Config::from_args(args).ok().flatten().ok_or_else(|| tr!("参数错误", "Invalid arguments"))?;
             cfg.port = 0;
             cfg.https_port = 0;
             let s = droidbridge::start(cfg).await.map_err(|e| e.to_string())?;
-            Ok(format!("http://127.0.0.1:{}/?app=desktop&lang={}", s.port, droidbridge::i18n::code()))
+            Ok(Some(format!("http://127.0.0.1:{}/?app=desktop&lang={}", s.port, droidbridge::i18n::code())))
         }
         Err(e) => Err(e.to_string()),
     }
@@ -78,8 +97,57 @@ enum WinCmd {
     Drag,
     Minimize,
     ToggleMaximize,
+    /// 标题栏的关闭按钮（按“关闭窗口时”的设置处理）
     Close,
+    /// 关闭确认对话框的选择：最小化到托盘 / 退出，是否记住
+    CloseChoice(ClosePref, bool),
+    /// 设置里修改“关闭窗口时”
+    SetClosePref(ClosePref),
     Resize(ResizeDirection),
+    /// 显示窗口（托盘、再次启动程序）
+    Show,
+    Quit,
+    Tray(tray_icon::TrayIconEvent),
+}
+
+/// 关闭窗口时：最小化到托盘 / 退出 / 每次询问
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum ClosePref {
+    Tray,
+    Quit,
+    Ask,
+}
+
+impl ClosePref {
+    fn parse(s: &str) -> Option<Self> {
+        Some(match s {
+            "tray" => Self::Tray,
+            "quit" => Self::Quit,
+            "ask" => Self::Ask,
+            _ => return None,
+        })
+    }
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Tray => "tray",
+            Self::Quit => "quit",
+            Self::Ask => "ask",
+        }
+    }
+    /// 读取 data/desktop.json；没有时为“每次询问”（第一次关闭时弹出选择）
+    fn load(data_dir: &std::path::Path) -> Self {
+        std::fs::read(data_dir.join("desktop.json"))
+            .ok()
+            .and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok())
+            .and_then(|v| v.get("close").and_then(|c| c.as_str()).and_then(Self::parse))
+            .unwrap_or(Self::Ask)
+    }
+    fn save(self, data_dir: &std::path::Path) {
+        let v = serde_json::json!({ "close": self.as_str() });
+        if let Err(e) = std::fs::write(data_dir.join("desktop.json"), v.to_string()) {
+            tracing::warn!("save desktop.json: {e}");
+        }
+    }
 }
 
 impl WinCmd {
@@ -89,6 +157,12 @@ impl WinCmd {
             "min" => Self::Minimize,
             "max" => Self::ToggleMaximize,
             "close" => Self::Close,
+            _ if s.starts_with("close:") => {
+                let mut it = s["close:".len()..].split(':');
+                let pref = ClosePref::parse(it.next()?)?;
+                Self::CloseChoice(pref, it.next() == Some("save"))
+            }
+            _ if s.starts_with("closepref:") => Self::SetClosePref(ClosePref::parse(&s["closepref:".len()..])?),
             _ => Self::Resize(match s.strip_prefix("resize:")? {
                 "n" => ResizeDirection::North,
                 "s" => ResizeDirection::South,
@@ -109,6 +183,28 @@ const CHROME: &str = if cfg!(target_os = "macos") { "mac" } else if cfg!(windows
 
 fn run_window(target: Result<String, String>, data_dir: &std::path::Path) -> Result<(), String> {
     let event_loop = EventLoopBuilder::<WinCmd>::with_user_event().build();
+    let mut close_pref = ClosePref::load(data_dir);
+    let data_dir = data_dir.to_path_buf();
+    // 托盘事件、再次启动程序时的“显示窗口”请求，都转到事件循环里处理
+    {
+        let proxy = event_loop.create_proxy();
+        tray_icon::TrayIconEvent::set_event_handler(Some(move |e| {
+            let _ = proxy.send_event(WinCmd::Tray(e));
+        }));
+        let proxy = event_loop.create_proxy();
+        tray_icon::menu::MenuEvent::set_event_handler(Some(move |e: tray_icon::menu::MenuEvent| {
+            let cmd = match e.id.0.as_str() {
+                "show" => WinCmd::Show,
+                "quit" => WinCmd::Quit,
+                _ => return,
+            };
+            let _ = proxy.send_event(cmd);
+        }));
+        let proxy = std::sync::Mutex::new(event_loop.create_proxy());
+        droidbridge::set_show_hook(move || {
+            let _ = proxy.lock().unwrap().send_event(WinCmd::Show);
+        });
+    }
     #[cfg(target_os = "macos")]
     let _menu = mac_menu();
 
@@ -138,6 +234,8 @@ fn run_window(target: Result<String, String>, data_dir: &std::path::Path) -> Res
 
     let proxy = event_loop.create_proxy();
     let mut ctx = WebContext::new(Some(data_dir.join("webview")));
+    // 托盘：Linux 缺少 AppIndicator 库、或创建失败时，关闭窗口就直接退出
+    let tray_ok = tray_supported();
     let builder = WebViewBuilder::new_with_web_context(&mut ctx)
         .with_background_color((15, 17, 21, 255))
         .with_new_window_req_handler(|url, _| {
@@ -146,7 +244,10 @@ fn run_window(target: Result<String, String>, data_dir: &std::path::Path) -> Res
         });
     let builder = if custom {
         builder
-            .with_initialization_script(format!("window.__DB_CHROME={CHROME:?};"))
+            .with_initialization_script(format!(
+                "window.__DB_CHROME={CHROME:?};window.__DB_TRAY={tray_ok};window.__DB_CLOSE={:?};",
+                close_pref.as_str()
+            ))
             .with_ipc_handler(move |req| {
                 if let Some(cmd) = WinCmd::parse(req.body()) {
                     let _ = proxy.send_event(cmd);
@@ -191,12 +292,68 @@ fn run_window(target: Result<String, String>, data_dir: &std::path::Path) -> Res
     })?;
 
     let mut last_state = (false, true);
+    let mut tray: Option<tray_icon::TrayIcon> = None;
+    let mut tray_ok = tray_ok;
     event_loop.run(move |event, _, control_flow| {
         let _keep = (&webview, &ctx);
         *control_flow = ControlFlow::Wait;
+        let show = |window: &tao::window::Window| {
+            window.set_visible(true);
+            window.set_minimized(false);
+            window.set_focus();
+        };
         match event {
+            // 托盘要在事件循环启动后创建（macOS 的要求）
+            Event::NewEvents(tao::event::StartCause::Init) if tray_ok => match build_tray() {
+                Ok(t) => tray = Some(t),
+                Err(e) => {
+                    tracing::warn!("tray icon unavailable: {e}");
+                    tray_ok = false;
+                    let _ = webview.evaluate_script("window.__DB_TRAY=false");
+                }
+            },
             Event::WindowEvent { event: WindowEvent::CloseRequested, .. } | Event::UserEvent(WinCmd::Close) => {
-                *control_flow = ControlFlow::Exit;
+                // 启动失败的错误页、没有托盘：直接退出
+                let pref = if !custom || !tray_ok { ClosePref::Quit } else { close_pref };
+                match pref {
+                    ClosePref::Quit => *control_flow = ControlFlow::Exit,
+                    ClosePref::Tray => window.set_visible(false),
+                    ClosePref::Ask => {
+                        show(&window);
+                        let _ = webview.evaluate_script("window.__dbAskClose&&window.__dbAskClose()");
+                    }
+                }
+            }
+            Event::UserEvent(WinCmd::CloseChoice(pref, save)) => {
+                if save {
+                    close_pref = pref;
+                    pref.save(&data_dir);
+                }
+                if pref == ClosePref::Quit {
+                    *control_flow = ControlFlow::Exit;
+                } else {
+                    window.set_visible(false);
+                }
+            }
+            Event::UserEvent(WinCmd::SetClosePref(pref)) => {
+                close_pref = pref;
+                pref.save(&data_dir);
+            }
+            Event::UserEvent(WinCmd::Show) => show(&window),
+            Event::UserEvent(WinCmd::Quit) => *control_flow = ControlFlow::Exit,
+            // 托盘：左键单击 / 双击显示窗口，右键弹出菜单（macOS 单击即弹出菜单）
+            Event::UserEvent(WinCmd::Tray(e)) => {
+                use tray_icon::{MouseButton, MouseButtonState, TrayIconEvent};
+                match e {
+                    TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, .. } if !cfg!(target_os = "macos") => show(&window),
+                    TrayIconEvent::DoubleClick { button: MouseButton::Left, .. } => show(&window),
+                    _ => {}
+                }
+            }
+            // macOS：点 Dock 图标时重新显示窗口
+            Event::Reopen { .. } => show(&window),
+            Event::LoopDestroyed => {
+                tray.take();
             }
             Event::UserEvent(WinCmd::Drag) => {
                 let _ = window.drag_window();
@@ -291,7 +448,68 @@ fn init_log(data_dir: &std::path::Path) {
     }
 }
 
-/// 程序化绘制窗口图标：圆角手机轮廓
+/// 托盘图标与菜单：打开 / 退出
+fn build_tray() -> Result<tray_icon::TrayIcon, String> {
+    use tray_icon::menu::{Menu, MenuItem, PredefinedMenuItem};
+    let menu = Menu::new();
+    menu.append_items(&[
+        &MenuItem::with_id("show", tr!("打开 DroidBridge", "Open DroidBridge"), true, None),
+        &PredefinedMenuItem::separator(),
+        &MenuItem::with_id("quit", tr!("退出", "Quit"), true, None),
+    ])
+    .map_err(|e| e.to_string())?;
+    // macOS 菜单栏用只有线条的模板图标（系统按明暗模式着色）；其他平台用应用图标，
+    // 深色任务栏 / 面板上用反色版本，免得黑色方块和任务栏混在一起
+    let (rgba, n) = if cfg!(target_os = "macos") {
+        droidbridge::icon::tray_rgba(44, false)
+    } else if taskbar_is_light() {
+        droidbridge::icon::rgba(32)
+    } else {
+        droidbridge::icon::rgba_inverted(32)
+    };
+    let icon = tray_icon::Icon::from_rgba(rgba, n, n).map_err(|e| e.to_string())?;
+    let builder = tray_icon::TrayIconBuilder::new().with_id("droidbridge");
+    #[cfg(target_os = "macos")]
+    let builder = builder.with_icon_templated(icon);
+    #[cfg(not(target_os = "macos"))]
+    let builder = builder.with_icon(icon);
+    builder
+        .with_tooltip("DroidBridge")
+        .with_menu(Box::new(menu))
+        .with_menu_on_left_click(cfg!(target_os = "macos"))
+        .build()
+        .map_err(|e| e.to_string())
+}
+
+/// 任务栏是否为浅色（Windows 读取系统主题设置；Linux 面板多为深色）
+fn taskbar_is_light() -> bool {
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::System::Registry::{RegGetValueW, HKEY_CURRENT_USER, RRF_RT_REG_DWORD};
+        let key: Vec<u16> = r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize".encode_utf16().chain([0]).collect();
+        let name: Vec<u16> = "SystemUsesLightTheme".encode_utf16().chain([0]).collect();
+        let mut data: u32 = 0;
+        let mut size = std::mem::size_of::<u32>() as u32;
+        let r = unsafe {
+            RegGetValueW(HKEY_CURRENT_USER, key.as_ptr(), name.as_ptr(), RRF_RT_REG_DWORD, std::ptr::null_mut(), (&mut data as *mut u32).cast(), &mut size)
+        };
+        r == 0 && data == 1
+    }
+    #[cfg(not(windows))]
+    false
+}
+
+/// 能否显示托盘图标：Linux 需要系统里有 AppIndicator 库
+fn tray_supported() -> bool {
+    if !cfg!(target_os = "linux") {
+        return true;
+    }
+    let libs = ["libayatana-appindicator3.so.1", "libappindicator3.so.1"];
+    let dirs = ["/usr/lib", "/usr/lib64", "/usr/lib/x86_64-linux-gnu", "/usr/lib/aarch64-linux-gnu", "/usr/local/lib"];
+    libs.iter().any(|l| dirs.iter().any(|d| std::path::Path::new(d).join(l).exists()))
+}
+
+/// 程序化绘制窗口图标
 fn app_icon() -> Option<Icon> {
     let (rgba, n) = droidbridge::icon::rgba(64);
     Icon::from_rgba(rgba, n, n).ok()

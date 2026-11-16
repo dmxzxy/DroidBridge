@@ -16,12 +16,13 @@ See and control Android devices from your computer — not only the ones plugged
 - **Performance overlay** — FPS, CPU, memory, temperature and battery of the foreground app, on top of the screen
 - **App manager** — list installed apps; launch, force stop, clear data, uninstall
 - **Files** — fast storage browser next to the screen or in its own window: thumbnails, preview, multi-select, upload, download, rename, delete, install APKs
+- **Shared viewing** — several people can watch the same device at once over a single mirroring session; everyone sees who is watching and who is in control, and only one person operates at a time
 - **Batch install & group control** — install one APK on many devices at once; mirror taps and keys on several devices
 - **AI agents (MCP)** — let Claude Code, Cursor and other MCP clients read the screen and operate any device; you watch every action live and can pause the AI
 - **Plugins (Lua)** — build project-specific tools: menu items for devices, apps and files, panels next to the screen, status items, performance metrics, log highlights and AI tools; plugins run in separate processes, so a broken plugin cannot take the app down. See [docs/plugins/README.md](docs/plugins/README.md) (Chinese)
 - **Install APKs / send files** — drop them onto a device screen
 - **Gallery** — screenshots and recordings are saved on the node and browsed in a gallery (filter by type / device, preview, download, reveal in file manager)
-- **Desktop app or browser** — native desktop app for Windows, macOS and Linux; Windows has an installer and the desktop app updates itself; phones and other computers can also use a browser
+- **Desktop app or browser** — native desktop app for Windows, macOS and Linux; Windows has an installer and the desktop app updates itself; phones and other computers can also use a browser. Closing the window can keep it running in the tray (asked the first time; change it in Settings → General), so other computers and AI tools stay connected
 
 | Device logs | Wireless pairing | Phone browser |
 |---|---|---|
@@ -62,7 +63,7 @@ The desktop app also runs the server, so other computers can add it. Use the ser
 
 > **macOS:** the app is not notarized. On first launch, right-click it and choose **Open**, or run `xattr -cr DroidBridge.app`.
 >
-> **Linux:** to use USB devices without root, install your distribution's Android udev rules (e.g. `android-sdk-platform-tools-common`).
+> **Linux:** to use USB devices without root, install your distribution's Android udev rules (e.g. `android-sdk-platform-tools-common`). The tray icon needs `libayatana-appindicator3-1` (GNOME also needs the AppIndicator extension); without it, closing the window quits.
 
 ## Usage
 
@@ -200,6 +201,15 @@ Notes:
 ### Language
 
 The UI follows the system language (Chinese or English). Change it in **Settings → Language**, or start with `--lang en` / `--lang zh`.
+
+## Several people on one device
+
+When several people open the same device (on this computer, from other computers, or from phone browsers), the device runs only one mirroring session and everyone shares it:
+
+- The first viewer's quality settings are used. Changing the quality in Settings and clicking **Reconnect** restarts the shared session with your settings for everyone; turning on audio also restarts it once.
+- The eye badge in the viewer title shows how many people are watching (hover for names); devices in the sidebar show it too when others are watching.
+- Only one person controls the device at a time: whoever touches first gets control, and it is released 3 seconds after they stop. Others see "“Name” is controlling" above the screen, and their input is ignored meanwhile. An AI agent counts as a controller as well; pause it to take over.
+- The device clipboard is synced only to the person in control.
 
 ## Security
 

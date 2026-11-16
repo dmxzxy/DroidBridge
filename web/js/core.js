@@ -87,7 +87,10 @@ const P = {
   drive: '<path d="M22 12H2M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/><path d="M6 16h.01M10 16h.01"/>',
   cable: '<path d="M17 21v-2a1 1 0 0 1-1-1v-1a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v1a1 1 0 0 1-1 1M19 15V6.5a1 1 0 0 0-7 0v11a1 1 0 0 1-7 0V9M21 21v-2h-4M3 5h4V3M7 5a1 1 0 0 1 1 1v1a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a1 1 0 0 1 1-1V3"/>',
   alert: '<path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h16.9a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/>',
+  eye: '<path d="M2 12s3.7-7 10-7 10 7 10 7-3.7 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/>',
 };
+/** 应用图标（与 src/icon.rs 绘制的三段曲线一致） */
+const LOGO_SVG = '<svg viewBox="0 0 64 64"><rect x="2" y="2" width="60" height="60" rx="13.5" fill="currentColor" stroke="none"/><g fill="none" stroke="var(--logo-fg,#fff)" stroke-linecap="round"><rect x="16.5" y="17.5" width="14" height="29" rx="4.5" stroke-width="4.8"/><path d="M32.3 14.22A12.6 12.6 0 0 1 39.5 25.6V38.4A12.6 12.6 0 0 1 32.3 49.78" stroke-width="4"/><path d="M39.75 12.3A20.7 20.7 0 0 1 48.5 29.2V34.8A20.7 20.7 0 0 1 39.75 51.7" stroke-width="3.3"/></g></svg>';
 const svg = (n) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">${P[n]}</svg>`;
 const SYNC_TYPES = new Set(['touch', 'scroll', 'key', 'text', 'back', 'cmd', 'power', 'clipboard']);
 const ib = (icon, title, onclick, cls) => h('button', { class: 'ib' + (cls ? ' ' + cls : ''), title, 'aria-label': title, type: 'button', onclick, html: svg(icon) });

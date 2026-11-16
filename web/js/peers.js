@@ -404,7 +404,7 @@ function settingsDialog(tab) {
   const mcpUrl = /^https?:$/.test(location.protocol) && !isLocalHost() ? `${location.protocol}//${location.host}/mcp` : `http://127.0.0.1:${INFO ? INFO.port : 8730}/mcp`;
   const group = (title, ...rows) => h('section', { class: 'set-g' }, h('div', { class: 'set-t' }, title), h('div', { class: 'set-c' }, rows));
   note = h('div', { class: 'set-n', hidden: true }, h('span', {}, t('已打开的投屏需重新连接才会生效')),
-    h('button', { class: 'linkbtn', type: 'button', onclick: () => { for (const v of viewers.values()) v.reconnect(); note.hidden = true; } }, t('重新连接')));
+    h('button', { class: 'linkbtn', type: 'button', onclick: () => { for (const v of viewers.values()) v.reconnect(true); note.hidden = true; } }, t('重新连接')));
   const pages = {
     general: { icon: 'sliders', label: t('常规'), build: () => [
       group(t('画面'), sel('size'), sel('rate'), sel('fps'), row(t('保持屏幕常亮'), sw('awake', '1', changed))),
@@ -413,7 +413,8 @@ function settingsDialog(tab) {
         row(req(t('同时在手机上播放'), 'Android 13+'), sw('audiodup', '0', changed))),
       group(t('通用'),
         row(LANG === 'zh' ? req('语言', 'Language') : req('Language', '语言'), lang),
-        row(t('截图保存位置'), dirEl, ...dirTools)),
+        row(t('截图保存位置'), dirEl, ...dirTools),
+        closePrefRow(row)),
       note,
     ] },
     connect: { icon: 'link', label: t('连接'), build: () => [

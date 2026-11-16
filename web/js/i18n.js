@@ -448,6 +448,10 @@ const EN = {"分辨率":"Resolution",
   "填写令牌":"Enter token",
   "它授权的电脑和浏览器…":"Computers and browsers it authorizes…",
   "「{0}」":"“{0}”",
+  "（我）":" (me)",
+  "👆 「{0}」正在操作":"👆 “{0}” is controlling",
+  "「{0}」正在操作，请稍候":"“{0}” is controlling the device — please wait",
+  "{0} 正在操作":"{0} is controlling",
   // 插件
   "插件":"Plugins",
   "正在执行插件操作…":"Running plugin action…",
@@ -542,7 +546,15 @@ const EN = {"分辨率":"Resolution",
   "需要权限确认":"Needs permission approval",
   "已停用":"Disabled",
   "清单有错误":"Invalid manifest",
-  "未知":"Unknown"
+  "未知":"Unknown",
+  "关闭窗口":"Close window",
+  "DroidBridge 可以在后台继续运行：其他电脑和浏览器仍能连接本机的设备，AI 工具也能继续使用。之后可在托盘图标里重新打开或退出。":"DroidBridge can keep running in the background: other computers and browsers can still reach the devices on this computer, and AI tools keep working. Reopen or quit it from the tray icon.",
+  "记住我的选择（可在设置中修改）":"Remember my choice (you can change it in Settings)",
+  "退出 DroidBridge":"Quit DroidBridge",
+  "最小化到托盘":"Minimize to tray",
+  "退出程序":"Quit",
+  "每次询问":"Ask every time",
+  "关闭窗口时":"When closing the window"
 };
 // 界面语言：?lang= > 手动选择 > 服务端语言（桌面版通过 ?lang= 传入）> 浏览器语言
 let LANG = (() => {

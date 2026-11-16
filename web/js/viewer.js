@@ -17,10 +17,23 @@ function avcCodecString(data) {
 const KEYMAP = { Enter: 66, Backspace: 67, Delete: 112, Tab: 61, ArrowUp: 19, ArrowDown: 20, ArrowLeft: 21, ArrowRight: 22, Home: 122, End: 123, PageUp: 92, PageDown: 93, Insert: 124 };
 const AKEY = { BACK: 4, HOME: 3, APP_SWITCH: 187, POWER: 26, VOLUME_UP: 24, VOLUME_DOWN: 25 };
 
+/** 观看者 id：随机 12 位 base36，同一 Viewer 重连时保持不变 */
+const viewerVid = () => Array.from({ length: 12 }, () => Math.floor(Math.random() * 36).toString(36)).join('');
+/** 观看者显示名称：本机用电脑名，其他浏览器用设置里的名称或“XX 上的浏览器” */
+function viewerWho() {
+  if (isLocalHost()) return (INFO && INFO.name) || '';
+  const n = (pref.get('client_name', '') || '').trim();
+  if (n) return n;
+  const ua = navigator.userAgent;
+  const guess = /iPhone|iPad/.test(ua) ? 'iPhone / iPad' : /Android/.test(ua) ? t('安卓手机') : /Mac/.test(ua) ? 'Mac' : /Windows/.test(ua) ? 'Windows' : t('浏览器');
+  return t('{0} 上的浏览器', guess);
+}
+
 class Viewer {
   constructor(host, dev) {
     this.host = host; this.dev = dev; this.key = host.id + '|' + dev.serial;
     this.audioOn = pref.get('audio', '0') === '1'; this.fails = 0;
+    this.vid = viewerVid(); this.forceNext = false; this.busyAt = 0;
     this.vw = 0; this.vh = 0; this.bytes = 0; this.frames = 0; this.lastKeyReq = 0;
     this.pointers = new Map();
     this.recording = false; this.recorder = null; this.recStream = null;
@@ -41,6 +54,11 @@ class Viewer {
     this.dot = h('span', { class: 'dot warn' });
     this.nameEl = h('span', { class: 'name' }, this.dev.model || this.dev.serial);
     this.statEl = h('span', { class: 'fps' });
+    // 观看者标记：眼睛 + 人数（只有自己时隐藏），悬停列出所有名称
+    this.eyeNum = h('span', {}, '');
+    this.eyeEl = h('span', { class: 'vwatch', hidden: true }, h('span', { class: 'ico', html: svg('eye') }), this.eyeNum);
+    // 别人正在操作时，画面顶部的一条细提示
+    this.ctlBar = h('div', { class: 'ctlbar', hidden: true });
     // 真正的键盘输入落在这个隐藏的 textarea 上（canvas 不能触发输入法）
     this.ime = h('textarea', { class: 'ime', autocomplete: 'off', autocorrect: 'off', autocapitalize: 'off', spellcheck: 'false', 'aria-label': t('键盘输入') });
     this.textInput = h('input', { class: 'input', placeholder: t('输入文字，回车发送'), enterkeyhint: 'send' });
@@ -71,12 +89,12 @@ class Viewer {
     this.syncBtn.hidden = viewers.size < 1;
     this.vlog = h('div', { class: 'vlog' });
     this.root = h('div', { class: 'viewer' },
-      ctxMenu(h('div', { class: 'vhead' }, this.dot, this.nameEl, this.recEl, h('span', { class: 'sub' }, this.host.remote ? this.host.name : ''), this.statEl,
+      ctxMenu(h('div', { class: 'vhead' }, this.dot, this.nameEl, this.recEl, h('span', { class: 'sub' }, this.host.remote ? this.host.name : ''), this.statEl, this.eyeEl,
         this.syncBtn, ib('max', t('全屏'), () => this.fullscreen()), ib('x', t('关闭'), () => this.close())), () => this.moreItems()),
       h('div', { class: 'vmain' },
       h('div', { class: 'vbody' },
         h('div', { class: 'vcol' },
-          h('div', { class: 'screen' }, this.canvas, this.pov, this.ime, this.overlay, this.perfEl, this.aiBar, h('div', { class: 'drop' }, t('松开以安装 APK 或传到手机'))),
+          h('div', { class: 'screen' }, this.canvas, this.pov, this.ime, this.overlay, this.perfEl, this.aiBar, this.ctlBar, h('div', { class: 'drop' }, t('松开以安装 APK 或传到手机'))),
           h('div', { class: 'nav' }, ib('back', t('返回'), key(AKEY.BACK)), ib('home', t('主页'), key(AKEY.HOME)), ib('recent', t('最近任务'), key(AKEY.APP_SWITCH))),
           this.typing),
         h('div', { class: 'vtools' },
@@ -116,7 +134,9 @@ class Viewer {
 
   wsUrl() {
     const p = new URLSearchParams({ serial: this.dev.serial, peer: this.host.id, lang: LANG, max_size: q('size'), bit_rate: q('rate'), max_fps: q('fps'), stay_awake: pref.get('awake', '1'),
-      audio: this.audioOn ? '1' : '0', audio_codec: AUDIO_CODEC, audio_dup: pref.get('audiodup', '0') });
+      audio: this.audioOn ? '1' : '0', audio_codec: AUDIO_CODEC, audio_dup: pref.get('audiodup', '0'),
+      vid: this.vid, who: viewerWho(), force: this.forceNext ? '1' : '0' });
+    this.forceNext = false;   // 只用于这一次连接
     const tk = pref.get('token', ''); if (tk) p.set('token', tk);
     return (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws/stream?' + p;
   }
@@ -134,8 +154,8 @@ class Viewer {
       this.onLost();
     };
   }
-  /** 手动重连：清零失败计数 */
-  reconnect() { this.recovering = false; this.fails = 0; this.restart(); }
+  /** 手动重连：清零失败计数；force 表示按我的画质设置重启共享会话 */
+  reconnect(force) { if (force) this.forceNext = true; this.recovering = false; this.fails = 0; this.restart(); }
   restart() { this.teardown(); this.connect(); if (this.log) this.log.connect(); if (this.perfOn) { this.closePerf(); this.openPerf(); } }
 
   /** 连接断开后自动恢复：设备在线就重连（失败多次后停止），设备不在就等它回来 */
@@ -173,6 +193,9 @@ class Viewer {
     this.decoder = null; this.decoderReady = false;
     if (this.pendingFrame) { this.pendingFrame.close(); this.pendingFrame = null; }
     if (this.audioOut) { this.audioOut.close(); this.audioOut = null; }
+    // 连接断开后会话信息就过期了，等新会话的 viewers 消息再显示
+    this.ctlBar.hidden = true;
+    this.eyeEl.hidden = true;
   }
 
   toggleAudio() {
@@ -180,7 +203,8 @@ class Viewer {
     pref.set('audio', this.audioOn ? '1' : '0');
     this.audioBtn.classList.toggle('on', this.audioOn);
     if (this.audioOn) audioCtx();   // 在点击中创建，满足浏览器自动播放限制
-    this.reconnect();
+    // 打开声音要让后端给共享会话开声音（重启一次）；关闭声音不用重启
+    this.reconnect(this.audioOn);
   }
   close() {
     this.closed = true; this.recovering = false;
@@ -254,6 +278,8 @@ class Viewer {
   onText(m) {
     switch (m.type) {
       case 'status': if (!this.gotFrame) this.showOverlay(m.msg, { spin: true }); break;
+      case 'viewers': this.onViewers(m); break;
+      case 'busy': this.onBusy(m); break;
       case 'meta': if (m.device_name) this.nameEl.textContent = m.device_name; this.showOverlay(t('等待画面…'), { spin: true }); break;
       case 'session':
         this.vw = m.width; this.vh = m.height;
@@ -271,6 +297,28 @@ class Viewer {
         if (navigator.clipboard && isSecureContext) navigator.clipboard.writeText(m.text).then(() => toast(t('已同步手机剪贴板')), () => {});
         break;
     }
+  }
+
+  /** 谁在看、谁在操作 */
+  onViewers(m) {
+    if (m.you) this.vid = m.you;
+    const list = Array.isArray(m.list) ? m.list : [];
+    const name = x => (x && x.name) || '?';
+    this.eyeNum.textContent = String(list.length);
+    this.eyeEl.hidden = list.length < 2;
+    const names = list.map(x => x && x.id === this.vid ? name(x) + t('（我）') : name(x));
+    const ctl = m.controller && m.controller !== 'ai' && m.controller !== this.vid ? (m.controller_name || '?') : null;
+    this.eyeEl.title = (names.join('\n') + (ctl ? '\n' + t('👆 「{0}」正在操作', ctl) : '')).trim();
+    // AI 控制时不显示这条（已经有 AI 提示条了）
+    this.ctlBar.hidden = !ctl;
+    if (ctl) this.ctlBar.textContent = t('👆 「{0}」正在操作', ctl);
+  }
+  /** 别人正在操作，这条输入被丢弃：同一 Viewer 3 秒内最多提示一次 */
+  onBusy(m) {
+    const now = Date.now();
+    if (now - this.busyAt < 3000) return;
+    this.busyAt = now;
+    toast(t('「{0}」正在操作，请稍候', (m && m.by) || '?'), { ms: 3000 });
   }
 
   ensureDecoder() {

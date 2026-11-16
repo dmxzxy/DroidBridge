@@ -17,6 +17,12 @@ async function loadPeers() {
   for (const p of peers) hosts.set(p.id, Object.assign(hosts.get(p.id) || { devices: [] }, p, { remote: true }));
 }
 async function refreshHost(hst) {
+  // 共享会话概况（谁在看、谁在操作）：旧版本或没有这个接口时忽略，不影响设备列表
+  const mirrors = api('/api/mirrors?peer=' + encodeURIComponent(hst.id)).then(r => {
+    const m = new Map();
+    for (const it of (r && r.list) || []) if (it && it.serial) m.set(it.serial, { viewers: it.viewers || [], controller: it.controller || null });
+    hst.mirrors = m;
+  }, () => {});
   try { hst.devices = await api('/api/devices?peer=' + encodeURIComponent(hst.id)); hst.error = null; }
   catch (e) { hst.error = e.message; hst.devices = []; }
   hst.loaded = true;
@@ -24,6 +30,17 @@ async function refreshHost(hst) {
   if (hst.remote && !hst.error && (!hst.infoAt || Date.now() - hst.infoAt > 60000)) {
     try { hst.info = await api('/api/node?peer=' + encodeURIComponent(hst.id)); hst.infoAt = Date.now(); } catch {}
   }
+  await mirrors;
+}
+/** 侧栏设备行上的“别人正在看”标记：眼睛 + 人数，悬停列出名称和操作者 */
+function devWatch(hst, serial, open) {
+  const mir = hst.mirrors && hst.mirrors.get(serial);
+  if (!mir) return null;
+  const n = (mir.viewers || []).length - (open ? 1 : 0);
+  if (n <= 0) return null;
+  const tip = [...(mir.viewers || [])];
+  if (mir.controller) tip.push(t('{0} 正在操作', mir.controller));
+  return h('span', { class: 'watch', title: tip.join('\n') }, h('span', { class: 'ico', html: svg('eye') }), String(n));
 }
 
 /** 比较版本号 a 与 b：-1 / 0 / 1 */
@@ -117,6 +134,7 @@ function devRows(hst, emptyEl) {
     }, h('span', { class: 'dot ' + (ready ? 'ok' : 'warn') }),
       h('div', { class: 't' }, h('b', {}, d.model || d.serial), h('small', {}, ready ? devSub(d) : (STATE_HINT[d.state] || d.serial))),
       ...pluginBadges(hst, d),
+      devWatch(hst, d.serial, open),
       ready ? null : h('span', { class: 'st' }, STATE_TEXT[d.state] || d.state),
       ready ? ib('more', t('更多'), e => { e.stopPropagation(); deviceMenu(e.currentTarget, hst, d); }) : null), () => deviceItems(hst, d));
   });
@@ -147,8 +165,8 @@ function deviceMenu(anchor, hst, dev) {
 }
 
 function renderSide() {
-  // 侧栏里有展开的菜单时先不刷新，关闭菜单后再补上
-  if (openMenu && $('#lists').contains(openMenu.anchor)) { renderPending = true; return; }
+  // 有展开的菜单时先不刷新（菜单可能挂在设备行上，刷新会让它指向旧元素），关闭菜单后再补上
+  if (openMenu) { renderPending = true; return; }
   renderPending = false;
   const local = hosts.get('local');
   const remotes = [...hosts.values()].filter(x => x.remote);

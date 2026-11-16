@@ -1,35 +1,144 @@
-//! 程序化绘制的应用图标（圆角手机轮廓），供窗口图标与打包脚本生成 .ico / .icns / .png 使用。
+//! 程序化绘制的应用图标，供窗口、托盘图标与打包脚本生成 .ico / .icns / .png 使用。
+//!
+//! 图形只有三段曲线：一部手机的圆角轮廓，和它右侧逐渐变细的两道“回声”
+//! （同样形状、逐级放大的轮廓的右半边），表示手机正被连接、画面正在传出去。
+//! 应用图标为黑色圆角方块 + 白色线条；托盘图标（macOS 菜单栏）只用线条。
 
-/// 返回 n×n 的 RGBA 像素
-pub fn rgba(n: u32) -> (Vec<u8>, u32) {
-    let s = n as f32 / 64.0;
-    let mut out = vec![0u8; (n * n * 4) as usize];
-    // 圆角矩形的有符号距离
-    let sd = |x: f32, y: f32, cx: f32, cy: f32, hw: f32, hh: f32, r: f32| {
-        let qx = (x - cx).abs() - (hw - r);
-        let qy = (y - cy).abs() - (hh - r);
-        let (ox, oy) = (qx.max(0.0), qy.max(0.0));
-        (ox * ox + oy * oy).sqrt() + qx.max(qy).min(0.0) - r
+use std::f32::consts::PI;
+
+type Pt = (f32, f32);
+
+/// 圆角矩形轮廓上的采样点（起点在左边中点，绕一圈）
+fn rrect(cx: f32, cy: f32, hw: f32, hh: f32, r: f32, n: usize) -> Vec<Pt> {
+    let (sx, sy) = (hw - r, hh - r);
+    let q = PI * r / 2.0;
+    let per = 4.0 * sx + 4.0 * sy + 4.0 * q;
+    // 从右边中点开始按弧长依次是：右边下半、右下角、下边、左下角、左边、左上角、上边、右上角、右边上半
+    let segs = [sy, q, 2.0 * sx, q, 2.0 * sy, q, 2.0 * sx, q, sy];
+    (0..=n)
+        .map(|i| {
+            let mut t = ((i as f32 / n as f32 + 0.5) % 1.0) * per;
+            for (k, &len) in segs.iter().enumerate() {
+                if t <= len + 1e-4 || k == segs.len() - 1 {
+                    let f = if len > 0.0 { (t / len).min(1.0) } else { 0.0 };
+                    let corner = |ox: f32, oy: f32, a0: f32| {
+                        let a = a0 + f * PI / 2.0;
+                        (cx + ox + r * a.cos(), cy + oy + r * a.sin())
+                    };
+                    return match k {
+                        0 => (cx + hw, cy + f * sy),
+                        1 => corner(sx, sy, 0.0),
+                        2 => (cx + sx - f * 2.0 * sx, cy + hh),
+                        3 => corner(-sx, sy, PI / 2.0),
+                        4 => (cx - hw, cy + sy - f * 2.0 * sy),
+                        5 => corner(-sx, -sy, PI),
+                        6 => (cx - sx + f * 2.0 * sx, cy - hh),
+                        7 => corner(sx, -sy, 1.5 * PI),
+                        _ => (cx + hw, cy - sy + f * sy),
+                    };
+                }
+                t -= len;
+            }
+            (cx + hw, cy)
+        })
+        .collect()
+}
+
+/// 三段曲线（64×64 坐标系）：(折线, 线宽)
+/// bold：线宽倍数（托盘图标尺寸小，线条加粗）
+fn glyph(bold: f32) -> Vec<(Vec<Pt>, f32)> {
+    let (cx, cy) = (23.5, 32.0);
+    let (hw, hh, r) = (7.0, 14.5, 4.5);
+    let gap = 9.0;
+    let phone = rrect(cx, cy, hw, hh, r, 400);
+    let echo = |k: f32, cut: f32, n: usize| {
+        let (w, h) = (hw + k * gap, hh + k * gap * 0.5);
+        rrect(cx, cy, w, h, r + k * gap * 0.9, n).into_iter().filter(|p| p.0 > cx + w * cut).collect::<Vec<_>>()
     };
+    vec![(phone, 4.8 * bold), (echo(1.0, 0.55, 600), 4.0 * bold), (echo(2.0, 0.65, 800), 3.3 * bold)]
+}
+
+fn seg_dist(p: Pt, a: Pt, b: Pt) -> f32 {
+    let (vx, vy) = (b.0 - a.0, b.1 - a.1);
+    let (wx, wy) = (p.0 - a.0, p.1 - a.1);
+    let l = vx * vx + vy * vy;
+    let t = if l > 0.0 { ((wx * vx + wy * vy) / l).clamp(0.0, 1.0) } else { 0.0 };
+    let (dx, dy) = (wx - t * vx, wy - t * vy);
+    (dx * dx + dy * dy).sqrt()
+}
+
+/// 线条覆盖率（0..1），n×n；画面对应 64×64 坐标系中以 (ox, oy) 为左上角、边长 size 的区域
+fn coverage(n: u32, ox: f32, oy: f32, size: f32, bold: f32) -> Vec<f32> {
+    let s = n as f32 / size;
+    let curves = glyph(bold);
+    let mut out = vec![0f32; (n * n) as usize];
+    for (pts, w) in &curves {
+        let (mut x0, mut y0, mut x1, mut y1) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
+        for p in pts {
+            x0 = x0.min(p.0);
+            y0 = y0.min(p.1);
+            x1 = x1.max(p.0);
+            y1 = y1.max(p.1);
+        }
+        let m = w / 2.0 + 1.0;
+        let px0 = (((x0 - m - ox) * s).floor().max(0.0)) as u32;
+        let py0 = (((y0 - m - oy) * s).floor().max(0.0)) as u32;
+        let px1 = ((((x1 + m - ox) * s).ceil().max(0.0)) as u32).min(n);
+        let py1 = ((((y1 + m - oy) * s).ceil().max(0.0)) as u32).min(n);
+        for py in py0..py1 {
+            for px in px0..px1 {
+                let p = ((px as f32 + 0.5) / s + ox, (py as f32 + 0.5) / s + oy);
+                let d = pts.windows(2).map(|ab| seg_dist(p, ab[0], ab[1])).fold(f32::MAX, f32::min) - w / 2.0;
+                let a = (0.5 - d * s).clamp(0.0, 1.0);
+                let o = &mut out[(py * n + px) as usize];
+                *o = o.max(a);
+            }
+        }
+    }
+    out
+}
+
+/// 应用图标：黑色圆角方块 + 白色线条，返回 n×n 的 RGBA 像素
+pub fn rgba(n: u32) -> (Vec<u8>, u32) {
+    rgba_colored(n, 18.0, 250.0)
+}
+
+/// 反色的应用图标（浅色方块 + 黑色线条），用在深色的任务栏 / 面板上
+pub fn rgba_inverted(n: u32) -> (Vec<u8>, u32) {
+    rgba_colored(n, 242.0, 18.0)
+}
+
+fn rgba_colored(n: u32, bg: f32, fg: f32) -> (Vec<u8>, u32) {
+    let s = n as f32 / 64.0;
+    let g = coverage(n, 0.0, 0.0, 64.0, 1.0);
+    let mut out = vec![0u8; (n * n * 4) as usize];
+    // 方块留 2 个单位边距（Windows / Linux 上与其他图标大小协调）；圆角约为边长的 22%
+    let (half, rad) = (30.0f32, 13.5f32);
     for py in 0..n {
         for px in 0..n {
-            // 在 64×64 坐标系中计算，按像素尺寸做抗锯齿
             let (x, y) = ((px as f32 + 0.5) / s, (py as f32 + 0.5) / s);
-            let aa = |d: f32| (0.5 - d * s).clamp(0.0, 1.0);
-            let a_body = aa(sd(x, y, 32.0, 32.0, 19.0, 29.0, 7.0));
-            let a_screen = aa(sd(x, y, 32.0, 29.0, 14.0, 21.0, 3.0));
-            let a_bar = aa(sd(x, y, 32.0, 55.0, 4.0, 1.2, 1.2));
-            let mix = |a: f32, b: f32| a * (1.0 - a_screen) + b * a_screen;
-            let mut col = [mix(79.0, 20.0), mix(140.0, 24.0), mix(255.0, 32.0)];
-            for c in col.iter_mut() {
-                *c = *c * (1.0 - a_bar) + 255.0 * a_bar;
-            }
+            let qx = ((x - 32.0).abs() - (half - rad)).max(0.0);
+            let qy = ((y - 32.0).abs() - (half - rad)).max(0.0);
+            let d = (qx * qx + qy * qy).sqrt() - rad;
+            let tile = (0.5 - d * s).clamp(0.0, 1.0);
+            let a = g[(py * n + px) as usize];
+            let c = (bg * (1.0 - a) + fg * a) as u8;
             let i = ((py * n + px) * 4) as usize;
-            out[i] = col[0] as u8;
-            out[i + 1] = col[1] as u8;
-            out[i + 2] = col[2] as u8;
-            out[i + 3] = (a_body * 255.0) as u8;
+            out[i..i + 4].copy_from_slice(&[c, c, c, (tile * 255.0) as u8]);
         }
+    }
+    (out, n)
+}
+
+/// 托盘图标（只有线条，透明背景）：dark=true 为白色线条（深色任务栏），否则黑色。
+/// macOS 菜单栏使用黑色版本作为模板图标，系统会按明暗模式自动着色。
+pub fn tray_rgba(n: u32, dark: bool) -> (Vec<u8>, u32) {
+    // 托盘里没有底板：放大线条，铺满图标区域
+    let g = coverage(n, 8.0, 4.0, 56.0, 1.3);
+    let c = if dark { 255 } else { 0 };
+    let mut out = vec![0u8; (n * n * 4) as usize];
+    for (i, a) in g.iter().enumerate() {
+        out[i * 4..i * 4 + 4].copy_from_slice(&[c, c, c, (a * 255.0) as u8]);
     }
     (out, n)
 }
@@ -127,5 +236,18 @@ mod tests {
         let p = super::png(16);
         assert_eq!(&p[1..4], b"PNG");
         assert_eq!(&super::ico()[..4], &[0, 0, 1, 0]);
+    }
+
+    #[test]
+    fn glyph_is_drawn() {
+        // 三段曲线都在画面内且有足够的笔画
+        let (px, n) = super::rgba(64);
+        let white = px.chunks(4).filter(|c| c[0] > 200 && c[3] > 200).count();
+        assert!(white > 300 && white < 1600, "{white}");
+        // 四角透明（圆角方块）
+        assert_eq!(px[3], 0);
+        assert_eq!(px[((n * n - 1) * 4 + 3) as usize], 0);
+        let (t, _) = super::tray_rgba(32, false);
+        assert!(t.chunks(4).any(|c| c[3] > 200));
     }
 }

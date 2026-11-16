@@ -278,6 +278,8 @@ pub struct AppState {
     pub access: access::Access,
     /// 插件管理器
     pub plugins: plugins::Plugins,
+    /// 共享投屏会话（同一台设备只有一个 scrcpy-server）
+    pub mirrors: scrcpy::Mirrors,
 }
 
 type Shared = Arc<AppState>;
@@ -341,6 +343,7 @@ pub async fn start(cfg: Config) -> Result<Started, StartError> {
         agent: agent::AgentState::default(),
         access: access::Access::load(&cfg.data_dir, cfg.allow_hosts.clone(), std::slice::from_ref(&cfg.name)),
         plugins,
+        mirrors: scrcpy::Mirrors::default(),
         cfg,
     });
     let app = router(state.clone());
@@ -391,6 +394,40 @@ pub async fn start(cfg: Config) -> Result<Started, StartError> {
     Ok(Started { port, https_port, state })
 }
 
+/// 桌面版注册的“显示窗口”回调：再次启动 DroidBridge 时，由新进程请求已在运行的那个显示窗口
+static SHOW_HOOK: std::sync::OnceLock<Box<dyn Fn() + Send + Sync>> = std::sync::OnceLock::new();
+
+/// 桌面版调用：注册显示窗口的回调（只能注册一次）
+pub fn set_show_hook(f: impl Fn() + Send + Sync + 'static) {
+    let _ = SHOW_HOOK.set(Box::new(f));
+}
+
+/// 请求本机已在运行的 DroidBridge 桌面版显示窗口；对方是服务版或旧版本时返回 false
+pub async fn request_show(addr: &str, token: Option<&str>) -> bool {
+    let path = match token {
+        Some(t) => format!("/api/app/show?token={}", util::url_encode(t)),
+        None => "/api/app/show".to_string(),
+    };
+    match peers::http_request(addr, "POST", &path, b"{}", std::time::Duration::from_secs(3)).await {
+        Ok((200, body)) => serde_json::from_slice::<serde_json::Value>(&body).ok().and_then(|v| v.get("shown").and_then(|s| s.as_bool())).unwrap_or(false),
+        _ => false,
+    }
+}
+
+/// 显示桌面版窗口（只接受本机请求）
+async fn app_show(State(st): State<Shared>, ConnectInfo(addr): ConnectInfo<SocketAddr>) -> Response {
+    if !st.access.is_local_ip(addr.ip()) {
+        return err(StatusCode::FORBIDDEN, tr!("仅本机可执行此操作", "Only local requests can do this"));
+    }
+    match SHOW_HOOK.get() {
+        Some(f) => {
+            f();
+            Json(json!({"shown": true})).into_response()
+        }
+        None => Json(json!({"shown": false})).into_response(),
+    }
+}
+
 fn router(state: Shared) -> Router {
     Router::new()
         .route("/", get(index))
@@ -398,6 +435,8 @@ fn router(state: Shared) -> Router {
         .route("/js/{file}", get(asset_js))
         .route("/api/info", get(info))
         .route("/api/devices", get(devices))
+        .route("/api/mirrors", get(mirrors_list))
+        .route("/api/app/show", post(app_show))
         .route("/api/peers", get(list_peers).post(add_peer))
         .route("/api/peers/{id}", put(edit_peer).delete(remove_peer))
         .route("/api/peers/pair", post(peer_pair_start))
@@ -625,6 +664,12 @@ async fn devices(State(st): State<Shared>, Query(q): Query<HashMap<String, Strin
 
 async fn list_peers(State(st): State<Shared>) -> Json<Vec<peers::PeerPublic>> {
     Json(st.peers.list().await)
+}
+
+/// 本机（或 ?peer= 指定的远程电脑）当前所有共享投屏会话的概况，供侧栏显示
+async fn mirrors_list(State(st): State<Shared>, Query(q): Query<HashMap<String, String>>) -> Response {
+    let st2 = st.clone();
+    local_or_peer(&st, &q, "GET", "/api/mirrors", b"", || async move { Ok(scrcpy::mirrors_json(&st2)) }).await
 }
 
 #[derive(Deserialize)]
@@ -1071,8 +1116,14 @@ async fn ws_stream(State(st): State<Shared>, ws: WebSocketUpgrade, req_uri: axum
         audio_codec: q.get("audio_codec").cloned().unwrap_or_else(|| "opus".into()),
         audio_dup: q.get("audio_dup").is_some_and(|v| v == "1" || v == "true"),
     };
+    // 观看者身份（多人共享投屏）：id 与名称由前端提供，非法时后端生成 / 清洗
+    let guest = scrcpy::Guest {
+        id: scrcpy::sanitize_vid(q.get("vid").map(String::as_str)),
+        name: scrcpy::sanitize_who(q.get("who").map(String::as_str)),
+        force: q.get("force").is_some_and(|v| v == "1" || v == "true"),
+    };
     let en = i18n::is_en();
-    ws.on_upgrade(move |socket| i18n::REQUEST_EN.scope(en, scrcpy::run_session(st, serial, opts, socket)))
+    ws.on_upgrade(move |socket| i18n::REQUEST_EN.scope(en, scrcpy::run_session(st, serial, opts, guest, socket)))
 }
 
 // ---------------------------------------------------------------- 发现与无线 adb
@@ -1335,6 +1386,7 @@ mod tests {
             agent: agent::AgentState::default(),
             access: access::Access::load(&cfg.data_dir, vec![], &[]),
             plugins: plugins::Plugins::new(&cfg.data_dir),
+            mirrors: scrcpy::Mirrors::default(),
             cfg,
         })
     }
