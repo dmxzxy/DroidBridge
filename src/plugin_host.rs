@@ -257,14 +257,16 @@ impl Driver {
         let mut due = Vec::new();
         self.timers.retain(|id, t| {
             if t.due <= now {
-                due.push((*id, t.interval));
+                due.push((t.due, *id, t.interval));
                 false
             } else {
                 true
             }
         });
         did |= !due.is_empty();
-        for (id, interval) in due {
+        // 同时到期的按到期时间（再按创建顺序）触发，不能依赖 HashMap 的遍历顺序
+        due.sort_by_key(|(d, id, _)| (*d, *id));
+        for (_, id, interval) in due {
             match interval {
                 Some(iv) => {
                     self.timers.insert(

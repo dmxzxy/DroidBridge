@@ -418,6 +418,25 @@ end)
 }
 
 #[test]
+fn overdue_timers_fire_in_due_order() {
+    // 宿主被卡住一会儿后，多个已到期的定时器要按到期顺序触发
+    let mut h = Harness::new(
+        "timer-order",
+        r#"
+db.after(0.05, function() print("third") end)
+db.after(0.01, function() print("first") end)
+db.after(0.03, function() print("second") end)
+"#,
+        HostConfig::default(),
+    );
+    std::thread::sleep(Duration::from_millis(120));
+    h.pump();
+    let text = h.log_text();
+    let pos = |s: &str| text.find(s).unwrap_or(usize::MAX);
+    assert!(pos("first") < pos("second") && pos("second") < pos("third"), "日志: {text}");
+}
+
+#[test]
 fn null_fields_are_encoded_as_json_null() {
     let mut h = Harness::new(
         "null",
