@@ -497,11 +497,32 @@ fn temp_dir() -> PathBuf {
     dir
 }
 
-/// `target/<profile>/deps/shared_mirror-*.exe` → `target/<profile>/examples/fake_adb(.exe)`
+/// 假 adb（examples/fake_adb）：`cargo test` 会顺带构建 examples。
+/// 测试程序可能在 `target/<profile>/deps/`，也可能在新版 cargo 的 `target/<profile>/build/<包>/<hash>/deps/`，
+/// 所以沿着上级目录逐级查找 `examples/fake_adb(.exe)`
 fn fake_adb() -> PathBuf {
     let exe = std::env::current_exe().expect("current_exe");
     let name = if cfg!(windows) { "fake_adb.exe" } else { "fake_adb" };
-    exe.parent().and_then(|deps| deps.parent()).expect("target 目录").join("examples").join(name)
+    exe.ancestors()
+        .skip(1)
+        .map(|d| d.join("examples").join(name))
+        .find(|p| p.is_file())
+        .or_else(build_fake_adb)
+        .unwrap_or_else(|| exe.parent().and_then(|deps| deps.parent()).expect("target 目录").join("examples").join(name))
+}
+
+/// Fallback: build it with the cargo that is running this test and read the path from its JSON output.
+fn build_fake_adb() -> Option<PathBuf> {
+    let cargo = std::env::var_os("CARGO")?;
+    let out = std::process::Command::new(cargo)
+        .args(["build", "--example", "fake_adb", "--message-format=json"])
+        .current_dir(env!("CARGO_MANIFEST_DIR"))
+        .output()
+        .ok()?;
+    String::from_utf8_lossy(&out.stdout).lines().filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok()).find_map(|v| {
+        let is_fake = v.get("target").and_then(|t| t.get("name")).and_then(|n| n.as_str()) == Some("fake_adb");
+        v.get("executable").and_then(|e| e.as_str()).filter(|_| is_fake).map(PathBuf::from)
+    })
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
