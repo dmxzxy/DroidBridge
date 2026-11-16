@@ -72,6 +72,7 @@ async function refreshAll() {
   try { await loadPeers(); } catch {}
   await Promise.all([...hosts.values()].map(refreshHost).concat(api('/api/discovered').then(r => { FOUND = r.list || []; }, () => {})));
   renderSide();
+  pollPairRequests();
 }
 
 /** 在电脑的设备列表中找到同一台设备（无线重连后 serial 可能变化，按 uid 匹配） */
@@ -86,6 +87,9 @@ function findViewer(hst, dev) {
   return null;
 }
 
+/** 远程电脑的错误是否表示“未授权本机 / 令牌错误” */
+const needsAuth = (msg) => /授权|令牌|token|authoriz/i.test(msg || '');
+
 /** 设备行副标题：连接方式 + 简短标识（无线设备的 mDNS 名称太长，只显示“无线”） */
 function devSub(d) {
   if (!d.wireless) return 'USB · ' + d.serial;
@@ -95,6 +99,9 @@ function devSub(d) {
 function devRows(hst, emptyEl) {
   if (!hst.loaded) return [h('div', { class: 'empty' }, t('正在读取…'))];
   // 详细错误放在标题行的提示里，这里只给出处理入口
+  if (hst.error && hst.remote && needsAuth(hst.error)) return [h('div', { class: 'empty' },
+    h('button', { class: 'linkbtn', type: 'button', onclick: () => requestPeerAuth({ id: hst.id, addr: hst.addr, name: hst.name }) }, t('请求授权')),
+    ' · ', h('button', { class: 'linkbtn', type: 'button', onclick: () => peerDialog(hst) }, t('填写令牌')))];
   if (hst.error) return [h('div', { class: 'empty' },
     h('button', { class: 'linkbtn', type: 'button', onclick: async () => { await refreshHost(hst); renderSide(); if (hst.error) toast(hst.error, { kind: 'bad', ms: 5000 }); } }, t('重试')),
     hst.remote ? [' · ', h('button', { class: 'linkbtn', type: 'button', onclick: () => peerDialog(hst) }, t('编辑'))] : null)];
@@ -109,6 +116,7 @@ function devRows(hst, emptyEl) {
       onclick: () => ready ? openViewer(hst, d) : toast(STATE_HINT[d.state] || (t('设备状态：') + d.state)),
     }, h('span', { class: 'dot ' + (ready ? 'ok' : 'warn') }),
       h('div', { class: 't' }, h('b', {}, d.model || d.serial), h('small', {}, ready ? devSub(d) : (STATE_HINT[d.state] || d.serial))),
+      ...pluginBadges(hst, d),
       ready ? null : h('span', { class: 'st' }, STATE_TEXT[d.state] || d.state),
       ready ? ib('more', t('更多'), e => { e.stopPropagation(); deviceMenu(e.currentTarget, hst, d); }) : null), () => deviceItems(hst, d));
   });
@@ -126,6 +134,7 @@ function deviceItems(hst, dev) {
     ready ? { icon: 'grid', label: t('应用管理…'), fn: () => appsDialog(hst, dev) } : null,
     ready ? { icon: 'folder', label: t('文件管理…'), fn: () => open ? open.toggleFiles(true) : filesDialog(hst, dev) } : null,
     ready ? '-' : null,
+    ...pluginMenuItems(hst, 'device', { serial: dev.serial }),
     { icon: 'copy', label: t('复制序列号'), fn: () => copyText(dev.serial) },
   ];
 }
@@ -157,7 +166,7 @@ function hostGroup(hst, emptyEl) {
   const folded = pref.get(key, '0') === '1';
   const devs = hst.devices || [];
   const viewing = [...viewers.values()].filter(v => v.host.id === hst.id).length;
-  const short = hst.error ? (/令牌|token/i.test(hst.error) ? t('令牌错误') : t('无法连接')) : null;
+  const short = hst.error ? (needsAuth(hst.error) ? t('需要授权') : t('无法连接')) : null;
   const status = short || (!hst.loaded ? t('正在读取…') : !devs.length ? t('没有设备')
     : t('{0} 台设备', devs.length) + (viewing ? ' · ' + t('{0} 台投屏中', viewing) : ''));
   const upd = local ? null : hst.updating
@@ -191,4 +200,6 @@ function renderSideFoot() {
   foot.replaceChildren(h('button', { class: 'add-peer', type: 'button', onclick: () => peerDialog() },
     h('span', { html: svg('plus') }).firstChild, h('span', { class: 't' }, t('添加远程电脑')),
     n ? h('span', { class: 'found-n', title: t('在局域网中发现 {0} 台电脑', n) }, t('发现 {0} 台', n)) : null));
+  // 插件：状态栏项 + “工具”菜单入口
+  if (typeof pluginRenderSideFoot === 'function') pluginRenderSideFoot(foot);
 }

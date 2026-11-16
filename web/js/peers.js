@@ -2,13 +2,14 @@
 // 由 web/index.html 拆分而来；经典脚本，按 index.html 中的顺序加载，共享全局作用域。
 'use strict';
 
-function hostMenu(anchor, r) { menu(anchor, hostItems(r)); }
+function hostMenu(anchor, r) { menu(anchor, hostItems(r).filter(Boolean)); }
 function hostItems(r) {
   return [
     ...(needsUpdate(r) ? [{ icon: 'download', label: t('更新到 {0}', INFO.version), fn: () => updatePeer(r) }, '-'] : []),
     { icon: 'wifi', label: t('无线连接设备…'), fn: () => wirelessDialog(r) },
     { icon: 'refresh', label: t('刷新'), fn: async () => { await refreshHost(r); renderSide(); if (r.error) toast(r.error, { kind: 'bad', ms: 4000 }); } },
     { icon: 'edit', label: t('编辑'), fn: () => peerDialog(r) },
+    r.error ? null : { icon: 'lock', label: t('它授权的电脑和浏览器…'), fn: () => clientsDialog(r) },
     { icon: 'download', label: t('通过 SSH 重新安装…'), fn: () => peerDialog(r, { install: true }) },
     { icon: 'copy', label: t('复制地址'), fn: () => copyText(r.addr) },
     '-',
@@ -76,7 +77,7 @@ function peerDialog(p, opts = {}) {
       const busy = adding === f.addr;
       return ctxMenu(h('div', { class: 'found', title: f.addr, onclick: () => pickFound(f) },
         h('span', { class: 'hn' }, f.name), h('span', { class: 'meta' }, f.addr),
-        f.auth ? h('span', { class: 'lock', title: t('需要访问令牌') }, t('需令牌')) : null,
+        f.auth && !f.pairing ? h('span', { class: 'lock', title: t('需要访问令牌') }, t('需令牌')) : null,
         busy ? h('span', { class: 'spin sm' }) : h('button', { class: 'btn sm', type: 'button', onclick: e => { e.stopPropagation(); pickFound(f); } }, t('添加'))), () => [
         { icon: 'plus', label: t('添加'), fn: () => pickFound(f) },
         { icon: 'copy', label: t('复制地址'), fn: () => copyText(f.addr) },
@@ -86,15 +87,18 @@ function peerDialog(p, opts = {}) {
   async function pickFound(f) {
     if (adding) return;
     err.textContent = '';
-    // 对方设置了访问令牌：填好地址，等用户输入令牌
-    if (f.auth) { addr.value = f.addr; name.value = name.value || f.name; tokenLink.hidden = true; tokenField.hidden = false; token.focus(); return; }
+    // 旧版本且设置了访问令牌：填好地址，等用户输入令牌（新版本走授权请求）
+    if (f.auth && !f.pairing) { addr.value = f.addr; name.value = name.value || f.name; tokenLink.hidden = true; tokenField.hidden = false; token.focus(); return; }
     adding = f.addr; renderFound();
     try {
       const res = await api('/api/peers', { method: 'POST', body: JSON.stringify({ addr: f.addr, name: '' }) });
       dlg.close();
       toast(t('已添加 ') + res.name, { kind: 'ok' });
       refreshAll();
-    } catch (e) { err.textContent = e.message; }
+    } catch (e) {
+      if (e.body && e.body.need_pair) { dlg.close(); requestPeerAuth({ addr: f.addr, name: f.name }); }
+      else err.textContent = e.message;
+    }
     adding = null; if (dlg.open) renderFound();
   }
   async function pollFound() {
@@ -178,6 +182,11 @@ function peerDialog(p, opts = {}) {
       refreshAll();
     } catch (e) {
       ok.disabled = false; ok.textContent = label;
+      if (e.body && e.body.need_pair) {
+        dlg.close();
+        requestPeerAuth({ addr: addr.value, name: name.value, id: editing ? p.id : null });
+        return;
+      }
       err.replaceChildren(e.message);
       if (/令牌|token/i.test(e.message)) { tokenLink.hidden = true; tokenField.hidden = false; token.focus(); }
       else if (!editing && /无法连接|无法访问|拒绝|refused|超时|timed out|cannot (connect|reach)/i.test(e.message)) {
@@ -353,7 +362,8 @@ async function wirelessAction(v, path, label) {
   tt.close(4500);
 }
 
-function settingsDialog() {
+/** 设置：左侧页签（常规 / 连接 / 插件）；tab 可指定打开哪一页 */
+function settingsDialog(tab) {
   let note = null;
   const changed = () => { if (viewers.size && note) note.hidden = false; };
   const row = (label, ...right) => h('div', { class: 'set-r' }, h('span', { class: 'k' }, label), ...right);
@@ -395,24 +405,49 @@ function settingsDialog() {
   const group = (title, ...rows) => h('section', { class: 'set-g' }, h('div', { class: 'set-t' }, title), h('div', { class: 'set-c' }, rows));
   note = h('div', { class: 'set-n', hidden: true }, h('span', {}, t('已打开的投屏需重新连接才会生效')),
     h('button', { class: 'linkbtn', type: 'button', onclick: () => { for (const v of viewers.values()) v.reconnect(); note.hidden = true; } }, t('重新连接')));
-  const body = [
-    group(t('画面'), sel('size'), sel('rate'), sel('fps'), row(t('保持屏幕常亮'), sw('awake', '1', changed))),
-    group(t('声音'),
-      row(req(t('默认转发声音'), 'Android 11+'), sw('audio', '0')),
-      row(req(t('同时在手机上播放'), 'Android 13+'), sw('audiodup', '0', changed))),
-    group(t('通用'),
-      row(LANG === 'zh' ? req('语言', 'Language') : req('Language', '语言'), lang),
-      row(t('截图保存位置'), dirEl, ...dirTools)),
-    group(t('AI 接入（MCP）'),
-      row(t('地址'), h('span', { class: 'v mono' }, mcpUrl), ib('copy', t('复制'), () => copyText(mcpUrl)))),
-    group(t('本机'),
-      updateSettingRow(),
-      row(t('名称'), h('span', { class: 'v' }, INFO ? INFO.name : '—')),
-      ...(ips.length ? ips : ['—']).map((a, i) => row(i ? '' : t('地址'), h('span', { class: 'v mono' }, a), a === '—' ? null : ib('copy', t('复制'), () => copyText(a))))),
-    note,
-  ];
+  const pages = {
+    general: { icon: 'sliders', label: t('常规'), build: () => [
+      group(t('画面'), sel('size'), sel('rate'), sel('fps'), row(t('保持屏幕常亮'), sw('awake', '1', changed))),
+      group(t('声音'),
+        row(req(t('默认转发声音'), 'Android 11+'), sw('audio', '0')),
+        row(req(t('同时在手机上播放'), 'Android 13+'), sw('audiodup', '0', changed))),
+      group(t('通用'),
+        row(LANG === 'zh' ? req('语言', 'Language') : req('Language', '语言'), lang),
+        row(t('截图保存位置'), dirEl, ...dirTools)),
+      note,
+    ] },
+    connect: { icon: 'link', label: t('连接'), build: () => [
+      securityGroup(group, row),
+      group(t('AI 接入（MCP）'),
+        row(t('地址'), h('span', { class: 'v mono' }, mcpUrl), ib('copy', t('复制'), () => copyText(mcpUrl)))),
+      group(t('本机'),
+        updateSettingRow(),
+        row(t('名称'), h('span', { class: 'v' }, INFO ? INFO.name : '—')),
+        ...(ips.length ? ips : ['—']).map((a, i) => row(i ? '' : t('地址'), h('span', { class: 'v mono' }, a), a === '—' ? null : ib('copy', t('复制'), () => copyText(a))))),
+    ] },
+    plugins: { icon: 'puzzle', label: t('插件'), build: () => [pluginSettingsPane()] },
+  };
+  let cur = typeof tab === 'string' && pages[tab] ? tab : pref.get('settab', 'general');
+  if (!pages[cur]) cur = 'general';
+  const content = h('div', { class: 'set-page' });
+  const tabs = h('nav', { class: 'set-tabs', role: 'tablist' });
+  const built = {};
+  const show = (k) => {
+    cur = k; pref.set('settab', k);
+    for (const b of tabs.children) { const on = b.dataset.k === k; b.classList.toggle('on', on); b.setAttribute('aria-selected', on ? 'true' : 'false'); }
+    // 每页只构建一次，来回切换时保留状态（插件页的实时日志等）
+    if (!built[k]) built[k] = h('div', { class: 'set-pg' }, pages[k].build());
+    content.replaceChildren(built[k]);
+    content.scrollTop = 0;
+  };
+  for (const [k, pg] of Object.entries(pages)) {
+    tabs.append(h('button', { type: 'button', role: 'tab', class: 'set-tab', 'data-k': k, title: pg.label, onclick: () => show(k) },
+      h('span', { class: 'ico', html: svg(pg.icon) }), h('span', { class: 't' }, pg.label)));
+  }
   const ver = INFO ? h('span', { class: 'set-ver' }, `DroidBridge ${INFO.version} · scrcpy ${INFO.scrcpy}`) : null;
-  const dlg = dialog({ title: t('设置'), body, cls: 'settings', actions: [ver, h('button', { class: 'btn primary', type: 'button', onclick: () => dlg.close() }, t('完成'))] });
+  const dlg = dialog({ title: t('设置'), body: [h('div', { class: 'set-wrap' }, tabs, content)], cls: 'settings', actions: [ver, h('button', { class: 'btn primary', type: 'button', onclick: () => dlg.close() }, t('完成'))] });
+  show(cur);
+  dlg.addEventListener('close', () => { if (typeof pluginSettingsPaneClosed === 'function') pluginSettingsPaneClosed(); });
   if (document.activeElement && dlg.contains(document.activeElement)) document.activeElement.blur();
 }
 
@@ -435,11 +470,17 @@ function appsDialog(hst, dev) {
       render();
     } catch (e) { tt.set(e.message, 'bad'); tt.close(7000); }
   };
-  const moreItems = (a) => [
-    { icon: 'stop', label: t('强制停止'), fn: () => call(a, 'stop', t('正在停止')) },
-    { icon: 'eraser', label: t('清除数据…'), fn: async () => { if (await confirmDialog(t('清除“{0}”的数据？', a.name || a.pkg), t('应用的全部数据、账号和设置都会被删除，无法恢复。'), t('清除数据'), true)) call(a, 'clear', t('正在清除')); } },
-    a.system ? null : { icon: 'trash', label: t('卸载…'), danger: true, fn: async () => { if (await confirmDialog(t('卸载“{0}”？', a.name || a.pkg), t('应用及其数据会从设备上删除。'), t('卸载'), true)) call(a, 'uninstall', t('正在卸载')); } },
-  ].filter(Boolean);
+  const moreItems = (a) => {
+    // 插件贡献：远程电脑上的设备也用本机插件的菜单
+    const plug = pluginMenuItems(hst, 'app', { serial, package: a.pkg });
+    return [
+      ...plug,
+      ...(plug.length ? ['-'] : []),
+      { icon: 'stop', label: t('强制停止'), fn: () => call(a, 'stop', t('正在停止')) },
+      { icon: 'eraser', label: t('清除数据…'), fn: async () => { if (await confirmDialog(t('清除“{0}”的数据？', a.name || a.pkg), t('应用的全部数据、账号和设置都会被删除，无法恢复。'), t('清除数据'), true)) call(a, 'clear', t('正在清除')); } },
+      a.system ? null : { icon: 'trash', label: t('卸载…'), danger: true, fn: async () => { if (await confirmDialog(t('卸载“{0}”？', a.name || a.pkg), t('应用及其数据会从设备上删除。'), t('卸载'), true)) call(a, 'uninstall', t('正在卸载')); } },
+    ].filter(Boolean);
+  };
   const more = (btn, a) => menu(btn, moreItems(a));
   function render() {
     const q = search.value.trim().toLowerCase();

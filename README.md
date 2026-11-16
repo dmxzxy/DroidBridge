@@ -18,6 +18,7 @@ See and control Android devices from your computer — not only the ones plugged
 - **Files** — fast storage browser next to the screen or in its own window: thumbnails, preview, multi-select, upload, download, rename, delete, install APKs
 - **Batch install & group control** — install one APK on many devices at once; mirror taps and keys on several devices
 - **AI agents (MCP)** — let Claude Code, Cursor and other MCP clients read the screen and operate any device; you watch every action live and can pause the AI
+- **Plugins (Lua)** — build project-specific tools: menu items for devices, apps and files, panels next to the screen, status items, performance metrics, log highlights and AI tools; plugins run in separate processes, so a broken plugin cannot take the app down. See [docs/plugins/README.md](docs/plugins/README.md) (Chinese)
 - **Install APKs / send files** — drop them onto a device screen
 - **Gallery** — screenshots and recordings are saved on the node and browsed in a gallery (filter by type / device, preview, download, reveal in file manager)
 - **Desktop app or browser** — native desktop app for Windows, macOS and Linux; Windows has an installer and the desktop app updates itself; phones and other computers can also use a browser
@@ -67,7 +68,7 @@ The desktop app also runs the server, so other computers can add it. Use the ser
 
 1. On the phone, enable **Developer options → USB debugging**, connect it, and tap **Allow**. Xiaomi / Redmi devices also need **USB debugging (Security settings)**, otherwise touches and typing don't work.
 2. Start DroidBridge and click a device in the sidebar.
-3. Other computers running DroidBridge on the same LAN appear under **Found on your network**; click **+** to add one. You can also click **+** next to **Remote computers** and enter an IP (default port 8730).
+3. Other computers running DroidBridge on the same LAN appear under **Found on your network**; click **+** to add one. You can also click **+** next to **Remote computers** and enter an IP (default port 8730). The other computer must **allow** this one the first time: both screens show the same 6-digit code, and after you click **Allow** this computer is remembered (see [Security](#security)).
    - Windows: run DroidBridge on that computer.
    - macOS / Linux without DroidBridge: choose the **Install over SSH** tab. Sign in with your SSH keys (`~/.ssh`, ssh-agent, `~/.ssh/config`), a password, or a specific key file. With a password, **Remember** adds this computer's public key so later reinstalls need no password; passwords are never stored. DroidBridge installs the prebuilt server of the same version from GitHub Releases (the remote computer downloads it; if it cannot reach GitHub, this computer downloads and uploads it; the SHA-256 checksum is verified). If neither works, or for development builds, it uploads the source and builds it there (installing Rust with rustup if needed). It then uses an existing `adb` or the bundled platform-tools, and registers a login service (launchd / `systemd --user`) that restarts automatically.
 4. If the firewall asks, allow DroidBridge on private networks; otherwise other computers cannot connect.
@@ -185,7 +186,7 @@ claude mcp add --transport http droidbridge http://127.0.0.1:8730/mcp
 { "mcpServers": { "droidbridge": { "url": "http://127.0.0.1:8730/mcp" } } }
 ```
 
-With `--token`, send it as `Authorization: Bearer <token>` (or append `?token=<token>` to the URL).
+Clients on the same computer need no token. For an MCP client on another computer, create a token in **Settings → Security → Authorized computers and browsers → Create access token** and send it as `Authorization: Bearer <token>` (or append `?token=<token>` to the URL).
 
 Tools: `list_devices`, `read_screen` (UI elements with text, ids and coordinates — cheap and precise), `screenshot`, `tap` (by element index or coordinates), `swipe`, `type_text` (any language), `press_key`, `list_apps`, `launch_app`, `stop_app`, `logcat`, `perf`, `shell` (read-only queries only), `wait`.
 
@@ -194,7 +195,7 @@ While an AI operates a device, its window shows a bar with the current action an
 Notes:
 - `read_screen` uses `uiautomator`; it cannot read games, constantly animating screens or secure screens, and on tablets with split-screen apps it may read only the focused pane — the AI falls back to `screenshot`.
 - `type_text` pastes through the device clipboard, so the typed text stays in the clipboard.
-- Anyone who can reach the port can use these tools; see [Security](#security).
+- Only this computer and computers or tokens it has authorized can use these tools; see [Security](#security).
 
 ### Language
 
@@ -202,13 +203,18 @@ The UI follows the system language (Chinese or English). Change it in **Settings
 
 ## Security
 
-DroidBridge gives full control over the attached devices and requires **no authentication by default**. Only use it on trusted networks:
+DroidBridge gives full control over the attached devices, so access is limited:
 
-- Set an access token with `--token <token>` (required by the UI and by other nodes), or use `--bind 127.0.0.1` to allow local access only.
+- **This computer** can use it without signing in.
+- **Other computers and browsers must be authorized.** Adding a remote computer, or opening `https://<ip>:8731` on a phone, sends a connection request. The computer being connected to shows it with a 6-digit code; check the code and click **Allow**. The requester gets its own token and is not asked again. A computer without a screen (installed over SSH) shows requests in the window of any computer it has already authorized.
+- Installing over SSH authorizes the installing computer automatically (signing in over SSH already proves you own it).
+- **Settings → Security → Authorized computers and browsers** lists who can connect, with **Revoke** buttons. The **⋯** menu of a remote computer shows the same list for that computer.
+- Requests from other websites open in your browser are blocked, so a web page cannot quietly watch or control your devices. To use DroidBridge through a reverse proxy or a custom domain, allow it with `--allow-host <name>`.
+- **Let computers on the LAN find this computer** (Settings → Security) controls the UDP 8730 broadcast of the computer name and port. Turned off, this computer still finds others but does not announce itself; `--no-discovery` turns discovery off entirely (as does `--bind 127.0.0.1`). Being found does not grant access.
+- `--token <token>` sets a fixed token that is accepted everywhere (also needed on this computer when set). Scripts, AI clients and older DroidBridge versions can also use a token created under **Create access token**.
+- `--open` restores the old behavior of letting anyone on the LAN connect without authorization. Not recommended.
 - Do not expose the ports to the internet.
-- The MCP endpoint (`/mcp`) lets AI clients operate the devices; it uses the same token.
-- LAN discovery broadcasts the computer name and HTTP port on UDP 8730. Disable it with `--no-discovery` (it is also off with `--bind 127.0.0.1`).
-- Tokens of remote computers are stored in plain text in `peers.json` in the data directory.
+- Authorized tokens are stored as SHA-256 hashes in `clients.json`; the tokens this computer uses for remote computers are stored in plain text in `peers.json` in the data directory.
 
 ## Command line
 
@@ -216,7 +222,9 @@ DroidBridge gives full control over the attached devices and requires **no authe
 --port <port>         HTTP port (default 8730)
 --https-port <port>   HTTPS port (default 8731, 0 to disable)
 --bind <addr>         Listen address (default 0.0.0.0)
---token <token>       Access token (or the DROIDBRIDGE_TOKEN environment variable)
+--token <token>       Fixed access token (or the DROIDBRIDGE_TOKEN environment variable)
+--open                Anyone on the LAN may connect without authorization (not recommended)
+--allow-host <host>   Allow access through this host name (reverse proxy; repeatable)
 --name <name>         Display name (default: computer name)
 --adb <path>          Path to adb (default: bundled platform-tools, ANDROID_HOME, common locations, PATH)
 --data <dir>          Data directory (see below)
@@ -250,7 +258,8 @@ Releases are built by GitHub Actions: pushing a `v*` tag builds all platforms an
 ### Layout
 
 ```
-src/lib.rs          HTTP server, routes, token check, remote computers, uploads
+src/lib.rs          HTTP server, routes, remote computers, uploads
+src/access.rs       access control: cross-site blocking, authorization requests, authorized clients
 src/main.rs         server entry point
 src/bin/desktop.rs  desktop app (tao + wry)
 src/adb.rs          adb invocation and device list
@@ -300,6 +309,11 @@ examples/fakeadb.rs fake adb used by tests (simulated device storage)
 | `POST /api/media/reveal?name=` | Reveal a file in the OS file manager (local requests only) |
 | `GET/PUT /api/settings` | Get / change `media_dir` (PUT is local-only) |
 | `GET /api/discovered` | Computers found on the LAN |
+| `POST /api/pair/request`, `GET/DELETE /api/pair/request/{id}` | Ask this computer for authorization (no token needed); poll returns the token once allowed |
+| `GET /api/pair/pending`, `POST /api/pair/pending/{id}` (`{"allow":bool}`, `?peer=`) | Pending requests; allow or decline |
+| `POST /api/peers/pair`, `GET/DELETE /api/peers/pair/{job}` | Ask a remote computer to authorize this one, then add it |
+| `GET /api/clients`, `DELETE /api/clients/{id}` (`?peer=`), `POST /api/clients` (local only) | Authorized computers and browsers; revoke; create an access token |
+| `GET/PUT /api/access` | Discoverable switch (PUT is local-only) |
 | `POST /api/adb/connect`, `/api/adb/pair`, `/api/adb/disconnect`, `/api/adb/tcpip` (`?peer=`) | Wireless adb |
 | `POST /api/adb/qr`, `GET/DELETE /api/adb/qr/{job}` (`?peer=`) | QR code pairing |
 | `WS /ws/stream?serial=&peer=&max_size=&bit_rate=&max_fps=&audio=` | Video, audio and control |

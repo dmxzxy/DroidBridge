@@ -132,6 +132,7 @@ class FileBrowser {
       { icon: 'upload', label: t('上传文件…'), fn: () => this.picker.click() },
       { icon: 'folderPlus', label: t('新建文件夹…'), fn: () => this.newFolder() },
       { icon: 'refresh', label: t('刷新'), fn: () => this.load(this.path, { force: true }) },
+      ...pluginMenuItems(this.hst, 'file', { serial: this.dev.serial, path: this.path, isDir: true }),
       '-',
       { icon: 'copy', label: t('复制当前路径'), fn: () => copyText(this.path) },
     ]);
@@ -283,6 +284,7 @@ class FileBrowser {
       '-',
       { icon: 'edit', label: t('重命名…'), fn: () => this.rename(e) },
       { icon: 'copy', label: t('复制路径'), fn: () => copyText(full) },
+      ...pluginMenuItems(this.hst, 'file', { serial: this.dev.serial, path: full, isDir: !!e.dir }),
       '-',
       { icon: 'trash', label: t('删除…'), danger: true, fn: () => this.remove([e]) },
     ];

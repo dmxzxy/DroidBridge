@@ -234,8 +234,14 @@ pub async fn install(st: &AppState, r: TwoReq) -> Result<serde_json::Value, Stri
     }
     // /sdcard 下的文件 pm 不一定有权限直接读：先复制到 /data/local/tmp
     let tmp = format!("/data/local/tmp/droidbridge-{:08x}.apk", crate::util::random_scid());
+    // 安装前后对比包名，拿到包名时通知插件 app.installed
+    let before = sh(st, &r.serial, "pm list packages -3", 60).await.unwrap_or_default();
     let out = sh(st, &r.serial, &format!("cp '{path}' '{tmp}' && pm install -r -t '{tmp}' 2>&1; rm -f '{tmp}'"), 300).await?;
     if out.contains("Success") {
+        let after = sh(st, &r.serial, "pm list packages -3", 60).await.unwrap_or_default();
+        for pkg in crate::plugins::new_packages(&before, &after).iter().take(1) {
+            crate::plugins::on_installed(st, &r.serial, pkg);
+        }
         Ok(json!({"ok": true, "msg": tr!("已安装", "Installed")}))
     } else {
         let e = out.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or("").trim().to_string();

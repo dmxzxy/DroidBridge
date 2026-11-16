@@ -13,10 +13,17 @@ async function api(path, opts = {}) {
   let body = null;
   try { body = await r.json(); } catch {}
   if (r.status === 401) {
-    tokenAsk = tokenAsk || promptDialog(t('需要访问令牌'), t('这台 DroidBridge 启用了访问令牌。'), { type: 'password', value: pref.get('token', '') }).finally(() => { tokenAsk = null; });
+    // 从其他设备的浏览器访问：请求这台电脑授权（旧版本或固定令牌：直接输入令牌）
+    tokenAsk = tokenAsk || (body && body.pair ? browserPairDialog()
+      : promptDialog(t('需要访问令牌'), t('这台 DroidBridge 启用了访问令牌。'), { type: 'password', value: pref.get('token', '') }))
+      .finally(() => { tokenAsk = null; });
     const tk = await tokenAsk;
-    if (tk !== null) { pref.set('token', tk.trim()); return api(path, opts); }
+    if (tk) { pref.set('token', tk.trim()); return api(path, opts); }
   }
-  if (!r.ok) throw new Error((body && body.error) || ('HTTP ' + r.status));
+  if (!r.ok) {
+    const e = new Error((body && body.error) || ('HTTP ' + r.status));
+    e.status = r.status; e.body = body;
+    throw e;
+  }
   return body;
 }

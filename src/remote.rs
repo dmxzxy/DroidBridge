@@ -30,6 +30,20 @@ const SOURCES: &[(&str, &[u8])] = &[
     src!("src/mcp.rs"),
     src!("src/apps.rs"),
     src!("src/perf.rs"),
+    src!("src/access.rs"),
+    src!("src/plugins.rs"),
+    src!("src/plugins/calls.rs"),
+    src!("src/plugins/devop.rs"),
+    src!("src/plugins/host.rs"),
+    src!("src/plugins/http.rs"),
+    src!("src/plugins/manifest.rs"),
+    src!("src/plugin_host.rs"),
+    src!("src/plugin_host/api.rs"),
+    src!("src/plugin_host/json.rs"),
+    src!("src/plugin_host/local.rs"),
+    src!("src/plugin_host/state.rs"),
+    src!("src/plugin_host/tests.rs"),
+    src!("src/plugin_prelude.lua"),
     src!("src/control.rs"),
     src!("src/discovery.rs"),
     src!("src/files.rs"),
@@ -58,7 +72,11 @@ const SOURCES: &[(&str, &[u8])] = &[
     src!("web/js/gallery.js"),
     src!("web/js/files.js"),
     src!("web/js/update.js"),
+    src!("web/js/titlebar.js"),
     src!("web/js/contextmenu.js"),
+    src!("web/js/access.js"),
+    src!("web/js/plugins.js"),
+    src!("web/plugin-sdk.js"),
     src!("third_party/scrcpy-server"),
     src!("third_party/scrcpy-version.txt"),
 ];
@@ -192,7 +210,8 @@ impl InstallReq {
             user: ssh.user,
             ssh_port: ssh.port,
             name: peer.name.clone(),
-            token: peer.token.clone(),
+            // 旧记录没有 global_token：那时保存的令牌只可能是安装时设置的固定令牌
+            token: if ssh.global_token.unwrap_or(true) { peer.token.clone() } else { None },
             auth: ssh.auth,
             password: String::new(),
             key_file: ssh.key_file,
@@ -459,6 +478,20 @@ async fn install(ctx: &Ctx, req: &InstallReq, addr: &str) -> Result<serde_json::
         ctx.log(&format!("adb：{adb}"));
     }
 
+    // 没有设置固定令牌时，让对方授权本机（专属令牌，可在对方撤销）
+    let mut client_token = None;
+    if token.is_none() {
+        let me = sh_quote(&ctx.st.cfg.name);
+        let cmd = format!("\"{dir}/bin/droidbridge\" --data \"{dir}/data\" --authorize {me}");
+        match ssh_run(ctx, &t, &cmd, None, Duration::from_secs(30), false).await {
+            Ok(out) => client_token = out.lines().find_map(|l| l.trim().strip_prefix("TOKEN=")).map(|s| s.trim().to_string()),
+            Err(e) => ctx.log(&tr!("未能自动授权本机：{e}", "Could not authorize this computer: {e}")),
+        }
+        if client_token.is_some() {
+            ctx.log(&tr!("对方已授权本机访问", "The remote computer has authorized this computer"));
+        }
+    }
+
     ctx.step(&tr!("启动服务", "Starting service"));
     let name = if req.name.trim().is_empty() { remote_name.clone() } else { req.name.trim().to_string() };
     let mut args = vec![
@@ -505,12 +538,14 @@ async fn install(ctx: &Ctx, req: &InstallReq, addr: &str) -> Result<serde_json::
     }
 
     ctx.step(&tr!("添加到列表", "Adding to list"));
-    let res = crate::save_peer(&ctx.st, None, addr, &req.name, token).await?;
+    let global = token.is_some();
+    let res = crate::save_peer(&ctx.st, None, addr, &req.name, token.or(client_token)).await?;
     let ssh = peers::SshInfo {
         user: t.user.clone(),
         port: t.port,
         auth: if saved_auth.is_empty() { "agent".into() } else { saved_auth },
         key_file: if let Auth::Key { path, .. } = &t.auth { path.clone() } else { String::new() },
+        global_token: Some(global),
     };
     ctx.st.peers.set_ssh(addr, ssh).await;
     Ok(res)

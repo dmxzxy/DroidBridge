@@ -12,19 +12,58 @@ function closeMenu() {
   openMenu = null;
   if (renderPending) setTimeout(renderSide);
 }
+
+/** 菜单项：{icon, label, fn, disabled, danger, sub:[...]}；sub 非空时显示为子菜单 */
+function fillMenu(el, items) {
+  for (const it of items) {
+    if (it === '-') { el.append(h('div', { class: 'sep' })); continue; }
+    if (it.sub && it.sub.length) {
+      const btn = h('button', { class: 'has-sub', type: 'button', role: 'menuitem', 'aria-haspopup': 'menu', 'aria-expanded': 'false',
+        onmousedown: e => e.preventDefault(),
+        onmouseenter: () => openSubMenu(el, btn, it.sub),
+        onclick: (e) => { e.stopPropagation(); openSubMenu(el, btn, it.sub); } },
+        h('span', { html: svg(it.icon) }).firstChild, it.label, h('span', { class: 'caret', html: svg('chevRight') }).firstChild);
+      el.append(btn);
+      continue;
+    }
+    el.append(h('button', { class: it.danger ? 'danger' : '', type: 'button', role: 'menuitem', disabled: !!it.disabled,
+      // mousedown 时不让输入框失去焦点和选区（右键菜单里的剪切/复制/粘贴需要它们）
+      onmousedown: e => e.preventDefault(),
+      onmouseenter: () => closeSubMenu(el),
+      onclick: () => { closeMenu(); it.fn(); } },
+      h('span', { html: svg(it.icon) }).firstChild, it.label));
+  }
+}
+
+/** 在 el 里打开一个子菜单（放在同一个 fixed 容器内，随主菜单一起关闭） */
+function openSubMenu(el, btn, items) {
+  if (el._sub && el._subBtn === btn && el._sub.isConnected) return;
+  closeSubMenu(el);
+  const sub = h('div', { class: 'menu sub', role: 'menu' });
+  fillMenu(sub, items);
+  sub.style.visibility = 'hidden';
+  el.append(sub);
+  const br = btn.getBoundingClientRect(), er = el.getBoundingClientRect();
+  const mw = sub.offsetWidth, mh = sub.offsetHeight;
+  let left = er.right - 4, top = br.top - 6;
+  if (left + mw > innerWidth - 8) left = Math.max(8, er.left - mw + 4);
+  if (top + mh > innerHeight - 8) top = Math.max(8, innerHeight - mh - 8);
+  sub.style.left = left + 'px'; sub.style.top = top + 'px'; sub.style.visibility = '';
+  btn.setAttribute('aria-expanded', 'true');
+  el._sub = sub; el._subBtn = btn;
+}
+function closeSubMenu(el) {
+  if (!el) return;
+  if (el._sub) { el._sub.remove(); el._sub = null; }
+  if (el._subBtn) { el._subBtn.setAttribute('aria-expanded', 'false'); el._subBtn = null; }
+}
+
 function menu(anchor, items) {
   const wasOpen = openMenu && openMenu.anchor === anchor;
   closeMenu();
   if (wasOpen) return;
   const el = h('div', { class: 'menu', role: 'menu' });
-  for (const it of items) {
-    if (it === '-') { el.append(h('div', { class: 'sep' })); continue; }
-    el.append(h('button', { class: it.danger ? 'danger' : '', type: 'button', role: 'menuitem', disabled: !!it.disabled,
-      // mousedown 时不让输入框失去焦点和选区（右键菜单里的剪切/复制/粘贴需要它们）
-      onmousedown: e => e.preventDefault(),
-      onclick: () => { closeMenu(); it.fn(); } },
-      h('span', { html: svg(it.icon) }).firstChild, it.label));
-  }
+  fillMenu(el, items);
   (anchor.closest('dialog[open]') || document.body).append(el);
   const r = anchor.getBoundingClientRect(), mw = el.offsetWidth, mh = el.offsetHeight;
   const point = r.width <= 1 && r.height <= 1;   // 右键菜单：锚点就是鼠标位置

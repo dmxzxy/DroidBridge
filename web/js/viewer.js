@@ -36,6 +36,8 @@ class Viewer {
     this.canvas = h('canvas', { tabindex: '0', width: '360', height: '720' });
     this.ctx = this.canvas.getContext('2d');
     this.overlay = h('div', { class: 'overlay' });
+    // 插件覆盖层：与画面同尺寸，按设备像素绘制；不接收鼠标事件
+    this.pov = h('canvas', { class: 'pov', width: '1', height: '1' });
     this.dot = h('span', { class: 'dot warn' });
     this.nameEl = h('span', { class: 'name' }, this.dev.model || this.dev.serial);
     this.statEl = h('span', { class: 'fps' });
@@ -51,6 +53,8 @@ class Viewer {
     this.typing = h('div', { class: 'typing' }, this.textInput);
     this.kbBtn = ib('keyboard', t('输入文字'), () => this.toggleTyping());
     this.fileInput = h('input', { type: 'file', multiple: true, hidden: true, onchange: () => { this.upload([...this.fileInput.files]); this.fileInput.value = ''; } });
+    this.plugBtn = ib('puzzle', t('插件'), () => pluginDockMenu(this));
+    this.plugBtn.hidden = true;
     this.moreBtn = ib('more', t('更多'), () => this.moreMenu());
     this.logBtn = ib('logs', t('日志'), () => this.toggleLog());
     this.filesBtn = ib('folder', t('文件'), () => this.toggleFiles());
@@ -72,14 +76,14 @@ class Viewer {
       h('div', { class: 'vmain' },
       h('div', { class: 'vbody' },
         h('div', { class: 'vcol' },
-          h('div', { class: 'screen' }, this.canvas, this.ime, this.overlay, this.perfEl, this.aiBar, h('div', { class: 'drop' }, t('松开以安装 APK 或传到手机'))),
+          h('div', { class: 'screen' }, this.canvas, this.pov, this.ime, this.overlay, this.perfEl, this.aiBar, h('div', { class: 'drop' }, t('松开以安装 APK 或传到手机'))),
           h('div', { class: 'nav' }, ib('back', t('返回'), key(AKEY.BACK)), ib('home', t('主页'), key(AKEY.HOME)), ib('recent', t('最近任务'), key(AKEY.APP_SWITCH))),
           this.typing),
         h('div', { class: 'vtools' },
           ib('power', t('电源键'), key(AKEY.POWER)), ib('volUp', t('音量 +'), key(AKEY.VOLUME_UP)), ib('volDown', t('音量 −'), key(AKEY.VOLUME_DOWN)),
           ib('rotate', t('旋转屏幕'), () => this.send({ t: 'cmd', name: 'rotate' })),
           h('div', { class: 'sep' }),
-          ib('camera', t('截取屏幕'), () => this.screenshot()), this.recBtn, this.kbBtn, this.audioBtn, this.logBtn, this.filesBtn, this.perfBtn, this.moreBtn)),
+          ib('camera', t('截取屏幕'), () => this.screenshot()), this.recBtn, this.kbBtn, this.audioBtn, this.logBtn, this.filesBtn, this.plugBtn, this.perfBtn, this.moreBtn)),
       this.vlog),
       this.fileInput);
     this.bindInput();
@@ -184,6 +188,7 @@ class Viewer {
     if (this.recording) this.stopRecord();
     if (this.log) this.log.destroy();
     if (this.files) this.files.destroy();
+    pluginViewerDestroy(this);
     this.teardown();
     clearInterval(this.statTimer);
     if (document.fullscreenElement === this.root) document.exitFullscreen();
@@ -202,6 +207,7 @@ class Viewer {
   toggleLog(force) {
     const open = force === undefined ? !this.log : force;
     if (open && this.files) this.toggleFiles(false);   // 侧栏同一时间只放一个
+    if (open && this.plugDock) pluginDockClose(this);
     if (open && !this.log) { this.log = new LogPanel(this); this.vlog.append(this.log.el); }
     if (!open && this.log) { this.log.destroy(); this.log = null; this.vlog.replaceChildren(); }
     this.root.classList.toggle('with-log', !!(this.log || this.files));
@@ -211,6 +217,7 @@ class Viewer {
   toggleFiles(force) {
     const open = force === undefined ? !this.files : force;
     if (open && this.log) this.toggleLog(false);
+    if (open && this.plugDock) pluginDockClose(this);
     if (open && !this.files) {
       this.files = new FileBrowser(this.host, this.dev, { compact: true, onClose: () => this.toggleFiles(false) });
       this.vlog.append(this.files.el);
@@ -224,10 +231,12 @@ class Viewer {
   // 桌面端布局：窗口宽度跟随画面比例；打开日志时，空间够就放右侧，横屏设备且空间不够时放到画面下方
   fit() {
     const r = this.root;
+    if (this.pov) pluginOverlayFit(this);
     if (!this.vw || !this.vh || isMobile()) { r.style.width = ''; this.vlog.style.width = ''; r.classList.remove('log-bottom'); return; }
     const avail = $('main').clientWidth - 32;
-    const cw = Math.min(this.vw, (innerHeight - 150 - (hasTitlebar() ? 36 : 0)) * this.vw / this.vh);
-    if (!this.log && !this.files) { r.classList.remove('log-bottom'); r.style.width = Math.round(Math.max(300, Math.min(cw + 46, avail))) + 'px'; return; }
+    const sb = document.body.classList.contains('has-sb') ? 24 : 0;
+    const cw = Math.min(this.vw, (innerHeight - 150 - sb - (hasTitlebar() ? 36 : 0)) * this.vw / this.vh);
+    if (!this.log && !this.files && !this.plugDock) { r.classList.remove('log-bottom'); r.style.width = Math.round(Math.max(300, Math.min(cw + 46, avail))) + 'px'; return; }
     const side = avail - (cw + 46);
     const portrait = this.vh >= this.vw;
     if (side >= 360 || portrait || avail - 46 - 400 >= cw * 0.7) {
@@ -318,6 +327,7 @@ class Viewer {
     if (this.canvas.width !== w || this.canvas.height !== ht) { this.canvas.width = w; this.canvas.height = ht; this.vw = w; this.vh = ht; this.fit(); }
     if (!this.vw) { this.vw = w; this.vh = ht; }
     this.ctx.drawImage(f, 0, 0, w, ht);
+    if (this.pov) pluginOverlayPaint(this);
     f.close();
     this.frames++;
     if (!this.gotFrame) { this.gotFrame = true; this.fails = 0; this.overlay.classList.add('hide'); this.setDot('ok'); }
@@ -401,7 +411,8 @@ class Viewer {
     this.perfBtn.classList.toggle('on', this.perfOn);
     this.perfEl.hidden = !this.perfOn;
     this.closePerf();
-    if (this.perfOn) { this.perfHist = []; this.perfEl.replaceChildren(h('div', { class: 'pk' }, t('正在读取性能数据…'))); this.openPerf(); }
+    if (this.perfOn) { this.perfHist = []; pluginPerfStart(this); this.perfEl.replaceChildren(h('div', { class: 'pk' }, t('正在读取性能数据…'))); this.openPerf(); }
+    else pluginPerfStop(this);
   }
   closePerf() { if (this.perfWs) { const w = this.perfWs; this.perfWs = null; try { w.close(); } catch {} } clearTimeout(this.perfRetry); }
   openPerf() {
@@ -434,14 +445,16 @@ class Viewer {
       spark = h('span', { html: `<svg viewBox="0 0 ${w} ${ht}" fill="none" stroke="#7aa7ff" stroke-width="1.2" stroke-linejoin="round"><polyline points="${pts}"/></svg>` }).firstChild;
     }
     const temp = m.cpu_temp ?? m.batt_temp;
-    this.perfEl.replaceChildren(
+    this.perfEl.replaceChildren(...[
       h('div', { class: 'pk' }, m.pkg || '—'),
       h('div', { class: 'pr' }, h('span', { class: 'pl' }, 'FPS'), h('b', {}, n(m.fps)), spark),
       row('CPU', pair(m.app_cpu != null && t('应用') + ' ' + n(m.app_cpu) + '%', m.cpu != null && t('整机') + ' ' + n(m.cpu) + '%')),
       row(t('内存'), pair(m.app_mem != null && t('应用') + ' ' + m.app_mem + ' MB', m.mem_total && t('整机') + ' ' + Math.round(m.mem_used / m.mem_total * 100) + '%')),
       row(t('温度'), pair(m.cpu_temp != null && 'CPU ' + Math.round(m.cpu_temp) + '°C', m.batt_temp != null && t('电池') + ' ' + m.batt_temp.toFixed(1) + '°C'), temp >= 55 ? 'bad' : temp >= 45 ? 'warn' : ''),
       row(t('电量'), m.level == null ? '–' : m.level + '%' + (m.charging ? ' · ' + t('充电中') : ''), m.level != null && m.level <= 15 && !m.charging ? 'warn' : ''),
-    );
+      // 插件指标（每 2 秒拉一次 /api/plugins/metrics）
+      this.plugPerfBox || null,
+    ].filter(Boolean));
   }
   pressKey(code, meta = 0) { this.send({ t: 'key', action: 0, code, meta }); this.send({ t: 'key', action: 1, code, meta }); }
   toggleTyping() {
@@ -709,6 +722,7 @@ function openViewer(hst, dev) {
   if (!window.VideoDecoder) { showNotice(); toast(t('当前浏览器无法解码视频')); document.body.classList.remove('viewing'); return; }
   const v = new Viewer(hst, dev);
   viewers.set(key, v);
+  pluginViewerUpdate(v);
   $('#grid').append(v.root);
   afterViewersChange();
   history.replaceState(null, '', location.search + '#open=' + encodeURIComponent(hst.id) + '|' + encodeURIComponent(dev.serial));

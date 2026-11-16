@@ -97,6 +97,23 @@ fn read_only(tool: &str) -> bool {
 
 /// 在设备所在节点执行一个工具，返回 MCP content 数组
 pub async fn exec(st: &AppState, tool: &str, args: &Value) -> Result<Vec<Value>, String> {
+    // 插件注册的 MCP 工具（名字形如 `<插件id>__<名称>`）：只在插件所在的电脑上执行（SPEC 7.3），
+    // 设备用 SPEC 7.1 的标识（由 mcp.rs 解析好后放在 serial 里）
+    if tool.contains("__") {
+        if !crate::plugins::is_plugin_tool(st, tool) {
+            return Err(tr!("未知工具：{tool}", "Unknown tool: {tool}"));
+        }
+        if let Some(s) = arg_str(args, "serial") {
+            if st.agent.paused(s) {
+                st.agent.emit(s, json!({"action": "blocked"}));
+                return Err(tr!(
+                    "用户已暂停 AI 对这台设备的操作。请告知用户，等待用户在 DroidBridge 中点“继续”后再操作。",
+                    "The user has paused AI control of this device. Tell the user and wait until they click Resume in DroidBridge."
+                ));
+            }
+        }
+        return crate::plugins::mcp_call(st, tool, args).await;
+    }
     let serial = arg_str(args, "serial").ok_or_else(|| tr!("缺少设备", "Missing device"))?.to_string();
     let s = serial.as_str();
     if !read_only(tool) && st.agent.paused(s) {
@@ -296,7 +313,7 @@ fn describe(nodes: &[HashMap<String, String>], k: f64) -> (Vec<String>, Vec<(i32
     (lines, elems)
 }
 
-async fn foreground(st: &AppState, s: &str) -> String {
+pub(crate) async fn foreground(st: &AppState, s: &str) -> String {
     let out = adb::run(&st.cfg.adb, &["-s", s, "shell", "dumpsys activity activities | grep -m1 -E 'topResumedActivity|mResumedActivity'"]).await.unwrap_or_default();
     out.split_whitespace().find(|t| t.contains('/') && t.contains('.')).map(|t| t.trim_matches(|c| c == '{' || c == '}').to_string()).unwrap_or_default()
 }
@@ -413,6 +430,11 @@ async fn swipe(st: &AppState, s: &str, a: &Value) -> Result<Vec<Value>, String> 
     Ok(vec![text(tr!("已滑动", "Swiped"))])
 }
 
+/// 名字 → Android keycode（供插件 `dev:key` 使用）
+pub(crate) fn key_code(name: &str) -> Option<u32> {
+    KEYS.iter().find(|(n, _)| *n == name).map(|(_, c)| *c).or_else(|| name.parse().ok())
+}
+
 const KEYS: &[(&str, u32)] = &[
     ("back", 4), ("home", 3), ("recents", 187), ("enter", 66), ("delete", 67), ("backspace", 67), ("forward_delete", 112), ("tab", 61), ("escape", 111),
     ("menu", 82), ("search", 84), ("power", 26), ("wakeup", 224), ("sleep", 223), ("volume_up", 24), ("volume_down", 25), ("volume_mute", 164),
@@ -453,7 +475,7 @@ async fn type_text(st: &AppState, s: &str, a: &Value) -> Result<Vec<Value>, Stri
 }
 
 /// 通过一个只有控制通道的 scrcpy-server 会话，设置剪贴板并粘贴（支持中文等任意文字）
-async fn paste_text(st: &AppState, s: &str, t: &str) -> Result<(), String> {
+pub(crate) async fn paste_text(st: &AppState, s: &str, t: &str) -> Result<(), String> {
     let adb_path = &st.cfg.adb;
     let jar = st.cfg.server_jar.to_string_lossy().into_owned();
     adb::run_timeout(adb_path, &["-s", s, "push", &jar, AGENT_JAR], Duration::from_secs(30)).await?;
@@ -559,7 +581,7 @@ async fn list_apps(st: &AppState, s: &str, a: &Value) -> Result<Vec<Value>, Stri
     Ok(vec![text(format!("{}\n{}", tr!("{n} 个应用：", "{n} apps:"), lines.join("\n")))])
 }
 
-async fn logcat(st: &AppState, s: &str, a: &Value) -> Result<Vec<Value>, String> {
+pub(crate) async fn logcat(st: &AppState, s: &str, a: &Value) -> Result<Vec<Value>, String> {
     let lines = arg_f64(a, "lines").unwrap_or(200.0).clamp(10.0, 2000.0) as u32;
     let level = arg_str(a, "level").map(|l| l.chars().next().unwrap_or('V').to_ascii_uppercase()).filter(|c| "VDIWEF".contains(*c)).unwrap_or('V');
     let mut cmd = format!("logcat -d -v threadtime -t {} *:{level}", if arg_str(a, "grep").is_some() { lines * 5 } else { lines });

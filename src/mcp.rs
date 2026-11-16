@@ -80,6 +80,39 @@ fn tools() -> Value {
     ])
 }
 
+/// 本机插件注册的工具（名字为 `<插件id>__<名称>`）。
+/// SPEC 7 之后插件能作用于所有电脑上的设备，插件工具只在本机执行，不再合并远程电脑的插件工具。
+fn plugin_tools(st: &AppState) -> Vec<Value> {
+    crate::plugins::mcp_tools(st).into_iter().map(|t| with_device(&t)).collect()
+}
+
+/// 插件工具也接受 `device` 参数（复用 list_devices 的设备 id）
+fn with_device(tool: &Value) -> Value {
+    let mut t = tool.clone();
+    if !t.get("inputSchema").map(|s| s.is_object()).unwrap_or(false) {
+        t["inputSchema"] = json!({"type": "object", "properties": {}, "required": []});
+    }
+    let schema = t["inputSchema"].as_object_mut().unwrap();
+    if !schema.get("properties").map(|p| p.is_object()).unwrap_or(false) {
+        schema.insert("properties".into(), json!({}));
+    }
+    schema["properties"].as_object_mut().unwrap().entry("device").or_insert(json!({
+        "type": "string",
+        "description": "Device id from list_devices. May be omitted when exactly one device is available."
+    }));
+    t
+}
+
+/// 完整工具列表：内置工具 + 本机插件工具
+async fn all_tools(st: &AppState) -> Value {
+    let mut base = tools();
+    let extra = plugin_tools(st);
+    if let (Some(arr), true) = (base.as_array_mut(), !extra.is_empty()) {
+        arr.extend(extra);
+    }
+    base
+}
+
 /// 所有设备：(设备 id, 所在电脑名, 远程电脑 id, serial, model, state)
 async fn all_devices(st: &AppState) -> (Vec<(String, String, Option<String>, String, String, String)>, Vec<String>) {
     let mut out = Vec::new();
@@ -134,8 +167,51 @@ async fn resolve(st: &AppState, device: Option<&str>) -> Result<(Option<String>,
     }
 }
 
+/// 插件工具的 `device` 参数 → SPEC 7.1 的设备标识（本机 serial，远程 `<peerId>/<serial>`）
+async fn plugin_device(st: &AppState, device: Option<&str>) -> Result<Option<String>, String> {
+    let (list, _) = all_devices(st).await;
+    let ready: Vec<_> = list.iter().filter(|d| d.5 == "device").collect();
+    match device.map(str::trim).filter(|s| !s.is_empty()) {
+        // 没给设备：只有一台在线设备时用它，否则由插件自己处理 nil
+        None => Ok(match ready.as_slice() {
+            [d] => Some(d.0.clone()),
+            _ => None,
+        }),
+        Some(id) => {
+            if let Some(d) = list.iter().find(|d| d.0 == id) {
+                return Ok(Some(d.0.clone()));
+            }
+            // 只给了原始 serial：唯一匹配也可以
+            let m: Vec<_> = list.iter().filter(|d| d.3 == id).collect();
+            match m.as_slice() {
+                [d] => Ok(Some(d.0.clone())),
+                _ => Err(format!("Device {id} not found; call list_devices.")),
+            }
+        }
+    }
+}
+
 async fn call(st: &AppState, name: &str, mut args: Value) -> Value {
     let err = |msg: String| json!({"content": [{"type": "text", "text": msg}], "isError": true});
+    if !args.is_object() {
+        args = json!({});
+    }
+    // 插件工具在 A（这台电脑）上执行，设备标识按 SPEC 7.1 传给插件（不转发到远程电脑）
+    if crate::plugins::is_plugin_tool(st, name) {
+        let device = args.get("device").and_then(|v| v.as_str()).map(String::from);
+        let serial = match plugin_device(st, device.as_deref()).await {
+            Ok(s) => s,
+            Err(e) => return err(e),
+        };
+        args["serial"] = match serial {
+            Some(s) => json!(s),
+            None => Value::Null,
+        };
+        return match crate::plugins::mcp_call(st, name, &args).await {
+            Ok(content) => json!({"content": content}),
+            Err(e) => err(e),
+        };
+    }
     if name == "list_devices" {
         let (list, errors) = all_devices(st).await;
         let mut lines: Vec<String> = list
@@ -162,9 +238,6 @@ async fn call(st: &AppState, name: &str, mut args: Value) -> Value {
         Ok(v) => v,
         Err(e) => return err(e),
     };
-    if !args.is_object() {
-        args = json!({});
-    }
     args["serial"] = json!(serial);
     match peer {
         None => match agent::exec(st, name, &args).await {
@@ -203,7 +276,7 @@ async fn rpc(st: &AppState, msg: &Value) -> Option<Value> {
             }))
         }
         "ping" => ok(json!({})),
-        "tools/list" => ok(json!({"tools": tools()})),
+        "tools/list" => ok(json!({"tools": all_tools(st).await})),
         "tools/call" => {
             let p = &msg["params"];
             let name = p["name"].as_str().unwrap_or("");

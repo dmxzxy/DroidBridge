@@ -149,21 +149,51 @@ fn shell(fs: &mut Fs, cmd: &str) -> String {
     if cmd.starts_with("dumpsys battery") {
         return "  level: 100\n".into();
     }
+    // 插件 dev:shell / dev:prop 用的少量命令（e2e 测试）
+    if cmd.starts_with("getprop ") {
+        return "fake-prop\n".into();
+    }
+    if let Some(rest) = cmd.strip_prefix("echo ") {
+        return format!("{}\n", rest.trim_matches(|c| c == '\'' || c == '"'));
+    }
+    if cmd == "pm list packages" || cmd == "pm list packages -3" {
+        return "package:com.fake.app\npackage:com.fake.other\n".into();
+    }
+    if cmd.starts_with("pidof ") {
+        return "1234\n".into();
+    }
+    if cmd.contains("dumpsys activity activities") {
+        return "  topResumedActivity=ActivityRecord{1a2b u0 com.fake.app/.MainActivity t6}\n".into();
+    }
+    if cmd.starts_with("logcat") {
+        return "08-01 12:00:00.123  1234  5678 I FakeTag : hello from fakedevice\n08-01 12:00:01.456  1234  5678 E FakeTag : an error line\n".into();
+    }
     String::new()
 }
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.first().map(String::as_str) == Some("devices") {
+        // FAKEADB_EMPTY=1：模拟一台没有连接任何设备的电脑（插件跨电脑测试用）
+        if std::env::var("FAKEADB_EMPTY").map(|v| v == "1").unwrap_or(false) {
+            println!("List of devices attached");
+            return;
+        }
         println!("List of devices attached\nfakedevice            device product:Fake model:Fake device:fake transport_id:1");
         return;
     }
     // -s <serial> <command…>
-    let idx = args.iter().position(|a| a == "-s").unwrap_or(usize::MAX);
+    let Some(idx) = args.iter().position(|a| a == "-s") else {
+        // start-server / kill-server 等全局命令：什么也不做
+        return;
+    };
     let rest: Vec<&str> = args.iter().skip(idx + 2).map(String::as_str).collect();
     let mut fs = load();
     match rest.as_slice() {
         ["shell", cmd] => print!("{}", shell(&mut fs, cmd)),
+        ["logcat", ..] => print!(
+            "08-01 12:00:00.123  1234  5678 I FakeTag : hello from fakedevice\n08-01 12:00:01.456  1234  5678 E FakeTag : an error line\n"
+        ),
         ["push", local, remote] => {
             let data = std::fs::read(Path::new(local)).unwrap_or_default();
             if !fs.dirs.contains(&parent(remote)) {

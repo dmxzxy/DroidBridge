@@ -3,6 +3,7 @@
 
 #[macro_use]
 pub mod i18n;
+pub mod access;
 pub mod adb;
 pub mod agent;
 pub mod apps;
@@ -15,6 +16,8 @@ pub mod mcp;
 pub mod media;
 pub mod peers;
 pub mod perf;
+pub mod plugin_host;
+pub mod plugins;
 pub mod remote;
 pub mod scrcpy;
 pub mod update;
@@ -58,6 +61,8 @@ const ASSETS: &[(&str, &str, &str)] = &[
     ("js/update.js", "text/javascript; charset=utf-8", include_str!("../web/js/update.js")),
     ("js/titlebar.js", "text/javascript; charset=utf-8", include_str!("../web/js/titlebar.js")),
     ("js/contextmenu.js", "text/javascript; charset=utf-8", include_str!("../web/js/contextmenu.js")),
+    ("js/access.js", "text/javascript; charset=utf-8", include_str!("../web/js/access.js")),
+    ("js/plugins.js", "text/javascript; charset=utf-8", include_str!("../web/js/plugins.js")),
 ];
 
 async fn asset_root(Path(file): Path<String>) -> Response {
@@ -93,6 +98,12 @@ pub struct Config {
     pub discovery: bool,
     /// 命令行指定的媒体目录（优先于 settings.json 与默认值）
     pub media_dir: Option<PathBuf>,
+    /// 局域网内任何人无需授权即可访问（旧版行为）
+    pub open: bool,
+    /// 额外允许的主机名（反向代理、自定义域名）
+    pub allow_hosts: Vec<String>,
+    /// 安全模式：不加载任何插件（仍可在管理界面看到列表）
+    pub no_plugins: bool,
 }
 
 const HELP_ZH: &str = "DroidBridge — 安卓设备投屏与远程操作
@@ -102,13 +113,16 @@ const HELP_ZH: &str = "DroidBridge — 安卓设备投屏与远程操作
   --port <端口>         HTTP 端口（默认 8730）
   --https-port <端口>   HTTPS 端口（默认 8731，0 表示关闭；手机/其他电脑浏览器访问需用 HTTPS）
   --bind <地址>         监听地址（默认 0.0.0.0）
-  --token <令牌>        访问令牌；设置后所有接口都需要令牌
+  --token <令牌>        固定访问令牌，可代替授权（供脚本、AI 客户端、旧版本使用）
+  --open                局域网内任何人无需授权即可访问（不推荐）
+  --allow-host <主机名> 允许通过该域名访问（反向代理时使用，可重复）
   --name <名称>         本机显示名称（默认计算机名）
   --adb <路径>          adb 可执行文件路径（默认自动查找）
   --data <目录>         数据目录
   --media-dir <目录>    截图与录屏保存目录（默认 <data>/media）
   --lang <zh|en>        界面与提示语言（默认跟随系统）
   --no-discovery        不参与局域网自动发现
+  --no-plugins          安全模式：不加载任何插件
   -h, --help            显示帮助
 ";
 
@@ -119,13 +133,16 @@ Usage: droidbridge [options]
   --port <port>         HTTP port (default 8730)
   --https-port <port>   HTTPS port (default 8731, 0 to disable; browsers on other devices need HTTPS)
   --bind <addr>         Listen address (default 0.0.0.0)
-  --token <token>       Access token; required by all APIs when set
+  --token <token>       Fixed access token, accepted instead of authorization (scripts, AI clients, older versions)
+  --open                Anyone on the LAN may connect without authorization (not recommended)
+  --allow-host <host>   Allow access through this host name (reverse proxies; repeatable)
   --name <name>         Display name of this computer (default: host name)
   --adb <path>          Path to adb (found automatically by default)
   --data <dir>          Data directory
   --media-dir <dir>     Where to save screenshots and recordings (default: <data>/media)
   --lang <zh|en>        UI and message language (default: system)
   --no-discovery        Do not take part in LAN discovery
+  --no-plugins          Safe mode: load no plugins
   -h, --help            Show help
 ";
 
@@ -146,6 +163,9 @@ impl Config {
         let mut data = None;
         let mut media_dir = None;
         let mut discovery = true;
+        let mut open = false;
+        let mut no_plugins = false;
+        let mut allow_hosts = Vec::new();
 
         let args: Vec<String> = args.into_iter().collect();
         i18n::init_from_args(&args);
@@ -162,6 +182,9 @@ impl Config {
                 "--data" => data = Some(PathBuf::from(val("--data")?)),
                 "--media-dir" => media_dir = Some(PathBuf::from(val("--media-dir")?)),
                 "--no-discovery" => discovery = false,
+                "--no-plugins" => no_plugins = true,
+                "--open" => open = true,
+                "--allow-host" => allow_hosts.push(val("--allow-host")?),
                 "--lang" => {
                     val("--lang")?;
                 }
@@ -191,8 +214,29 @@ impl Config {
             server_jar: data_dir.join("scrcpy-server.jar"),
             data_dir,
             media_dir,
+            open,
+            allow_hosts,
+            no_plugins,
         }))
     }
+}
+
+/// `--authorize <名称> [--data <目录>]`：在数据目录里授权一个客户端并输出 `TOKEN=<令牌>`。
+/// 通过 SSH 安装时由安装方调用（能 SSH 登录即证明是这台电脑的主人）。返回 None 表示不是该命令。
+pub fn authorize_cli(args: Vec<String>) -> Option<i32> {
+    let i = args.iter().position(|a| a == "--authorize")?;
+    let Some(name) = args.get(i + 1).filter(|n| !n.starts_with("--")) else {
+        eprintln!("--authorize <name>");
+        return Some(2);
+    };
+    let data = args.iter().position(|a| a == "--data").and_then(|j| args.get(j + 1)).map(PathBuf::from).unwrap_or_else(default_data_dir);
+    if let Err(e) = std::fs::create_dir_all(&data) {
+        eprintln!("{e}");
+        return Some(1);
+    }
+    let token = access::Access::load(&data, vec![], &[]).issue(name, "SSH");
+    println!("TOKEN={token}");
+    Some(0)
 }
 
 /// 默认数据目录：Windows 为程序目录下 data（便携）；macOS 为 ~/Library/Application Support/DroidBridge；
@@ -230,6 +274,10 @@ pub struct AppState {
     pub media_dir_override: Option<PathBuf>,
     /// AI Agent：设备状态与操作事件
     pub agent: agent::AgentState,
+    /// 已授权的电脑与配对请求
+    pub access: access::Access,
+    /// 插件管理器
+    pub plugins: plugins::Plugins,
 }
 
 type Shared = Arc<AppState>;
@@ -281,6 +329,7 @@ pub async fn start(cfg: Config) -> Result<Started, StartError> {
     }
 
     let media_dir_override = cfg.media_dir.clone();
+    let plugins = plugins::Plugins::new(&cfg.data_dir);
     let state = Arc::new(AppState {
         peers: peers::PeerStore::load(cfg.data_dir.join("peers.json")),
         start_lock: tokio::sync::Mutex::new(()),
@@ -290,6 +339,8 @@ pub async fn start(cfg: Config) -> Result<Started, StartError> {
         uids: std::sync::Mutex::new(HashMap::new()),
         media_dir_override,
         agent: agent::AgentState::default(),
+        access: access::Access::load(&cfg.data_dir, cfg.allow_hosts.clone(), std::slice::from_ref(&cfg.name)),
+        plugins,
         cfg,
     });
     let app = router(state.clone());
@@ -297,6 +348,8 @@ pub async fn start(cfg: Config) -> Result<Started, StartError> {
         tokio::spawn(discovery::run(state.clone(), port));
     }
     tokio::spawn(wireless::keeper(state.clone()));
+    // 插件管理器：扫描、启动、热重载与事件轮询
+    tokio::spawn(plugins::run(state.clone()));
     let cleanup_state = state.clone();
     tokio::spawn(async move { media::recover_parts_loop(cleanup_state).await; });
 
@@ -347,6 +400,15 @@ fn router(state: Shared) -> Router {
         .route("/api/devices", get(devices))
         .route("/api/peers", get(list_peers).post(add_peer))
         .route("/api/peers/{id}", put(edit_peer).delete(remove_peer))
+        .route("/api/peers/pair", post(peer_pair_start))
+        .route("/api/peers/pair/{id}", get(peer_pair_status).delete(peer_pair_cancel))
+        .route("/api/pair/request", post(pair_request))
+        .route("/api/pair/request/{id}", get(pair_poll).delete(pair_cancel))
+        .route("/api/pair/pending", get(pair_pending))
+        .route("/api/pair/pending/{id}", post(pair_decide))
+        .route("/api/clients", get(clients_list).post(clients_issue))
+        .route("/api/clients/{id}", axum::routing::delete(clients_revoke))
+        .route("/api/access", get(access_get).put(access_put))
         .route("/api/install", post(install_start))
         .route("/api/peers/{id}/update", post(peer_update))
         .route("/api/node", get(node_info))
@@ -387,6 +449,21 @@ fn router(state: Shared) -> Router {
         .route("/api/agent/pause", post(agent_pause))
         .route("/api/apps", post(apps_list))
         .route("/api/apps/action", post(apps_action))
+        .route("/api/plugins", get(plugins::plugins_get))
+        .route("/api/plugins/manage", post(plugins::plugins_manage))
+        .route("/api/plugins/contrib", get(plugins::plugins_contrib))
+        .route("/api/plugins/invoke", post(plugins::plugins_invoke))
+        .route("/api/plugins/panel", post(plugins::plugins_panel))
+        .route("/api/plugins/metrics", get(plugins::plugins_metrics))
+        .route("/api/plugins/web", post(plugins::plugins_web))
+        .route("/api/plugins/dialog", post(plugins::plugins_dialog))
+        .route("/api/plugins/upload", post(plugins::plugins_upload).layer(DefaultBodyLimit::max(2usize << 30)))
+        .route("/api/plugins/devop", post(plugins::plugins_devop).layer(DefaultBodyLimit::max(2usize << 30)))
+        .route("/api/plugins/console", get(plugins::plugins_console))
+        .route("/api/plugins/mcp", get(plugins::plugins_mcp_list))
+        .route("/ws/plugins", get(plugins::plugins_ws))
+        .route("/plugin-web/sdk.js", get(plugins::plugin_web_sdk))
+        .route("/plugin-web/{id}/{*path}", get(plugins::plugin_web_file))
         .layer(middleware::from_fn_with_state(state.clone(), auth))
         .with_state(state)
 }
@@ -439,27 +516,62 @@ async fn auth(State(st): State<Shared>, req: Request, next: Next) -> Response {
     i18n::REQUEST_EN.scope(lang_en, auth_inner(st, req, next)).await
 }
 
+/// 不需要授权的接口：页面与静态资源、基本信息、发起配对
+fn is_public(path: &str) -> bool {
+    !(path.starts_with("/api/") || path.starts_with("/ws/") || path == "/mcp") || path == "/api/info" || path.starts_with("/api/pair/request")
+}
+
 async fn auth_inner(st: Shared, req: Request, next: Next) -> Response {
-    let path = req.uri().path();
-    let protected = (path.starts_with("/api/") && path != "/api/info") || path.starts_with("/ws/") || path == "/mcp";
-    if let (true, Some(expected)) = (protected, st.cfg.token.as_deref()) {
-        let q = util::parse_query(req.uri().query());
-        let given = q
-            .get("token")
-            .cloned()
-            .or_else(|| req.headers().get("x-token").and_then(|v| v.to_str().ok()).map(String::from))
-            .or_else(|| {
-                req.headers()
-                    .get(header::AUTHORIZATION)
-                    .and_then(|v| v.to_str().ok())
-                    .and_then(|v| v.strip_prefix("Bearer "))
-                    .map(|v| v.trim().to_string())
-            });
-        if given.as_deref() != Some(expected) {
-            return err(StatusCode::UNAUTHORIZED, tr!("需要访问令牌", "Access token required"));
+    let path = req.uri().path().to_string();
+    let is_api = path.starts_with("/api/") || path.starts_with("/ws/") || path == "/mcp";
+    let headers = req.headers();
+    // 1. 浏览器里其他网站发来的请求一律拒绝（跨站请求、WebSocket 劫持）
+    if is_api && !st.access.origin_ok(headers) {
+        tracing::warn!("blocked cross-site request: {path} (Origin: {:?})", headers.get(header::ORIGIN));
+        return err(StatusCode::FORBIDDEN, tr!("已拦截来自其他网站的请求", "Blocked a request from another website"));
+    }
+    if !is_api || is_public(&path) {
+        return next.run(req).await;
+    }
+    // 2. 带有效令牌：启动参数 --token，或配对得到的专属令牌
+    let q = util::parse_query(req.uri().query());
+    if let Some(given) = access::token_from(headers, &q) {
+        let global = st.cfg.token.as_deref().is_some_and(|t| access::token_matches(&given, t));
+        if global || st.access.verify(&given).is_some() {
+            return next.run(req).await;
         }
     }
-    next.run(req).await
+    // 3. 本机访问（经反向代理转发的除外；设置了 --token 时本机也需要令牌），或 --open：
+    //    不需要令牌，但 Host 必须可信（防 DNS 重绑定）
+    let peer_ip = req.extensions().get::<ConnectInfo<SocketAddr>>().map(|c| c.0.ip());
+    let local = is_local_request(&st, headers, peer_ip, &q);
+    if local || st.cfg.open {
+        if !st.access.local_host_ok(headers) {
+            let host = headers.get(header::HOST).and_then(|v| v.to_str().ok()).unwrap_or("");
+            tracing::warn!("blocked request with untrusted Host: {host} {path}");
+            return err(StatusCode::FORBIDDEN, tr!("不允许通过 {host} 访问（可用 --allow-host 允许）", "Access through {host} is not allowed (allow it with --allow-host)"));
+        }
+        return next.run(req).await;
+    }
+    (
+        StatusCode::UNAUTHORIZED,
+        Json(json!({"error": tr!("需要对方授权才能访问", "Authorization required"), "pair": true})),
+    )
+        .into_response()
+}
+
+/// 是不是“本机请求”（与 auth 中间件里的判断一致）：来源 IP 是本机、没有经过反向代理
+/// （无 X-Forwarded-For / Forwarded）；设置了 `--token` 时，本机还要带上全局令牌。
+/// 插件管理这类操作只允许本机请求。
+pub fn is_local_request(st: &AppState, headers: &HeaderMap, ip: Option<std::net::IpAddr>, q: &HashMap<String, String>) -> bool {
+    let forwarded = headers.contains_key("x-forwarded-for") || headers.contains_key(header::FORWARDED);
+    if forwarded || !ip.is_some_and(|ip| st.access.is_local_ip(ip)) {
+        return false;
+    }
+    match st.cfg.token.as_deref() {
+        None => true,
+        Some(expected) => access::token_from(headers, q).is_some_and(|t| access::token_matches(&t, expected)),
+    }
 }
 
 async fn index() -> impl IntoResponse {
@@ -478,7 +590,8 @@ async fn info(State(st): State<Shared>) -> Json<serde_json::Value> {
         "os": std::env::consts::OS,
         "lang": i18n::code(),
         "scrcpy": scrcpy_version(),
-        "auth": st.cfg.token.is_some(),
+        "auth": !st.cfg.open || st.cfg.token.is_some(),
+        "pairing": true,
         "ips": util::local_ips(),
         "port": st.cfg.port,
         "https_port": st.cfg.https_port,
@@ -558,7 +671,15 @@ pub async fn save_peer(
     if info.get("app").and_then(|v| v.as_str()) != Some("droidbridge") {
         return Err(tr!("对端不是 DroidBridge", "The other side is not DroidBridge"));
     }
-    peers::get_json(&peer, "/api/devices").await?;
+    let (code, _) = peers::forward(&peer, "GET", "/api/devices", b"", std::time::Duration::from_secs(10)).await?;
+    // 只确认对方接受本机的令牌；对方 adb 暂时不可用等问题不影响添加
+    if code == 401 {
+        return Err(if info.get("pairing").and_then(|v| v.as_bool()) == Some(true) {
+            need_pair_msg()
+        } else {
+            tr!("对方电脑尚未授权本机（或令牌错误）", "Not authorized by the remote computer (or wrong token)")
+        });
+    }
     if peer.name.is_empty() {
         peer.name = info.get("name").and_then(|v| v.as_str()).unwrap_or(&peer.addr).to_string();
     }
@@ -570,18 +691,208 @@ pub async fn save_peer(
     Ok(json!({"id": peer.id, "name": peer.name, "addr": peer.addr}))
 }
 
-async fn add_peer(State(st): State<Shared>, Json(np): Json<NewPeer>) -> Response {
-    match save_peer(&st, None, &np.addr, &np.name, np.token).await {
+/// 对方需要授权（save_peer 返回此错误时，界面改为发起授权请求）
+pub fn need_pair_msg() -> String {
+    tr!("需要对方电脑授权本机", "This computer needs to be authorized by the remote computer")
+}
+
+fn save_peer_reply(r: Result<serde_json::Value, String>) -> Response {
+    match r {
         Ok(v) => Json(v).into_response(),
+        Err(e) if e == need_pair_msg() => (StatusCode::FORBIDDEN, Json(json!({"error": e, "need_pair": true}))).into_response(),
         Err(e) => err(StatusCode::BAD_GATEWAY, e),
     }
 }
 
+async fn add_peer(State(st): State<Shared>, Json(np): Json<NewPeer>) -> Response {
+    save_peer_reply(save_peer(&st, None, &np.addr, &np.name, np.token).await)
+}
+
 async fn edit_peer(State(st): State<Shared>, Path(id): Path<String>, Json(np): Json<NewPeer>) -> Response {
-    match save_peer(&st, Some(id), &np.addr, &np.name, np.token).await {
-        Ok(v) => Json(v).into_response(),
-        Err(e) => err(StatusCode::BAD_GATEWAY, e),
+    save_peer_reply(save_peer(&st, Some(id), &np.addr, &np.name, np.token).await)
+}
+
+// ---------------------------------------------------------------- 授权（配对）
+
+fn client_ip(addr: SocketAddr) -> String {
+    addr.ip().to_canonical().to_string()
+}
+
+#[derive(Deserialize)]
+struct PairReq {
+    #[serde(default)]
+    name: String,
+}
+
+/// 对方（其他电脑或浏览器）请求授权：不需要令牌
+async fn pair_request(State(st): State<Shared>, ConnectInfo(addr): ConnectInfo<SocketAddr>, Json(r): Json<PairReq>) -> Response {
+    let ip = client_ip(addr);
+    match st.access.pair_request(&r.name, &ip) {
+        Ok((id, code)) => {
+            tracing::info!("authorization request from {} ({ip})", r.name);
+            Json(json!({"id": id, "code": code, "name": st.cfg.name})).into_response()
+        }
+        Err(e) => err(StatusCode::TOO_MANY_REQUESTS, e),
     }
+}
+
+async fn pair_poll(State(st): State<Shared>, Path(id): Path<String>) -> Json<serde_json::Value> {
+    Json(st.access.pair_poll(&id))
+}
+
+async fn pair_cancel(State(st): State<Shared>, Path(id): Path<String>) -> Json<serde_json::Value> {
+    st.access.pair_cancel(&id);
+    Json(json!({"ok": true}))
+}
+
+/// 等待批准的请求（本机或 ?peer= 指定的远程电脑）
+async fn pair_pending(State(st): State<Shared>, Query(q): Query<HashMap<String, String>>) -> Response {
+    let st2 = st.clone();
+    local_or_peer(&st, &q, "GET", "/api/pair/pending", b"", || async move { Ok(json!({"list": st2.access.pending_list()})) }).await
+}
+
+#[derive(Deserialize)]
+struct Decide {
+    allow: bool,
+}
+
+async fn pair_decide(State(st): State<Shared>, Path(id): Path<String>, Query(q): Query<HashMap<String, String>>, body: Bytes) -> Response {
+    let st2 = st.clone();
+    let b = body.clone();
+    let path = format!("/api/pair/pending/{}", util::url_encode(&id));
+    local_or_peer(&st, &q, "POST", &path, &body, || async move {
+        let d: Decide = serde_json::from_slice(&b).map_err(|e| e.to_string())?;
+        st2.access.pair_decide(&id, d.allow)?;
+        Ok(json!({"ok": true}))
+    })
+    .await
+}
+
+async fn clients_list(State(st): State<Shared>, Query(q): Query<HashMap<String, String>>) -> Response {
+    let st2 = st.clone();
+    local_or_peer(&st, &q, "GET", "/api/clients", b"", || async move { Ok(json!({"list": st2.access.list()})) }).await
+}
+
+/// 手动生成访问令牌（给旧版本、脚本、AI 客户端用）；令牌只返回这一次。只能在本机生成
+async fn clients_issue(State(st): State<Shared>, ConnectInfo(addr): ConnectInfo<SocketAddr>, Json(r): Json<PairReq>) -> Response {
+    if !st.access.is_local_ip(addr.ip()) {
+        return err(StatusCode::FORBIDDEN, tr!("只能在本机生成访问令牌", "Access tokens can only be created on the computer itself"));
+    }
+    let name = if r.name.trim().is_empty() { tr!("访问令牌", "Access token") } else { r.name };
+    Json(json!({"token": st.access.issue(&name, "")})).into_response()
+}
+
+async fn clients_revoke(State(st): State<Shared>, Path(id): Path<String>, Query(q): Query<HashMap<String, String>>) -> Response {
+    let st2 = st.clone();
+    let path = format!("/api/clients/{}", util::url_encode(&id));
+    local_or_peer(&st, &q, "DELETE", &path, b"", || async move {
+        if st2.access.revoke(&id) { Ok(json!({"ok": true})) } else { Err(tr!("授权不存在", "Authorization not found")) }
+    })
+    .await
+}
+
+fn access_json(st: &AppState) -> serde_json::Value {
+    json!({
+        "discoverable": st.access.is_discoverable(),
+        "discovery": st.cfg.discovery,
+        "open": st.cfg.open,
+        "fixed_token": st.cfg.token.is_some(),
+    })
+}
+
+async fn access_get(State(st): State<Shared>) -> Json<serde_json::Value> {
+    Json(access_json(&st))
+}
+
+#[derive(Deserialize)]
+struct AccessPut {
+    discoverable: bool,
+}
+
+/// 修改“允许被局域网发现”：只能在本机修改
+async fn access_put(State(st): State<Shared>, ConnectInfo(addr): ConnectInfo<SocketAddr>, Json(r): Json<AccessPut>) -> Response {
+    if !st.access.is_local_ip(addr.ip()) {
+        return err(StatusCode::FORBIDDEN, tr!("只能在本机修改", "Can only be changed on the computer itself"));
+    }
+    match st.access.set_discoverable(r.discoverable) {
+        Ok(()) => Json(access_json(&st)).into_response(),
+        Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, e),
+    }
+}
+
+#[derive(Deserialize)]
+struct PairStart {
+    addr: String,
+    #[serde(default)]
+    name: String,
+    /// 已在列表中的远程电脑（重新授权）
+    #[serde(default)]
+    id: Option<String>,
+}
+
+/// 添加远程电脑时向对方请求授权
+async fn peer_pair_start(State(st): State<Shared>, Json(r): Json<PairStart>) -> Response {
+    let addr = match peers::normalize_addr(&r.addr) {
+        Ok(a) => a,
+        Err(e) => return err(StatusCode::BAD_REQUEST, e),
+    };
+    let body = json!({"name": st.cfg.name}).to_string();
+    let (code, b) = match peers::http_request(&addr, "POST", "/api/pair/request", body.as_bytes(), std::time::Duration::from_secs(8)).await {
+        Ok(x) => x,
+        Err(e) => return err(StatusCode::BAD_GATEWAY, tr!("无法访问 {addr}：{e}", "Cannot reach {addr}: {e}")),
+    };
+    let v: serde_json::Value = serde_json::from_slice(&b).unwrap_or_default();
+    if code == 404 || code == 405 || code == 401 {
+        return err(StatusCode::BAD_GATEWAY, tr!("对方的 DroidBridge 版本较旧，不支持授权请求。请更新对方，或填写对方的访问令牌", "The remote DroidBridge is too old for authorization requests. Update it, or enter its access token"));
+    }
+    if code >= 400 {
+        return err(StatusCode::BAD_GATEWAY, v.get("error").and_then(|e| e.as_str()).unwrap_or("error").to_string());
+    }
+    let (Some(remote_id), Some(pcode)) = (v.get("id").and_then(|x| x.as_str()), v.get("code").and_then(|x| x.as_str())) else {
+        return err(StatusCode::BAD_GATEWAY, tr!("对端返回的内容无法识别", "Unexpected response from the remote computer"));
+    };
+    let job = format!("{:08x}{:08x}", util::random_scid(), util::random_scid());
+    let mut out = st.access.outgoing.lock().unwrap();
+    out.retain(|_, o| o.created.elapsed() < std::time::Duration::from_secs(600));
+    out.insert(
+        job.clone(),
+        access::Outgoing { addr, name: r.name.trim().to_string(), peer_id: r.id, remote_id: remote_id.to_string(), created: std::time::Instant::now() },
+    );
+    Json(json!({"job": job, "code": pcode, "name": v.get("name").cloned().unwrap_or_default()})).into_response()
+}
+
+async fn peer_pair_status(State(st): State<Shared>, Path(job): Path<String>) -> Response {
+    let Some(o) = st.access.outgoing.lock().unwrap().get(&job).cloned() else {
+        return Json(json!({"state": "expired"})).into_response();
+    };
+    let path = format!("/api/pair/request/{}", util::url_encode(&o.remote_id));
+    let v = match peers::http_request(&o.addr, "GET", &path, b"", std::time::Duration::from_secs(8)).await {
+        Ok((_, b)) => serde_json::from_slice::<serde_json::Value>(&b).unwrap_or_default(),
+        // 暂时连不上：继续等
+        Err(_) => return Json(json!({"state": "pending"})).into_response(),
+    };
+    let state = v.get("state").and_then(|s| s.as_str()).unwrap_or("expired").to_string();
+    if state == "pending" {
+        return Json(json!({"state": "pending"})).into_response();
+    }
+    st.access.outgoing.lock().unwrap().remove(&job);
+    if state != "approved" {
+        return Json(json!({"state": state})).into_response();
+    }
+    let token = v.get("token").and_then(|t| t.as_str()).map(String::from);
+    match save_peer(&st, o.peer_id.clone(), &o.addr, &o.name, token).await {
+        Ok(p) => Json(json!({"state": "done", "peer": p})).into_response(),
+        Err(e) => Json(json!({"state": "failed", "error": e})).into_response(),
+    }
+}
+
+async fn peer_pair_cancel(State(st): State<Shared>, Path(job): Path<String>) -> Json<serde_json::Value> {
+    let o = st.access.outgoing.lock().unwrap().remove(&job);
+    if let Some(o) = o {
+        let path = format!("/api/pair/request/{}", util::url_encode(&o.remote_id));
+        let _ = peers::http_request(&o.addr, "DELETE", &path, b"", std::time::Duration::from_secs(5)).await;
+    }
+    Json(json!({"ok": true}))
 }
 
 async fn install_start(State(st): State<Shared>, Json(req): Json<remote::InstallReq>) -> Response {
@@ -680,9 +991,16 @@ async fn push_file(State(st): State<Shared>, Query(q): Query<HashMap<String, Str
     }
     let tmp_s = tmp.to_string_lossy().into_owned();
     let result = if is_apk {
-        adb::run(&st.cfg.adb, &["-s", serial, "install", "-r", "-t", &tmp_s])
-            .await
-            .map(|_| tr!("已安装 {name}", "Installed {name}"))
+        // 安装前后对比包名，拿到包名时通知插件 app.installed
+        let before = adb::run(&st.cfg.adb, &["-s", serial, "shell", "pm list packages -3"]).await.unwrap_or_default();
+        let r = adb::run(&st.cfg.adb, &["-s", serial, "install", "-r", "-t", &tmp_s]).await;
+        if r.is_ok() {
+            let after = adb::run(&st.cfg.adb, &["-s", serial, "shell", "pm list packages -3"]).await.unwrap_or_default();
+            for pkg in plugins::new_packages(&before, &after).iter().take(1) {
+                plugins::on_installed(&st, serial, pkg);
+            }
+        }
+        r.map(|_| tr!("已安装 {name}", "Installed {name}"))
     } else {
         let dest = format!("/sdcard/Download/{name}");
         adb::run(&st.cfg.adb, &["-s", serial, "push", &tmp_s, &dest])
@@ -790,11 +1108,11 @@ async fn discovered(State(st): State<Shared>) -> Json<serde_json::Value> {
         .into_iter()
         .filter(|f| !known.contains(&f.addr) && !mine.contains(&f.addr))
         .collect();
-    Json(json!({"enabled": st.cfg.discovery, "list": list}))
+    Json(json!({"enabled": st.cfg.discovery, "discoverable": st.access.is_discoverable(), "list": list}))
 }
 
 /// 带 ?peer= 时把请求转发给远程电脑，否则在本机执行
-async fn local_or_peer<F, Fut>(st: &AppState, q: &HashMap<String, String>, method: &str, path: &str, body: &[u8], local: F) -> Response
+pub(crate) async fn local_or_peer<F, Fut>(st: &AppState, q: &HashMap<String, String>, method: &str, path: &str, body: &[u8], local: F) -> Response
 where
     F: FnOnce() -> Fut,
     Fut: std::future::Future<Output = Result<serde_json::Value, String>>,
@@ -986,17 +1304,25 @@ mod tests {
     use super::*;
 
     fn test_state() -> Shared {
+        test_state_in(std::env::temp_dir().join("droidbridge-test-media"), "test")
+    }
+
+    fn test_state_in(data_dir: PathBuf, name: &str) -> Shared {
+        let _ = std::fs::create_dir_all(&data_dir);
         let cfg = Config {
             bind: "127.0.0.1".into(),
             port: 0,
             https_port: 0,
             token: None,
-            name: "test".into(),
-            adb: PathBuf::from("adb"),
-            data_dir: std::env::temp_dir().join("droidbridge-test-media"),
+            name: name.into(),
+            adb: PathBuf::from("adb-not-installed"),
+            data_dir,
             server_jar: PathBuf::new(),
             discovery: false,
             media_dir: None,
+            open: false,
+            allow_hosts: vec![],
+            no_plugins: false,
         };
         Arc::new(AppState {
             peers: peers::PeerStore::load(cfg.data_dir.join("peers.json")),
@@ -1007,6 +1333,8 @@ mod tests {
             uids: std::sync::Mutex::new(HashMap::new()),
             media_dir_override: None,
             agent: agent::AgentState::default(),
+            access: access::Access::load(&cfg.data_dir, vec![], &[]),
+            plugins: plugins::Plugins::new(&cfg.data_dir),
             cfg,
         })
     }
@@ -1016,5 +1344,118 @@ mod tests {
     fn media_routes_register_without_panic() {
         let st = test_state();
         let _app = router(st);
+    }
+
+    async fn call(app: &Router, from: &str, uri: &str, headers: &[(&str, &str)]) -> u16 {
+        use tower::Service;
+        let mut b = axum::http::Request::builder().uri(uri);
+        if !headers.iter().any(|(k, _)| *k == "host") {
+            b = b.header("host", "127.0.0.1:8730");
+        }
+        for (k, v) in headers {
+            b = b.header(*k, *v);
+        }
+        let mut req = b.body(axum::body::Body::empty()).unwrap();
+        req.extensions_mut().insert(ConnectInfo(from.parse::<SocketAddr>().unwrap()));
+        let mut svc = app.clone();
+        svc.call(req).await.unwrap().status().as_u16()
+    }
+
+    /// 访问控制：本机免授权、其他电脑需要授权、其他网站的请求被拦截
+    #[tokio::test]
+    async fn access_rules() {
+        let st = test_state();
+        let app = router(st.clone());
+        let lan = "192.0.2.10:50000";
+        // 本机
+        assert_eq!(call(&app, "127.0.0.1:5000", "/api/access", &[]).await, 200);
+        assert_eq!(call(&app, "127.0.0.1:5000", "/api/access", &[("origin", "http://127.0.0.1:8730")]).await, 200);
+        // 本机浏览器里的其他网站（跨站请求 / WebSocket 劫持）
+        assert_eq!(call(&app, "127.0.0.1:5000", "/api/access", &[("origin", "https://evil.example")]).await, 403);
+        assert_eq!(call(&app, "127.0.0.1:5000", "/ws/stream?serial=x", &[("origin", "https://evil.example")]).await, 403);
+        // DNS 重绑定
+        assert_eq!(call(&app, "127.0.0.1:5000", "/api/access", &[("host", "evil.example:8730")]).await, 403);
+        // 经本机反向代理转发的请求不算本机
+        assert_eq!(call(&app, "127.0.0.1:5000", "/api/access", &[("x-forwarded-for", "192.0.2.10")]).await, 401);
+        // 其他电脑：未授权
+        assert_eq!(call(&app, lan, "/api/access", &[]).await, 401);
+        assert_eq!(call(&app, lan, "/api/devices", &[("authorization", "Bearer wrong")]).await, 401);
+        // 公开接口与页面
+        assert_eq!(call(&app, lan, "/api/info", &[]).await, 200);
+        assert_eq!(call(&app, lan, "/", &[("sec-fetch-site", "cross-site")]).await, 200);
+        assert_eq!(call(&app, lan, "/api/pair/request/nope", &[]).await, 200);
+        // 授权后可访问；撤销后不能
+        let token = st.access.issue("PC", "192.0.2.10");
+        assert_eq!(call(&app, lan, &format!("/api/access?token={token}"), &[]).await, 200);
+        assert_eq!(call(&app, lan, "/api/access", &[("authorization", &format!("Bearer {token}"))]).await, 200);
+        let id = st.access.list()[0].id.clone();
+        st.access.revoke(&id);
+        assert_eq!(call(&app, lan, &format!("/api/access?token={token}"), &[]).await, 401);
+    }
+
+    async fn call_json(app: &Router, method: &str, uri: &str, body: serde_json::Value) -> (u16, serde_json::Value) {
+        use tower::Service;
+        let mut req = axum::http::Request::builder()
+            .method(method)
+            .uri(uri)
+            .header("host", "127.0.0.1:8730")
+            .header("content-type", "application/json")
+            .body(axum::body::Body::from(body.to_string()))
+            .unwrap();
+        req.extensions_mut().insert(ConnectInfo("127.0.0.1:5000".parse::<SocketAddr>().unwrap()));
+        let mut svc = app.clone();
+        let res = svc.call(req).await.unwrap();
+        let code = res.status().as_u16();
+        let b = axum::body::to_bytes(res.into_body(), 1 << 20).await.unwrap();
+        (code, serde_json::from_slice(&b).unwrap_or_default())
+    }
+
+    /// 完整流程：A 添加 B → B 要求授权 → A 发起请求 → B 允许 → A 保存专属令牌并能访问 B；B 撤销后 A 不能再访问
+    #[tokio::test]
+    async fn pairing_end_to_end() {
+        let base = std::env::temp_dir().join(format!("droidbridge-pair-{:08x}", util::random_scid()));
+        let a = test_state_in(base.join("a"), "A");
+        let b = test_state_in(base.join("b"), "B");
+        // B 把所有连接都当作来自局域网的其他电脑
+        let b_app = router(b.clone()).layer(axum::middleware::map_request(|mut req: Request| async move {
+            req.extensions_mut().insert(ConnectInfo("192.0.2.20:40000".parse::<SocketAddr>().unwrap()));
+            req
+        }));
+        let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let b_addr = l.local_addr().unwrap().to_string();
+        tokio::spawn(async move { axum::serve(l, b_app.into_make_service()).await.unwrap() });
+        let a_app = router(a.clone());
+
+        let (code, v) = call_json(&a_app, "POST", "/api/peers", json!({"addr": b_addr})).await;
+        assert_eq!(code, 403, "{v}");
+        assert_eq!(v["need_pair"], true);
+
+        let (code, v) = call_json(&a_app, "POST", "/api/peers/pair", json!({"addr": b_addr})).await;
+        assert_eq!(code, 200, "{v}");
+        let job = v["job"].as_str().unwrap().to_string();
+        assert_eq!(v["name"], "B");
+        let pending = b.access.pending_list();
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0]["name"], "A");
+        assert_eq!(pending[0]["code"], v["code"]);
+
+        let (_, v) = call_json(&a_app, "GET", &format!("/api/peers/pair/{job}"), json!({})).await;
+        assert_eq!(v["state"], "pending");
+        b.access.pair_decide(pending[0]["id"].as_str().unwrap(), true).unwrap();
+        let (_, v) = call_json(&a_app, "GET", &format!("/api/peers/pair/{job}"), json!({})).await;
+        assert_eq!(v["state"], "done", "{v}");
+        let pid = v["peer"]["id"].as_str().unwrap().to_string();
+        assert_eq!(b.access.list().len(), 1);
+
+        // 通过 A 访问 B 的接口：已授权
+        let (code, v) = call_json(&a_app, "GET", &format!("/api/clients?peer={pid}"), json!({})).await;
+        assert_eq!(code, 200, "{v}");
+        assert_eq!(v["list"][0]["name"], "A");
+
+        // B 撤销后 A 不能再访问
+        b.access.revoke(&b.access.list()[0].id);
+        let (code, v) = call_json(&a_app, "GET", &format!("/api/clients?peer={pid}"), json!({})).await;
+        assert_eq!(code, 401, "{v}");
+        let _ = std::fs::remove_dir_all(&base);
     }
 }

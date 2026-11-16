@@ -657,6 +657,9 @@ mod tests {
             server_jar: std::path::PathBuf::new(),
             discovery: false,
             media_dir: None,
+            open: false,
+            allow_hosts: vec![],
+            no_plugins: true,
         };
         Arc::new(crate::AppState {
             peers: crate::peers::PeerStore::load(dir.join("peers.json")),
@@ -667,6 +670,8 @@ mod tests {
             uids: std::sync::Mutex::new(std::collections::HashMap::new()),
             media_dir_override: None,
             agent: crate::agent::AgentState::default(),
+            access: crate::access::Access::load(dir, vec![], &[]),
+            plugins: crate::plugins::Plugins::new(dir),
             cfg,
         })
     }

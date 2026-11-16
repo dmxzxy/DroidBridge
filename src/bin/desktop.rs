@@ -11,6 +11,10 @@ use tao::window::{Icon, ResizeDirection, WindowBuilder};
 use wry::{NewWindowResponse, WebContext, WebViewBuilder};
 
 fn main() {
+    // 插件宿主进程（--plugin-host）：同步运行，不创建任何窗口
+    if droidbridge::plugin_host::hook() {
+        return;
+    }
     // 作为 SSH_ASKPASS 被 ssh 调用时，只输出密码后退出
     if droidbridge::remote::askpass_hook() {
         return;

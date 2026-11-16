@@ -98,7 +98,15 @@ class LogPanel {
   }
   row(e) {
     if (e.lv < 0) return h('div', { class: 'll lm' }, e.msg);
-    return h('div', { class: 'll l' + e.lv }, h('span', { class: 'lt' }, e.t), ' ', h('b', {}, e.lc), ' ', e.msg);
+    const el = h('div', { class: 'll l' + e.lv }, h('span', { class: 'lt' }, e.t), ' ', h('b', {}, e.lc), ' ', e.msg);
+    // 插件贡献的日志高亮（不区分大小写的子串匹配）
+    const hl = typeof pluginLogHighlight === 'function' ? pluginLogHighlight(e.raw, e.tag) : null;
+    if (hl) {
+      el.classList.add('plug-hl');
+      if (hl.kind) el.classList.add('pk-' + hl.kind);
+      if (hl.label) el.append(' ', h('span', { class: 'plug-tag' }, hl.label));
+    }
+    return el;
   }
 
   add(lines) {

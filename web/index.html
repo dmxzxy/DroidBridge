@@ -39,17 +39,19 @@
 <script src="js/files.js"></script>
 <script src="js/update.js"></script>
 <script src="js/titlebar.js"></script>
+<script src="js/plugins.js"></script>
 <script src="js/contextmenu.js"></script>
+<script src="js/access.js"></script>
 <!-- 初始化脚本（必须最后加载） -->
 <script>
 // ---------------- 初始化 ----------------
 $('#logo').innerHTML = svg('phone');
 $('#mLogo').innerHTML = svg('phone');
-$('#gear').replaceWith(ib('gear', t('设置'), settingsDialog));
+$('#gear').replaceWith(Object.assign(ib('gear', t('设置'), settingsDialog), { id: 'gear' }));
 $('#batch').replaceWith(ib('package', t('批量安装 APK'), () => batchInstallDialog()));
 $('#mBatch').replaceWith(ib('package', t('批量安装 APK'), () => batchInstallDialog()));
 $('#gallery').replaceWith(ib('images', t('相册'), () => openGallery()));
-$('#mGear').replaceWith(ib('gear', t('设置'), settingsDialog));
+$('#mGear').replaceWith(Object.assign(ib('gear', t('设置'), settingsDialog), { id: 'mGear' }));
 $('#mGallery').replaceWith(ib('images', t('相册'), () => openGallery(), 'gear'));
 $('#mBack').innerHTML = svg('chevLeft');
 $('#mBack').onclick = () => document.body.classList.remove('viewing');
@@ -68,6 +70,7 @@ addEventListener('beforeunload', () => { for (const v of viewers.values()) if (v
   } catch (e) { toast(t('无法连接 DroidBridge：') + e.message, { kind: 'bad', ms: 5000 }); }
   if (!window.VideoDecoder || !isSecureContext) showNotice();
   await refreshAll();
+  pluginsInit();
   const m = location.hash.match(/^#open=([^|]+)\|(.+)$/);
   if (m) {
     const hst = hosts.get(decodeURIComponent(m[1])), serial = decodeURIComponent(m[2]);

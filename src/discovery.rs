@@ -3,6 +3,7 @@
 //! 报文（JSON）：{"app":"droidbridge","v":1,"id":实例,"name":..,"port":HTTP端口,"auth":bool,"version":..,"os":..,"q":是否请求回复}
 //! 每 5 秒向各网卡的子网广播地址与 255.255.255.255 宣告一次；收到 q=true 时单播回复。
 //! 超过 16 秒未收到宣告的节点视为离线。
+//! 关闭“允许被局域网发现”后只接收别人的宣告，自己不再广播或回复。
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -31,6 +32,9 @@ struct Announce {
     os: String,
     #[serde(default)]
     q: bool,
+    /// 支持授权请求（0.9 起）
+    #[serde(default)]
+    pairing: bool,
 }
 
 #[derive(Serialize, Clone)]
@@ -41,6 +45,7 @@ pub struct Found {
     pub auth: bool,
     pub version: String,
     pub os: String,
+    pub pairing: bool,
 }
 
 pub struct Discovery {
@@ -119,10 +124,11 @@ pub async fn run(st: std::sync::Arc<crate::AppState>, http_port: u16) {
         id: st.discovery.id.clone(),
         name: st.cfg.name.clone(),
         port: http_port,
-        auth: st.cfg.token.is_some(),
+        auth: !st.cfg.open || st.cfg.token.is_some(),
         version: env!("CARGO_PKG_VERSION").into(),
         os: std::env::consts::OS.into(),
         q,
+        pairing: true,
     };
     let mut tick = tokio::time::interval(INTERVAL);
     let mut first = true;
@@ -130,6 +136,11 @@ pub async fn run(st: std::sync::Arc<crate::AppState>, http_port: u16) {
     loop {
         tokio::select! {
             _ = tick.tick() => {
+                // 不允许被发现：只听别人的宣告，自己不发
+                if !st.access.is_discoverable() {
+                    first = true;
+                    continue;
+                }
                 let msg = serde_json::to_vec(&me(first)).unwrap_or_default();
                 first = false;
                 for t in broadcast_targets() {
@@ -143,13 +154,13 @@ pub async fn run(st: std::sync::Arc<crate::AppState>, http_port: u16) {
                     continue;
                 }
                 let IpAddr::V4(ip) = from.ip() else { continue };
-                if a.q {
+                if a.q && st.access.is_discoverable() {
                     if let Ok(msg) = serde_json::to_vec(&me(false)) {
                         let _ = sock.send_to(&msg, from).await;
                     }
                 }
                 let addr = format!("{ip}:{}", a.port);
-                let f = Found { name: a.name, addr: addr.clone(), auth: a.auth, version: a.version, os: a.os };
+                let f = Found { name: a.name, addr: addr.clone(), auth: a.auth, version: a.version, os: a.os, pairing: a.pairing };
                 st.discovery.found.lock().unwrap().insert(a.id, (f, Instant::now()));
             }
         }
