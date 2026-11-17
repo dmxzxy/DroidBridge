@@ -154,7 +154,7 @@ function devRows(hst, emptyEl) {
     const ready = d.state === 'device';
     const open = [...viewers.values()].some(v => v.host.id === hst.id && v.dev.serial === d.serial);
     return ctxMenu(h('div', {
-      class: 'dev' + (open ? ' open' : '') + (ready ? '' : ' na'), title: devTip(d),
+      class: 'dev' + (open ? ' open' : '') + (ready ? '' : ' na'), title: devTip(d), 'data-serial': d.serial,
       onclick: () => ready ? openViewer(hst, d) : toast(STATE_HINT[d.state] || (t('设备状态：') + d.state)),
     }, h('span', { class: 'dot ' + (ready ? 'ok' : 'warn') }),
       h('div', { class: 't' }, h('b', {}, d.model || d.serial)),

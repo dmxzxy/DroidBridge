@@ -145,7 +145,7 @@ const REMOTE_ID = 'pB/' + REMOTE_DEV;           // 插件接口里的标识
   check('窗口底部状态栏出现插件状态项', (await ev(`(document.querySelector('#statusbar .sb-it .t') || {}).textContent`)) === '插件状态');
 
   // 4. 远程设备的右键菜单里有本机插件的菜单项
-  const devPoint = await center('.dev[title="' + REMOTE_DEV + '"]');
+  const devPoint = await center('.dev[data-serial="' + REMOTE_DEV + '"]');
   await rclick(devPoint.x, devPoint.y);
   let items = await menuItems();
   check('远程设备的右键菜单出现“插件”', items.split('/').includes('插件'), items);
@@ -183,7 +183,7 @@ const REMOTE_ID = 'pB/' + REMOTE_DEV;           // 插件接口里的标识
   // 7. 徽标按设备标识匹配（远程设备的卡片上出现徽标）
   await ev(`renderSide(); 1`);
   await sleep(300);
-  check('远程设备卡片显示插件徽标', (await ev(`(document.querySelector('.dev[title="${REMOTE_DEV}"] .plug-badge') || {}).textContent`)) === 'PLUG');
+  check('远程设备卡片显示插件徽标', (await ev(`(document.querySelector('.dev[data-serial="${REMOTE_DEV}"] .plug-badge') || {}).textContent`)) === 'PLUG');
 
   // 8. 覆盖层：WS 事件的 serial 是插件设备标识，画到对应投屏窗口上
   await ev(`window.__PLUG.ws.onmessage({ data: JSON.stringify({ type: 'overlay', plugin: 'devmenu', serial: ${JSON.stringify(REMOTE_ID)}, shapes: [{ type: 'rect', x: 10, y: 10, w: 200, h: 100 }] }) }); 1`);
