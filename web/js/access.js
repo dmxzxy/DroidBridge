@@ -14,12 +14,11 @@ function pairWaitDialog({ title, target, code, poll, cancel }) {
   return new Promise(resolve => {
     let done = false;
     const msg = h('div', { class: 'pair-msg' }, h('span', { class: 'spin sm' }),
-      h('span', {}, t('请在「{0}」上点击“允许”。没有界面的电脑，可在任何一台已获它授权的电脑上允许。', target)));
+      h('span', {}, t('等待 {0} 允许…', target)));
     const err = h('div', { class: 'dlg-err' });
     const dlg = dialog({
       title,
-      body: [h('div', { class: 'pair-code-l' }, t('验证码')), h('div', { class: 'pair-code' }, fmtCode(code)),
-        h('div', { class: 'hint' }, t('请确认对方显示的验证码与这里一致')), msg, err],
+      body: [h('div', { class: 'pair-code' }, fmtCode(code)), msg, err],
       actions: [h('button', { class: 'btn', type: 'button', onclick: () => dlg.close() }, t('取消'))],
     });
     dlg.addEventListener('close', () => { if (!done) { done = true; if (cancel) cancel(); resolve(null); } });
@@ -52,8 +51,7 @@ async function browserPairDialog() {
   const tokenLink = h('button', { class: 'linkbtn', type: 'button', onclick: () => { mode = 'token'; dlg.close(); } }, t('已有访问令牌？'));
   const dlg = dialog({
     title: t('需要授权'),
-    desc: t('这台电脑上的设备只有获得授权后才能查看和操作。发送请求后，请在这台电脑上点击“允许”。'),
-    body: [field(t('本设备名称'), name, t('对方会在请求里看到这个名称')), h('div', {}, tokenLink), err],
+    body: [field(t('本设备名称'), name), h('div', {}, tokenLink), err],
     actions: [h('button', { class: 'btn', type: 'button', onclick: () => dlg.close() }, t('取消')), h('button', { class: 'btn primary', type: 'submit' }, t('请求连接'))],
     onsubmit: () => { mode = 'pair'; dlg.close(); },
   });
@@ -143,9 +141,8 @@ function showNextPair() {
   };
   const dlg = dialog({
     title: t('连接请求'),
-    desc: t('「{0}」（{1}）请求连接{2}。允许后，它可以查看和操作{2}上的所有设备。', q.name, q.ip, target),
-    body: [h('div', { class: 'pair-code-l' }, t('验证码')), h('div', { class: 'pair-code' }, fmtCode(q.code)),
-      h('div', { class: 'hint' }, t('请确认与对方屏幕上显示的验证码一致。不认识这个请求就点“拒绝”。'))],
+    desc: t('{0}（{1}）想连接{2}，请核对验证码', q.name, q.ip, target),
+    body: [h('div', { class: 'pair-code' }, fmtCode(q.code))],
     actions: [h('button', { class: 'btn', type: 'button', onclick: () => decide(false) }, t('拒绝')),
       h('button', { class: 'btn primary', type: 'button', onclick: () => decide(true) }, t('允许'))],
   });
@@ -171,7 +168,7 @@ function clientsDialog(hst) {
       const r = await api('/api/clients' + peerQ);
       const items = r.list || [];
       list.replaceChildren(...(items.length ? items.map(c => h('div', { class: 'cl' },
-        h('div', { class: 't' }, h('b', {}, c.name), h('small', {}, [c.addr, t('最近使用 {0}', fmtWhen(c.last_seen))].filter(Boolean).join(' · '))),
+        h('div', { class: 't' }, h('b', {}, c.name), h('small', {}, [c.addr, fmtWhen(c.last_seen)].filter(Boolean).join(' · '))),
         h('button', { class: 'btn sm danger', type: 'button', onclick: () => revoke(c) }, t('撤销'))))
         : [h('div', { class: 'empty' }, t('还没有授权任何电脑或浏览器'))]));
     } catch (e) { list.replaceChildren(h('div', { class: 'empty' }, e.message)); }
@@ -182,10 +179,12 @@ function clientsDialog(hst) {
     load();
   }
   const gen = local && isLocalHost() ? h('button', { class: 'btn', type: 'button', onclick: issueTokenDialog }, t('生成访问令牌…')) : null;
+  // 远程电脑：访问开关放在授权列表上面（SSH 安装、没有界面的电脑只能在这里改）
+  const row = (label, ...right) => h('div', { class: 'set-r' }, h('span', { class: 'k' }, label), ...right);
+  const top = local ? [] : [h('div', { class: 'set-c' }, accessRows(row, hst)), h('div', { class: 'set-t' }, t('授权的电脑和浏览器'))];
   const dlg = dialog({
-    title: local ? t('已授权的电脑和浏览器') : t('「{0}」授权的电脑和浏览器', hst.name),
-    desc: t('这些电脑和浏览器可以查看和操作{0}上的设备。撤销后需要重新请求授权。', local ? t('本机') : t('「{0}」', hst.name)),
-    body: [list], cls: 'clients',
+    title: local ? t('已授权的电脑和浏览器') : t('「{0}」的访问设置', hst.name),
+    body: [...top, list], cls: 'clients',
     actions: [gen, h('span', { class: 'grow' }), h('button', { class: 'btn primary', type: 'button', onclick: () => dlg.close() }, t('完成'))],
   });
   load();
@@ -193,7 +192,7 @@ function clientsDialog(hst) {
 
 /** 生成访问令牌：给旧版本 DroidBridge、脚本或其他电脑上的 AI 客户端使用 */
 async function issueTokenDialog() {
-  const name = await promptDialog(t('生成访问令牌'), t('给它起个名字，方便以后识别和撤销，例如“办公室 Mac”或“Claude Code”。'), { okText: t('生成') });
+  const name = await promptDialog(t('生成访问令牌'), null, { placeholder: t('名称，如 Claude Code'), okText: t('生成') });
   if (name === null) return;
   let tk;
   try { tk = (await api('/api/clients', { method: 'POST', body: JSON.stringify({ name: name.trim() }) })).token; }
@@ -201,29 +200,44 @@ async function issueTokenDialog() {
   const box = h('input', { class: 'input mono', value: tk, readonly: true, onfocus: e => e.target.select() });
   const dlg = dialog({
     title: t('访问令牌'),
-    desc: t('令牌只显示这一次，请妥善保存。可以填在旧版 DroidBridge 的“访问令牌”里，或作为 Authorization: Bearer 用于脚本和 AI 客户端。'),
+    desc: t('只显示这一次'),
     body: [box],
     actions: [h('button', { class: 'btn', type: 'button', onclick: () => copyText(tk) }, t('复制')), h('button', { class: 'btn primary', type: 'button', onclick: () => dlg.close() }, t('完成'))],
   });
 }
 
+/** “可被发现”“无需授权”两个开关。hst 为空表示本机；远程电脑经 ?peer= 转发（没有界面的电脑也能在这里改） */
+function accessRows(row, hst) {
+  const remote = !!(hst && hst.remote);
+  const peerQ = '?peer=' + encodeURIComponent(remote ? hst.id : 'local');
+  const mk = () => { const i = h('input', { type: 'checkbox', disabled: true }); return [i, h('label', { class: 'switch' }, i, h('i'))]; };
+  const [disc, discSw] = mk();
+  const [open, openSw] = mk();
+  const show = (a) => {
+    disc.checked = a.discoverable && a.discovery; disc.disabled = !a.discovery;
+    discSw.title = a.discovery ? '' : t('已用 --no-discovery 关闭');
+    open.checked = !!a.open; open.disabled = !!a.open_forced;
+    openSw.title = a.open_forced ? t('已用 --open 打开') : t('局域网内任何人都能控制它的设备');
+  };
+  const put = async (body, sw) => {
+    try { show(await api('/api/access' + peerQ, { method: 'PUT', body: JSON.stringify(body) })); }
+    catch (e) { sw.checked = !sw.checked; toast(e.message, { kind: 'bad', ms: 5000 }); }
+  };
+  api('/api/access' + peerQ).then(show).catch(() => {});
+  disc.onchange = () => put({ discoverable: disc.checked }, disc);
+  open.onchange = async () => {
+    if (open.checked && !await confirmDialog(t('无需授权即可访问'), t('局域网内任何人都能控制它的设备'), t('打开'), true)) { open.checked = false; return; }
+    put({ open: open.checked }, open);
+  };
+  return [
+    row(remote ? t('允许局域网内的电脑发现它') : t('允许局域网内的电脑发现本机'), discSw),
+    row(t('无需授权即可访问'), openSw),
+  ];
+}
+
 /** 设置里的“安全”分组 */
 function securityGroup(group, row) {
-  const local = isLocalHost();
-  const sw = h('input', { type: 'checkbox', disabled: !local });
-  const swLabel = h('label', { class: 'switch' }, sw, h('i'));
-  const sub = h('small', {});
-  api('/api/access').then(a => {
-    sw.checked = a.discoverable && a.discovery;
-    if (!a.discovery) { sw.disabled = true; sub.textContent = t('已用 --no-discovery 关闭'); }
-    else if (!local) sub.textContent = t('只能在这台电脑上修改');
-    if (a.open) toast(t('这台电脑以 --open 启动，局域网内任何人都能控制它的设备'), { kind: 'bad', ms: 6000 });
-  }).catch(() => {});
-  sw.onchange = async () => {
-    try { await api('/api/access', { method: 'PUT', body: JSON.stringify({ discoverable: sw.checked }) }); }
-    catch (e) { sw.checked = !sw.checked; toast(e.message, { kind: 'bad' }); }
-  };
   return group(t('安全'),
-    row([t('允许局域网内的电脑发现本机'), sub], swLabel),
+    ...accessRows(row, null),
     row(t('已授权的电脑和浏览器'), h('button', { class: 'btn sm', type: 'button', onclick: () => clientsDialog(null) }, t('管理…'))));
 }

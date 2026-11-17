@@ -13,6 +13,7 @@ pub mod files;
 pub mod icon;
 pub mod logcat;
 pub mod mcp;
+pub mod mdns;
 pub mod media;
 pub mod peers;
 pub mod perf;
@@ -436,6 +437,7 @@ fn router(state: Shared) -> Router {
         .route("/api/info", get(info))
         .route("/api/devices", get(devices))
         .route("/api/mirrors", get(mirrors_list))
+        .route("/api/presence", get(presence))
         .route("/api/app/show", post(app_show))
         .route("/api/peers", get(list_peers).post(add_peer))
         .route("/api/peers/{id}", put(edit_peer).delete(remove_peer))
@@ -543,6 +545,15 @@ fn err(code: StatusCode, msg: impl Into<String>) -> Response {
     (code, Json(json!({"error": msg.into()}))).into_response()
 }
 
+/// 把远程电脑的回复转给浏览器。对方的 401 表示“对方未授权本机 / 令牌失效”，
+/// 不能原样转发：浏览器会当成本机要令牌而反复弹出口令框。
+pub(crate) fn peer_reply(code: u16, content_type: String, body: Vec<u8>) -> Response {
+    if code == 401 {
+        return err(StatusCode::BAD_GATEWAY, tr!("对方电脑尚未授权本机（或令牌错误）", "Not authorized by the remote computer (or wrong token)"));
+    }
+    (StatusCode::from_u16(code).unwrap_or(StatusCode::BAD_GATEWAY), [(header::CONTENT_TYPE, content_type)], body).into_response()
+}
+
 /// 中间件：按请求语言（?lang=、X-Lang、Accept-Language）输出提示，并校验访问令牌
 async fn auth(State(st): State<Shared>, req: Request, next: Next) -> Response {
     let q = util::parse_query(req.uri().query());
@@ -574,29 +585,89 @@ async fn auth_inner(st: Shared, req: Request, next: Next) -> Response {
     }
     // 2. 带有效令牌：启动参数 --token，或配对得到的专属令牌
     let q = util::parse_query(req.uri().query());
+    let peer_ip = req.extensions().get::<ConnectInfo<SocketAddr>>().map(|c| c.0.ip());
+    let ip_s = peer_ip.map(|ip| ip.to_canonical().to_string()).unwrap_or_default();
     if let Some(given) = access::token_from(headers, &q) {
         let global = st.cfg.token.as_deref().is_some_and(|t| access::token_matches(&given, t));
-        if global || st.access.verify(&given).is_some() {
-            return next.run(req).await;
+        let client = if global { None } else { st.access.verify(&given) };
+        if global || client.is_some() {
+            let ident = match client {
+                Some(id) => access::Ident {
+                    name: st.access.client_name(&id).unwrap_or_else(|| ip_s.clone()),
+                    key: format!("c:{id}"),
+                    addr: ip_s.clone(),
+                },
+                None if is_local_request(&st, req.headers(), peer_ip, &q) => local_ident(&st),
+                None => access::Ident { key: format!("ip:{ip_s}"), name: ip_s.clone(), addr: ip_s.clone() },
+            };
+            return run_as(&st, ident, req, next).await;
         }
     }
     // 3. 本机访问（经反向代理转发的除外；设置了 --token 时本机也需要令牌），或 --open：
     //    不需要令牌，但 Host 必须可信（防 DNS 重绑定）
-    let peer_ip = req.extensions().get::<ConnectInfo<SocketAddr>>().map(|c| c.0.ip());
     let local = is_local_request(&st, headers, peer_ip, &q);
-    if local || st.cfg.open {
+    if local || is_open(&st) {
         if !st.access.local_host_ok(headers) {
             let host = headers.get(header::HOST).and_then(|v| v.to_str().ok()).unwrap_or("");
             tracing::warn!("blocked request with untrusted Host: {host} {path}");
             return err(StatusCode::FORBIDDEN, tr!("不允许通过 {host} 访问（可用 --allow-host 允许）", "Access through {host} is not allowed (allow it with --allow-host)"));
         }
-        return next.run(req).await;
+        let ident = if local { local_ident(&st) } else { access::Ident { key: format!("ip:{ip_s}"), name: ip_s.clone(), addr: ip_s } };
+        return run_as(&st, ident, req, next).await;
     }
     (
         StatusCode::UNAUTHORIZED,
         Json(json!({"error": tr!("需要对方授权才能访问", "Authorization required"), "pair": true})),
     )
         .into_response()
+}
+
+fn local_ident(st: &AppState) -> access::Ident {
+    access::Ident { key: "local".into(), name: st.cfg.name.clone(), addr: String::new() }
+}
+
+/// 记下这次访问是谁发起的（“谁连着这台电脑”），并把身份交给后面的处理函数
+async fn run_as(st: &AppState, ident: access::Ident, mut req: Request, next: Next) -> Response {
+    st.access.touch(&ident);
+    req.extensions_mut().insert(ident);
+    next.run(req).await
+}
+
+/// 谁连着这台电脑：最近 15 秒内访问过的电脑 / 浏览器，以及正在投屏的人。
+/// `you` 标出发起这次查询的连接者自己。
+pub fn presence_json(st: &AppState, me: Option<&str>) -> serde_json::Value {
+    use std::collections::BTreeMap;
+    let mut by: BTreeMap<String, serde_json::Value> = BTreeMap::new();
+    let entry = |by: &mut BTreeMap<String, serde_json::Value>, key: &str, name: &str, addr: &str, ago: u64| {
+        by.entry(key.to_string()).or_insert_with(|| json!({"key": key, "name": name, "addr": addr, "ago": ago, "you": Some(key) == me, "views": []}));
+    };
+    for (i, ago) in st.access.recent(std::time::Duration::from_secs(15)) {
+        entry(&mut by, &i.key, &i.name, &i.addr, ago);
+    }
+    for m in st.mirrors.list() {
+        for v in m.views() {
+            let key = v["ident"].as_str().unwrap_or("").to_string();
+            if key.is_empty() {
+                continue;
+            }
+            entry(&mut by, &key, v["ident_name"].as_str().unwrap_or(""), v["addr"].as_str().unwrap_or(""), 0);
+            if let Some(e) = by.get_mut(&key) {
+                e["ago"] = json!(0);
+                if let Some(a) = e["views"].as_array_mut() {
+                    a.push(json!({"serial": m.serial, "who": v["who"], "controlling": v["controlling"]}));
+                }
+            }
+        }
+    }
+    let mut list: Vec<serde_json::Value> = by.into_values().collect();
+    list.sort_by_key(|e| (e["you"].as_bool() != Some(true), e["name"].as_str().unwrap_or("").to_lowercase()));
+    json!({"list": list})
+}
+
+async fn presence(State(st): State<Shared>, ident: Option<axum::Extension<access::Ident>>, Query(q): Query<HashMap<String, String>>) -> Response {
+    let me = ident.map(|e| e.0.key);
+    let st2 = st.clone();
+    local_or_peer(&st, &q, "GET", "/api/presence", b"", || async move { Ok(presence_json(&st2, me.as_deref())) }).await
 }
 
 /// 是不是“本机请求”（与 auth 中间件里的判断一致）：来源 IP 是本机、没有经过反向代理
@@ -629,7 +700,7 @@ async fn info(State(st): State<Shared>) -> Json<serde_json::Value> {
         "os": std::env::consts::OS,
         "lang": i18n::code(),
         "scrcpy": scrcpy_version(),
-        "auth": !st.cfg.open || st.cfg.token.is_some(),
+        "auth": !is_open(&st) || st.cfg.token.is_some(),
         "pairing": true,
         "ips": util::local_ips(),
         "port": st.cfg.port,
@@ -836,30 +907,61 @@ async fn clients_revoke(State(st): State<Shared>, Path(id): Path<String>, Query(
     .await
 }
 
+/// 局域网内无需授权即可访问：启动参数 --open，或界面里打开了这项设置
+pub(crate) fn is_open(st: &AppState) -> bool {
+    st.cfg.open || st.access.is_open()
+}
+
 fn access_json(st: &AppState) -> serde_json::Value {
     json!({
         "discoverable": st.access.is_discoverable(),
         "discovery": st.cfg.discovery,
-        "open": st.cfg.open,
+        "open": is_open(st),
+        "open_forced": st.cfg.open,
         "fixed_token": st.cfg.token.is_some(),
     })
 }
 
-async fn access_get(State(st): State<Shared>) -> Json<serde_json::Value> {
-    Json(access_json(&st))
+async fn access_get(State(st): State<Shared>, Query(q): Query<HashMap<String, String>>) -> Response {
+    let st2 = st.clone();
+    local_or_peer(&st, &q, "GET", "/api/access", b"", || async move { Ok(access_json(&st2)) }).await
 }
 
 #[derive(Deserialize)]
 struct AccessPut {
-    discoverable: bool,
+    #[serde(default)]
+    discoverable: Option<bool>,
+    #[serde(default)]
+    open: Option<bool>,
 }
 
-/// 修改“允许被局域网发现”：只能在本机修改
-async fn access_put(State(st): State<Shared>, ConnectInfo(addr): ConnectInfo<SocketAddr>, Json(r): Json<AccessPut>) -> Response {
-    if !st.access.is_local_ip(addr.ip()) {
-        return err(StatusCode::FORBIDDEN, tr!("只能在本机修改", "Can only be changed on the computer itself"));
+/// 修改“允许被局域网发现”“无需授权”。本机、已授权的电脑 / 浏览器（它们本来就能批准新的连接）
+/// 或持有 --token 的人可以修改；因 --open 而未经授权进来的请求不行。
+/// 带 ?peer= 时转发给远程电脑（例如用 SSH 安装、没有界面的电脑）。
+async fn access_put(
+    State(st): State<Shared>,
+    ident: Option<axum::Extension<access::Ident>>,
+    headers: HeaderMap,
+    Query(q): Query<HashMap<String, String>>,
+    body: axum::body::Bytes,
+) -> Response {
+    if remote_id(&q).is_some() {
+        return local_or_peer(&st, &q, "PUT", "/api/access", &body, || async { Ok(json!({})) }).await;
     }
-    match st.access.set_discoverable(r.discoverable) {
+    let r: AccessPut = match serde_json::from_slice(&body) {
+        Ok(r) => r,
+        Err(e) => return err(StatusCode::BAD_REQUEST, e.to_string()),
+    };
+    let key = ident.map(|e| e.0.key).unwrap_or_default();
+    let global = st.cfg.token.as_deref().is_some_and(|t| access::token_from(&headers, &q).is_some_and(|g| access::token_matches(&g, t)));
+    if !(key == "local" || key.starts_with("c:") || global) {
+        return err(StatusCode::FORBIDDEN, tr!("需要先获得这台电脑的授权", "Authorization from this computer is required"));
+    }
+    if r.open == Some(false) && st.cfg.open {
+        return err(StatusCode::BAD_REQUEST, tr!("这台电脑以 --open 启动，需去掉该参数后重启", "This computer was started with --open; remove it and restart"));
+    }
+    let res = r.discoverable.map_or(Ok(()), |d| st.access.set_discoverable(d)).and_then(|_| r.open.map_or(Ok(()), |o| st.access.set_open(o)));
+    match res {
         Ok(()) => Json(access_json(&st)).into_response(),
         Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, e),
     }
@@ -1091,7 +1193,7 @@ async fn ws_perf(State(st): State<Shared>, ws: WebSocketUpgrade, req_uri: axum::
     ws.on_upgrade(move |socket| i18n::REQUEST_EN.scope(en, perf::run(st, serial, socket)))
 }
 
-async fn ws_stream(State(st): State<Shared>, ws: WebSocketUpgrade, req_uri: axum::http::Uri) -> Response {
+async fn ws_stream(State(st): State<Shared>, ident: Option<axum::Extension<access::Ident>>, ws: WebSocketUpgrade, req_uri: axum::http::Uri) -> Response {
     let raw_query = req_uri.query().map(String::from);
     let q = util::parse_query(raw_query.as_deref());
     let Some(serial) = q.get("serial").cloned().filter(|s| !s.is_empty()) else {
@@ -1121,6 +1223,7 @@ async fn ws_stream(State(st): State<Shared>, ws: WebSocketUpgrade, req_uri: axum
         id: scrcpy::sanitize_vid(q.get("vid").map(String::as_str)),
         name: scrcpy::sanitize_who(q.get("who").map(String::as_str)),
         force: q.get("force").is_some_and(|v| v == "1" || v == "true"),
+        ident: ident.map(|e| e.0),
     };
     let en = i18n::is_en();
     ws.on_upgrade(move |socket| i18n::REQUEST_EN.scope(en, scrcpy::run_session(st, serial, opts, guest, socket)))
@@ -1173,12 +1276,7 @@ where
             return err(StatusCode::NOT_FOUND, tr!("远程电脑不存在", "Remote computer not found"));
         };
         return match peers::forward(&peer, method, path, body, std::time::Duration::from_secs(60)).await {
-            Ok((code, b)) => (
-                StatusCode::from_u16(code).unwrap_or(StatusCode::BAD_GATEWAY),
-                [(header::CONTENT_TYPE, "application/json")],
-                b,
-            )
-                .into_response(),
+            Ok((code, b)) => peer_reply(code, "application/json".into(), b),
             Err(e) => err(StatusCode::BAD_GATEWAY, e),
         };
     }
@@ -1264,7 +1362,7 @@ async fn files_preview(State(st): State<Shared>, Query(q): Query<HashMap<String,
         };
         let query: Vec<String> = util::parse_query(uri.query()).into_iter().filter(|(k, _)| k != "peer" && k != "token").map(|(k, v)| format!("{}={}", util::url_encode(&k), util::url_encode(&v))).collect();
         return match peers::forward_raw(&peer, &format!("/api/files/preview?{}", query.join("&")), std::time::Duration::from_secs(90)).await {
-            Ok((code, ct, body)) => (StatusCode::from_u16(code).unwrap_or(StatusCode::BAD_GATEWAY), [(header::CONTENT_TYPE, ct)], body).into_response(),
+            Ok((code, ct, body)) => peer_reply(code, ct, body),
             Err(e) => err(StatusCode::BAD_GATEWAY, e),
         };
     }
@@ -1445,6 +1543,32 @@ mod tests {
         assert_eq!(call(&app, lan, &format!("/api/access?token={token}"), &[]).await, 401);
     }
 
+    /// “谁连着这台电脑”：授权的电脑访问过之后出现在列表里，查询者自己标为 you
+    #[tokio::test]
+    async fn presence_lists_connected_clients() {
+        let st = test_state_in(std::env::temp_dir().join(format!("droidbridge-presence-{:08x}", util::random_scid())), "Host");
+        let app = router(st.clone());
+        let token = st.access.issue("Office Mac", "192.0.2.30");
+        assert_eq!(call(&app, "192.0.2.30:5000", &format!("/api/access?token={token}"), &[]).await, 200);
+        let (code, v) = call_json(&app, "GET", "/api/presence", json!({})).await;
+        assert_eq!(code, 200, "{v}");
+        let list = v["list"].as_array().unwrap();
+        let mac = list.iter().find(|e| e["name"] == "Office Mac").expect("authorized client listed");
+        assert_eq!(mac["you"], false);
+        assert_eq!(mac["addr"], "192.0.2.30");
+        let me = list.iter().find(|e| e["key"] == "local").expect("local listed");
+        assert_eq!(me["you"], true);
+        assert_eq!(list[0]["you"], true, "the requester comes first");
+        // 以授权电脑的身份查询：它自己是 you
+        let mut req = axum::http::Request::builder().uri(format!("/api/presence?token={token}")).header("host", "127.0.0.1:8730").body(axum::body::Body::empty()).unwrap();
+        req.extensions_mut().insert(ConnectInfo("192.0.2.30:5000".parse::<SocketAddr>().unwrap()));
+        let res = tower::Service::call(&mut app.clone(), req).await.unwrap();
+        let b = axum::body::to_bytes(res.into_body(), 1 << 20).await.unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&b).unwrap();
+        let mac = v["list"].as_array().unwrap().iter().find(|e| e["name"] == "Office Mac").unwrap().clone();
+        assert_eq!(mac["you"], true);
+    }
+
     async fn call_json(app: &Router, method: &str, uri: &str, body: serde_json::Value) -> (u16, serde_json::Value) {
         use tower::Service;
         let mut req = axum::http::Request::builder()
@@ -1504,10 +1628,19 @@ mod tests {
         assert_eq!(code, 200, "{v}");
         assert_eq!(v["list"][0]["name"], "A");
 
-        // B 撤销后 A 不能再访问
+        // 在 A 的界面里修改 B 的访问设置（B 可能没有界面）
+        let (code, v) = call_json(&a_app, "PUT", &format!("/api/access?peer={pid}"), json!({"discoverable": false, "open": true})).await;
+        assert_eq!(code, 200, "{v}");
+        assert!(!b.access.is_discoverable() && b.access.is_open());
+        let (_, v) = call_json(&a_app, "GET", &format!("/api/access?peer={pid}"), json!({})).await;
+        assert_eq!(v["open"], true, "{v}");
+        b.access.set_open(false).unwrap();
+
+        // B 撤销后 A 不能再访问；对方的 401 不能原样转给浏览器（否则浏览器会反复要本机令牌）
         b.access.revoke(&b.access.list()[0].id);
         let (code, v) = call_json(&a_app, "GET", &format!("/api/clients?peer={pid}"), json!({})).await;
-        assert_eq!(code, 401, "{v}");
+        assert_eq!(code, 502, "{v}");
+        assert!(v.get("pair").is_none(), "{v}");
         let _ = std::fs::remove_dir_all(&base);
     }
 }

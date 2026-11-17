@@ -58,10 +58,10 @@ window.__dbAskClose = () => {
   let choice = null;
   const dlg = dialog({
     title: t('关闭窗口'),
-    desc: t('DroidBridge 可以在后台继续运行：其他电脑和浏览器仍能连接本机的设备，AI 工具也能继续使用。之后可在托盘图标里重新打开或退出。'),
-    body: [h('label', { class: 'check' }, remember, h('span', {}, t('记住我的选择（可在设置中修改）')))],
+    desc: t('缩到托盘后仍在后台运行，其他电脑和 AI 不会断开。'),
+    body: [h('label', { class: 'check' }, remember, h('span', {}, t('记住选择')))],
     cls: 'close-ask',
-    actions: [h('button', { class: 'btn', type: 'button', onclick: () => { choice = 'quit'; dlg.close(); } }, t('退出 DroidBridge')),
+    actions: [h('button', { class: 'btn', type: 'button', onclick: () => { choice = 'quit'; dlg.close(); } }, t('退出')),
       h('button', { class: 'btn primary', type: 'submit' }, t('最小化到托盘'))],
     onsubmit: () => { choice = 'tray'; dlg.close(); },
   });

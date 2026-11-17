@@ -124,7 +124,7 @@ pub async fn run(st: std::sync::Arc<crate::AppState>, http_port: u16) {
         id: st.discovery.id.clone(),
         name: st.cfg.name.clone(),
         port: http_port,
-        auth: !st.cfg.open || st.cfg.token.is_some(),
+        auth: !crate::is_open(&st) || st.cfg.token.is_some(),
         version: env!("CARGO_PKG_VERSION").into(),
         os: std::env::consts::OS.into(),
         q,

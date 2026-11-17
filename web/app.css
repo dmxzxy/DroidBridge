@@ -53,7 +53,7 @@ aside{width:252px;flex:none;height:calc(100vh - var(--sb-h));position:sticky;top
 .grp{padding-bottom:6px}
 .grp+.grp{margin-top:4px;padding-top:6px;border-top:1px solid var(--line)}
 .lists>.grp:first-child{margin-top:4px}
-.host{position:relative;display:flex;align-items:center;gap:8px;min-height:42px;padding:4px 4px 4px 2px;border-radius:6px;cursor:pointer;user-select:none}
+.host{position:relative;display:flex;align-items:center;gap:8px;min-height:38px;padding:4px 4px 4px 2px;border-radius:6px;cursor:pointer;user-select:none}
 .host:hover{background:var(--hover)}
 .host .chev{flex:none;display:grid;place-items:center;width:14px;color:var(--faint);transition:transform .15s}
 .host .chev svg{width:13px;height:13px}
@@ -62,7 +62,10 @@ aside{width:252px;flex:none;height:calc(100vh - var(--sb-h));position:sticky;top
 .host .hi svg{width:16px;height:16px}
 .host .hi.err{background:rgba(229,83,75,.12);color:var(--bad)}
 .host .t{flex:1;min-width:0;line-height:1.35}
-.host b{display:block;font-weight:600;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.host b{display:block;min-width:0;font-weight:600;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.host .nm{display:flex;align-items:center;gap:6px;min-width:0}
+.host .cnt{flex:none;min-width:16px;height:16px;padding:0 5px;box-sizing:border-box;border-radius:8px;background:var(--line2);color:var(--sub);font-size:10px;font-weight:600;line-height:16px;text-align:center;font-variant-numeric:tabular-nums}
+.host .cnt.on{background:var(--accent);color:#fff}
 .host .sub{display:flex;align-items:center;gap:6px;min-width:0}
 .host small{display:block;min-width:0;font-size:11px;color:var(--faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .host small.err{color:var(--bad)}
@@ -353,6 +356,11 @@ dialog.apps{width:min(600px,calc(100vw - 32px))}
 .bi-d .r svg{width:14px;height:14px;flex:none}
 .dev .wl{color:var(--faint);flex:none;display:flex}
 .dev .wl svg{width:13px;height:13px}
+/* 侧栏电脑标题行：连着这台电脑的其他人（点击查看名单） */
+.host .sub .ppl{display:inline-flex;align-items:center;gap:3px;flex:none;color:var(--faint);font-size:11px;font-variant-numeric:tabular-nums}
+.host .sub .ppl .ico{display:flex}
+.host .sub .ppl svg{width:12px;height:12px}
+.cl>.dot{flex:none}
 /* 侧栏设备行：别人也在看这个设备（眼睛 + 人数） */
 .dev .watch{display:inline-flex;align-items:center;gap:3px;flex:none;height:17px;padding:0 6px;border-radius:9px;background:var(--active);color:var(--accent);font-size:11px;line-height:17px;font-variant-numeric:tabular-nums}
 .dev .watch .ico{display:flex}

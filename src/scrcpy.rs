@@ -67,6 +67,8 @@ pub struct Guest {
     pub name: String,
     /// 按我的画质设置重启共享会话
     pub force: bool,
+    /// 连接者身份（哪台电脑 / 哪个浏览器，用于“谁连着这台电脑”）
+    pub ident: Option<crate::access::Ident>,
 }
 
 type Out = mpsc::Sender<Message>;
@@ -269,6 +271,8 @@ struct Viewer {
     conn: u64,
     id: String,
     name: String,
+    /// 连接者身份
+    ident: Option<crate::access::Ident>,
     /// 是否要声音
     audio: bool,
     tx: Out,
@@ -447,6 +451,18 @@ impl Mirror {
     }
 
     /// 概况（`/api/mirrors`）
+    /// 每个观看者：连接者身份、显示名称、是否正在操作（“谁连着这台电脑”）
+    pub fn views(&self) -> Vec<Value> {
+        let st = self.st.lock().unwrap();
+        st.viewers
+            .iter()
+            .map(|v| {
+                let (key, name, addr) = v.ident.as_ref().map(|i| (i.key.as_str(), i.name.as_str(), i.addr.as_str())).unwrap_or(("", "", ""));
+                json!({"ident": key, "ident_name": name, "addr": addr, "who": v.name, "controlling": st.arb.controller() == Some(v.id.as_str())})
+            })
+            .collect()
+    }
+
     pub fn summary(&self) -> Value {
         let st = self.st.lock().unwrap();
         let viewers: Vec<Value> = st.viewers.iter().map(|v| json!(v.name)).collect();
@@ -753,6 +769,7 @@ impl Mirror {
                 conn,
                 id: guest.id.clone(),
                 name: guest.name.clone(),
+                ident: guest.ident.clone(),
                 audio: opts.audio,
                 tx,
                 lag: LagState::default(),
@@ -1469,6 +1486,7 @@ mod tests {
             conn: 0,
             id: id.into(),
             name: name.into(),
+            ident: None,
             audio,
             tx,
             lag: LagState::default(),

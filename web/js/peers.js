@@ -9,7 +9,7 @@ function hostItems(r) {
     { icon: 'wifi', label: t('无线连接设备…'), fn: () => wirelessDialog(r) },
     { icon: 'refresh', label: t('刷新'), fn: async () => { await refreshHost(r); renderSide(); if (r.error) toast(r.error, { kind: 'bad', ms: 4000 }); } },
     { icon: 'edit', label: t('编辑'), fn: () => peerDialog(r) },
-    r.error ? null : { icon: 'lock', label: t('它授权的电脑和浏览器…'), fn: () => clientsDialog(r) },
+    r.error ? null : { icon: 'lock', label: t('访问设置…'), fn: () => clientsDialog(r) },
     { icon: 'download', label: t('通过 SSH 重新安装…'), fn: () => peerDialog(r, { install: true }) },
     { icon: 'copy', label: t('复制地址'), fn: () => copyText(r.addr) },
     '-',
@@ -329,12 +329,21 @@ function wirelessDialog(hst) {
         if (s.state === 'done') { toast(s.msg, { kind: 'ok' }); refreshAll(); job = null; setTimeout(() => dlg.open && dlg.close(), 1200); return; }
         if (s.state === 'failed') {
           job = null;
+          if (s.need_connect) { needConnect(s.need_connect, s.msg); return; }
           qrState.append(' ', h('button', { class: 'linkbtn', type: 'button', onclick: startQr }, t('重试')));
           return;
         }
       }
       await new Promise(r => setTimeout(r, 1000));
     }
+  }
+  // 已配对但没找到连接端口：切到「IP 地址」页，预填手机 IP，让用户补上无线调试页面显示的端口
+  function needConnect(host, msg) {
+    show('ip');
+    iAddr.value = host ? host + ':' : '';
+    err.textContent = msg;
+    iAddr.focus();
+    try { iAddr.setSelectionRange(iAddr.value.length, iAddr.value.length); } catch {}
   }
   async function submit() {
     err.textContent = '';
@@ -345,7 +354,8 @@ function wirelessDialog(hst) {
     ok.disabled = true; const label = ok.textContent; ok.textContent = t('正在连接…');
     try {
       const r = await api(path + '?' + peerQ, { method: 'POST', body: JSON.stringify(body) });
-      toast(r.msg, { kind: 'ok' }); refreshAll(); dlg.close();
+      if (r.need_connect) { refreshAll(); needConnect(r.host, r.msg); }
+      else { toast(r.msg, { kind: 'ok' }); refreshAll(); dlg.close(); }
     } catch (e) { err.textContent = e.message; }
     ok.disabled = false; ok.textContent = label;
   }

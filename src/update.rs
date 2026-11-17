@@ -54,10 +54,12 @@ fn release_base() -> String {
 }
 
 async fn curl(args: &[String]) -> Result<String, String> {
-    let out = Command::new("curl")
-        .args(args)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+    let mut c = Command::new("curl");
+    c.args(args).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+    // CREATE_NO_WINDOW：桌面版没有控制台，不加会在检查 / 下载更新时弹出黑色窗口
+    #[cfg(windows)]
+    c.creation_flags(0x0800_0000);
+    let out = c
         .output()
         .await
         .map_err(|e| tr!("无法运行 curl：{e}", "Cannot run curl: {e}"))?;
@@ -175,10 +177,13 @@ pub async fn apply(st: &AppState) -> Result<serde_json::Value, String> {
     // 脱离父进程启动脚本，然后本进程退出
     let mut cmd = Command::new(if cfg!(windows) { "cmd" } else { "sh" });
     if cfg!(windows) {
-        cmd.args(["/C", "start", "", "/MIN"]).arg(&script);
+        cmd.arg("/C").arg(&script);
     } else {
         cmd.arg(&script);
     }
+    // Windows：隐藏窗口运行（CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP），本进程退出后脚本继续执行
+    #[cfg(windows)]
+    cmd.creation_flags(0x0800_0000 | 0x0000_0200);
     cmd.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
     cmd.spawn().map_err(|e| tr!("无法启动更新脚本：{e}", "Cannot start the update script: {e}"))?;
     tracing::info!("update to {ver}: restarting via {}", script.display());

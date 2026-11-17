@@ -12,8 +12,9 @@ async function api(path, opts = {}) {
   const r = await fetch(withToken(path), { ...opts, headers: { 'content-type': 'application/json', 'x-lang': LANG, ...(opts.headers || {}) } });
   let body = null;
   try { body = await r.json(); } catch {}
-  if (r.status === 401) {
+  if (r.status === 401 && !/[?&]peer=(?!local(&|$))[^&]/.test(path)) {
     // 从其他设备的浏览器访问：请求这台电脑授权（旧版本或固定令牌：直接输入令牌）
+    // 发往远程电脑的请求（?peer=）被拒绝是对方没授权本机，不是本机要令牌，不在这里弹框
     tokenAsk = tokenAsk || (body && body.pair ? browserPairDialog()
       : promptDialog(t('需要访问令牌'), t('这台 DroidBridge 启用了访问令牌。'), { type: 'password', value: pref.get('token', '') }))
       .finally(() => { tokenAsk = null; });

@@ -210,6 +210,7 @@ When several people open the same device (on this computer, from other computers
 - The eye badge in the viewer title shows how many people are watching (hover for names); devices in the sidebar show it too when others are watching.
 - Only one person controls the device at a time: whoever touches first gets control, and it is released 3 seconds after they stop. Others see "“Name” is controlling" above the screen, and their input is ignored meanwhile. An AI agent counts as a controller as well; pause it to take over.
 - The device clipboard is synced only to the person in control.
+- The sidebar shows how many others are connected to each computer; hover for names.
 
 ## Security
 

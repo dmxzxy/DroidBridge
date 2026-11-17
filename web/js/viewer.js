@@ -306,19 +306,18 @@ class Viewer {
     const name = x => (x && x.name) || '?';
     this.eyeNum.textContent = String(list.length);
     this.eyeEl.hidden = list.length < 2;
-    const names = list.map(x => x && x.id === this.vid ? name(x) + t('（我）') : name(x));
     const ctl = m.controller && m.controller !== 'ai' && m.controller !== this.vid ? (m.controller_name || '?') : null;
-    this.eyeEl.title = (names.join('\n') + (ctl ? '\n' + t('👆 「{0}」正在操作', ctl) : '')).trim();
+    this.eyeEl.title = list.filter(x => x && x.id !== this.vid).map(name).join('\n');
     // AI 控制时不显示这条（已经有 AI 提示条了）
     this.ctlBar.hidden = !ctl;
-    if (ctl) this.ctlBar.textContent = t('👆 「{0}」正在操作', ctl);
+    if (ctl) this.ctlBar.textContent = t('{0} 正在操作', ctl);
   }
   /** 别人正在操作，这条输入被丢弃：同一 Viewer 3 秒内最多提示一次 */
   onBusy(m) {
     const now = Date.now();
     if (now - this.busyAt < 3000) return;
     this.busyAt = now;
-    toast(t('「{0}」正在操作，请稍候', (m && m.by) || '?'), { ms: 3000 });
+    toast(t('{0} 正在操作', (m && m.by) || '?'), { ms: 2000 });
   }
 
   ensureDecoder() {

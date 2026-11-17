@@ -1,0 +1,13 @@
+{
+  "id": "hello",
+  "name": "Hello 示例",
+  "version": "1.0.0",
+  "description": "演示菜单、设备面板、状态栏和通知的最简插件",
+  "author": "DroidBridge",
+  "main": "main.lua",
+  "permissions": ["device.shell", "device.apps"],
+  "settings": [
+    { "name": "greeting", "label": "问候语", "type": "text", "default": "你好" },
+    { "name": "showCpu", "label": "在面板里显示 CPU 架构", "type": "bool", "default": true }
+  ]
+}

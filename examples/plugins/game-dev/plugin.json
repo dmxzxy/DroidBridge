@@ -1,0 +1,23 @@
+{
+  "id": "game-dev",
+  "name": "游戏开发工具",
+  "version": "1.0.0",
+  "description": "安装测试包并启动、看前台应用和 FPS、统计 Lua 报错、给 AI 提供重启用工具",
+  "author": "DroidBridge",
+  "main": "main.lua",
+  "permissions": [
+    "device.shell",
+    "device.install",
+    "device.apps",
+    "device.logs",
+    "device.perf",
+    "mcp"
+  ],
+  "settings": [
+    { "name": "apk", "label": "测试包路径（留空则每次选择）", "type": "file", "default": "" },
+    { "name": "pkg", "label": "包名", "type": "text", "default": "com.example.game" },
+    { "name": "launch", "label": "装完后自动启动", "type": "bool", "default": true },
+    { "name": "downgrade", "label": "允许降级安装", "type": "bool", "default": true },
+    { "name": "luaTag", "label": "Lua 日志的 Tag", "type": "text", "default": "Unity" }
+  ]
+}

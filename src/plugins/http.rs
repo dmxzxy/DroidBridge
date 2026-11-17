@@ -481,7 +481,7 @@ pub async fn plugin_web_file(State(st): State<Shared>, Path((id, path)): Path<(S
         };
         let target = format!("/plugin-web/{}/{}", util::url_encode(&plugin), rest);
         return match peers::forward_raw(&peer, &target, std::time::Duration::from_secs(60)).await {
-            Ok((code, ct, body)) => (StatusCode::from_u16(code).unwrap_or(StatusCode::BAD_GATEWAY), [(header::CONTENT_TYPE, ct)], body).into_response(),
+            Ok((code, ct, body)) => crate::peer_reply(code, ct, body),
             Err(e) => err(StatusCode::BAD_GATEWAY, e),
         };
     }

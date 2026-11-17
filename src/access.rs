@@ -83,7 +83,22 @@ pub struct Access {
     settings_path: PathBuf,
     /// 是否让局域网内其他电脑发现本机
     pub discoverable: AtomicBool,
+    /// 局域网内无需授权（界面设置）
+    open: AtomicBool,
     local_ips: Mutex<(Option<Instant>, Vec<IpAddr>)>,
+    /// 最近访问过本机的连接者（身份 → 最近一次请求的时间）
+    seen: Mutex<HashMap<String, (Ident, Instant)>>,
+}
+
+/// 发起请求的是谁（由 auth 中间件放进请求扩展里）
+#[derive(Clone, Debug)]
+pub struct Ident {
+    /// local / c:<授权 id> / ip:<IP>
+    pub key: String,
+    /// 显示名称：本机为电脑名，授权的电脑为授权时的名称，其他为 IP
+    pub name: String,
+    /// 对方 IP（本机为空）
+    pub addr: String,
 }
 
 pub fn now_secs() -> i64 {
@@ -127,11 +142,9 @@ impl Access {
         let path = data_dir.join("clients.json");
         let settings_path = data_dir.join("access.json");
         let clients = std::fs::read(&path).ok().and_then(|b| serde_json::from_slice::<Vec<Client>>(&b).ok()).unwrap_or_default();
-        let discoverable = std::fs::read(&settings_path)
-            .ok()
-            .and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok())
-            .and_then(|v| v.get("discoverable").and_then(|d| d.as_bool()))
-            .unwrap_or(true);
+        let settings: serde_json::Value = std::fs::read(&settings_path).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default();
+        let discoverable = settings.get("discoverable").and_then(|d| d.as_bool()).unwrap_or(true);
+        let open = settings.get("open").and_then(|d| d.as_bool()).unwrap_or(false);
         let mut nm = Vec::new();
         for n in names.iter().cloned().chain(crate::util::hostname()) {
             let n = n.trim().to_ascii_lowercase().replace(' ', "-");
@@ -149,7 +162,9 @@ impl Access {
             outgoing: Mutex::new(HashMap::new()),
             allow_hosts: allow_hosts.into_iter().map(|h| h.trim().to_ascii_lowercase()).filter(|h| !h.is_empty()).collect(),
             discoverable: AtomicBool::new(discoverable),
+            open: AtomicBool::new(open),
             local_ips: Mutex::new((None, Vec::new())),
+            seen: Mutex::new(HashMap::new()),
         }
     }
 
@@ -159,7 +174,22 @@ impl Access {
 
     pub fn set_discoverable(&self, on: bool) -> Result<(), String> {
         self.discoverable.store(on, Ordering::Relaxed);
-        let data = serde_json::to_vec_pretty(&serde_json::json!({ "discoverable": on })).map_err(|e| e.to_string())?;
+        self.save_settings()
+    }
+
+    /// 局域网内无需授权即可访问：与启动参数 --open 效果相同，但可在界面上开关，重启后保留
+    pub fn is_open(&self) -> bool {
+        self.open.load(Ordering::Relaxed)
+    }
+
+    pub fn set_open(&self, on: bool) -> Result<(), String> {
+        self.open.store(on, Ordering::Relaxed);
+        self.save_settings()
+    }
+
+    fn save_settings(&self) -> Result<(), String> {
+        let v = serde_json::json!({ "discoverable": self.is_discoverable(), "open": self.is_open() });
+        let data = serde_json::to_vec_pretty(&v).map_err(|e| e.to_string())?;
         std::fs::write(&self.settings_path, data).map_err(|e| e.to_string())
     }
 
@@ -200,6 +230,23 @@ impl Access {
             }
         }
         Some(id)
+    }
+
+    /// 授权记录的名称
+    pub fn client_name(&self, id: &str) -> Option<String> {
+        self.clients.lock().unwrap().iter().find(|c| c.id == id).map(|c| c.name.clone())
+    }
+
+    /// 记录一次访问
+    pub fn touch(&self, ident: &Ident) {
+        let mut m = self.seen.lock().unwrap();
+        m.retain(|_, (_, t)| t.elapsed() < Duration::from_secs(600));
+        m.insert(ident.key.clone(), (ident.clone(), Instant::now()));
+    }
+
+    /// 最近 within 内访问过的连接者，及距今秒数
+    pub fn recent(&self, within: Duration) -> Vec<(Ident, u64)> {
+        self.seen.lock().unwrap().values().filter(|(_, t)| t.elapsed() < within).map(|(i, t)| (i.clone(), t.elapsed().as_secs())).collect()
     }
 
     /// 授权一个新的客户端，返回令牌（只在这里出现一次）
@@ -530,6 +577,10 @@ mod tests {
         a.set_discoverable(false).unwrap();
         let b = Access::load(a.path.parent().unwrap(), vec![], &[]);
         assert!(!b.is_discoverable());
+        assert!(!b.is_open());
+        b.set_open(true).unwrap();
+        let c = Access::load(a.path.parent().unwrap(), vec![], &[]);
+        assert!(c.is_open() && !c.is_discoverable());
         let _ = std::fs::remove_dir_all(a.path.parent().unwrap());
     }
 

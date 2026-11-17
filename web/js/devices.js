@@ -23,6 +23,8 @@ async function refreshHost(hst) {
     for (const it of (r && r.list) || []) if (it && it.serial) m.set(it.serial, { viewers: it.viewers || [], controller: it.controller || null });
     hst.mirrors = m;
   }, () => {});
+  // 谁连着这台电脑：旧版本没有这个接口时为 null（不显示）
+  const presence = api('/api/presence?peer=' + encodeURIComponent(hst.id)).then(r => { hst.presence = (r && r.list) || []; }, () => { hst.presence = null; });
   try { hst.devices = await api('/api/devices?peer=' + encodeURIComponent(hst.id)); hst.error = null; }
   catch (e) { hst.error = e.message; hst.devices = []; }
   hst.loaded = true;
@@ -31,16 +33,38 @@ async function refreshHost(hst) {
     try { hst.info = await api('/api/node?peer=' + encodeURIComponent(hst.id)); hst.infoAt = Date.now(); } catch {}
   }
   await mirrors;
+  await presence;
+  if (!hst.remote) notifyPresence(hst);
 }
-/** 侧栏设备行上的“别人正在看”标记：眼睛 + 人数，悬停列出名称和操作者 */
-function devWatch(hst, serial, open) {
-  const mir = hst.mirrors && hst.mirrors.get(serial);
-  if (!mir) return null;
-  const n = (mir.viewers || []).length - (open ? 1 : 0);
-  if (n <= 0) return null;
-  const tip = [...(mir.viewers || [])];
-  if (mir.controller) tip.push(t('{0} 正在操作', mir.controller));
-  return h('span', { class: 'watch', title: tip.join('\n') }, h('span', { class: 'ico', html: svg('eye') }), String(n));
+
+// ---------------- 谁连着这台电脑 ----------------
+/** 除了自己以外，正连着这台电脑的人 */
+function presenceOthers(hst) {
+  return (hst.presence || []).filter(p => !p.you);
+}
+/** 设备序列号 → 型号（显示用） */
+function devLabel(hst, serial) {
+  const d = (hst.devices || []).find(x => x.serial === serial);
+  return (d && d.model) || serial;
+}
+/** 悬停提示里的一行：名字 · 在看的设备 */
+function presenceLine(hst, p) {
+  const devs = (p.views || []).map(v => devLabel(hst, v.serial));
+  return devs.length ? p.name + ' · ' + devs.join('、') : p.name;
+}
+/** 本机：有人新连上时提示一次（首次读取时不提示） */
+function notifyPresence(hst) {
+  if (!hst.presence) return;
+  const keys = new Set(presenceOthers(hst).map(p => p.key));
+  if (hst.seenKeys) for (const p of presenceOthers(hst)) if (!hst.seenKeys.has(p.key)) toast(t('{0} 已连接', p.name), { ms: 3000 });
+  hst.seenKeys = keys;
+}
+/** 标题行：还有几个人连着这台电脑，悬停看名字 */
+function presenceBadge(hst) {
+  const others = presenceOthers(hst);
+  if (!others.length) return null;
+  return h('span', { class: 'ppl', title: others.map(p => presenceLine(hst, p)).join('\n') },
+    h('span', { class: 'ico', html: svg('users') }), String(others.length));
 }
 
 /** 比较版本号 a 与 b：-1 / 0 / 1 */
@@ -107,10 +131,11 @@ function findViewer(hst, dev) {
 /** 远程电脑的错误是否表示“未授权本机 / 令牌错误” */
 const needsAuth = (msg) => /授权|令牌|token|authoriz/i.test(msg || '');
 
-/** 设备行副标题：连接方式 + 简短标识（无线设备的 mDNS 名称太长，只显示“无线”） */
-function devSub(d) {
-  if (!d.wireless) return 'USB · ' + d.serial;
-  return d.serial.includes('._adb-tls') ? t('无线') : t('无线') + ' · ' + d.serial.replace(/:5555$/, '');
+/** 设备行悬停提示：连接方式 + 序列号（列表里不显示，大多数人用不到） */
+function devTip(d) {
+  const lines = [d.model || d.serial, (d.wireless ? t('无线') : 'USB') + ' · ' + d.serial];
+  if (d.state !== 'device') lines.push(STATE_HINT[d.state] || (t('设备状态：') + d.state));
+  return lines.join('\n');
 }
 
 function devRows(hst, emptyEl) {
@@ -129,12 +154,11 @@ function devRows(hst, emptyEl) {
     const ready = d.state === 'device';
     const open = [...viewers.values()].some(v => v.host.id === hst.id && v.dev.serial === d.serial);
     return ctxMenu(h('div', {
-      class: 'dev' + (open ? ' open' : '') + (ready ? '' : ' na'), title: d.serial,
+      class: 'dev' + (open ? ' open' : '') + (ready ? '' : ' na'), title: devTip(d),
       onclick: () => ready ? openViewer(hst, d) : toast(STATE_HINT[d.state] || (t('设备状态：') + d.state)),
     }, h('span', { class: 'dot ' + (ready ? 'ok' : 'warn') }),
-      h('div', { class: 't' }, h('b', {}, d.model || d.serial), h('small', {}, ready ? devSub(d) : (STATE_HINT[d.state] || d.serial))),
+      h('div', { class: 't' }, h('b', {}, d.model || d.serial)),
       ...pluginBadges(hst, d),
-      devWatch(hst, d.serial, open),
       ready ? null : h('span', { class: 'st' }, STATE_TEXT[d.state] || d.state),
       ready ? ib('more', t('更多'), e => { e.stopPropagation(); deviceMenu(e.currentTarget, hst, d); }) : null), () => deviceItems(hst, d));
   });
@@ -177,7 +201,7 @@ function renderSide() {
   renderSideFoot();
 }
 
-/** 一台电脑一组：标题行（名称 + 设备数 / 状态，可折叠）+ 设备列表 */
+/** 一台电脑一组：标题行（名称 + 设备数角标，可折叠）+ 设备列表 */
 function hostGroup(hst, emptyEl) {
   const local = !hst.remote;
   const key = 'fold_' + hst.id;
@@ -185,20 +209,24 @@ function hostGroup(hst, emptyEl) {
   const devs = hst.devices || [];
   const viewing = [...viewers.values()].filter(v => v.host.id === hst.id).length;
   const short = hst.error ? (needsAuth(hst.error) ? t('需要授权') : t('无法连接')) : null;
-  const status = short || (!hst.loaded ? t('正在读取…') : !devs.length ? t('没有设备')
-    : t('{0} 台设备', devs.length) + (viewing ? ' · ' + t('{0} 台投屏中', viewing) : ''));
+  // 设备数只用角标显示，数字含义放在悬停提示里
+  const count = !short && hst.loaded && devs.length
+    ? h('span', { class: 'cnt' + (viewing ? ' on' : ''), title: t('{0} 台设备', devs.length) + (viewing ? ' · ' + t('{0} 台投屏中', viewing) : '') }, String(devs.length))
+    : null;
   const upd = local ? null : hst.updating
     ? h('span', { class: 'upd busy' }, h('span', { class: 'spin sm' }), t('更新中'))
     : needsUpdate(hst) ? h('button', { class: 'upd', type: 'button', title: t('对方 {0}，本机 {1}，点击更新', hst.info.version, INFO.version), onclick: e => { e.stopPropagation(); updatePeer(hst); } }, t('可更新')) : null;
   const tip = local ? (INFO ? INFO.name : '') : hst.name + '\n' + hst.addr + (hst.info ? ' · v' + hst.info.version : '') + (hst.error ? '\n' + hst.error : '');
+  const ppl = short ? null : presenceBadge(hst);
   const head = ctxMenu(h('div', {
     class: 'host' + (local ? ' local' : ''), title: tip,
     onclick: () => { pref.set(key, folded ? '0' : '1'); renderSide(); },
   },
     h('span', { class: 'chev', html: svg('chevDown') }),
     h('span', { class: 'hi' + (short ? ' err' : ''), html: svg('monitor') }),
-    h('div', { class: 't' }, h('b', {}, local ? t('本机') : hst.name),
-      h('div', { class: 'sub' }, h('small', { class: short ? 'err' : '' }, status), upd)),
+    h('div', { class: 't' }, h('div', { class: 'nm' }, h('b', {}, local ? t('本机') : hst.name), count),
+      // 第二行只在有事时出现：连不上 / 可更新 / 还有别人连着
+      short || upd || ppl ? h('div', { class: 'sub' }, short ? h('small', { class: 'err' }, short) : null, upd, ppl) : null),
     // 操作按钮悬停时浮在右侧，平时不占宽度，名称可以显示完整
     h('div', { class: 'acts' },
       hst.error ? null : ib('wifi', t('无线连接设备'), e => { e.stopPropagation(); wirelessDialog(hst); }),

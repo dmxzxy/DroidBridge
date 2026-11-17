@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>游戏统计</title>
+<style>
+  :root { color-scheme: dark; }
+  body { margin: 0; padding: 14px 16px; background: #16191e; color: #e6e8ec;
+         font: 13px/1.6 -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; }
+  h1 { margin: 0 0 10px; font-size: 15px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; }
+  .card { padding: 10px 12px; border: 1px solid rgba(255,255,255,.09); border-radius: 10px; background: #1c1f25; }
+  .k { color: #9aa1ad; font-size: 11px; }
+  .v { font-size: 18px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .bad { color: #e5534b; }
+  .ok { color: #3fb27f; }
+  button { margin-top: 12px; height: 30px; padding: 0 12px; border: 1px solid rgba(255,255,255,.14);
+           border-radius: 7px; background: #1c1f25; color: inherit; font: inherit; cursor: pointer; }
+  button:hover { background: rgba(255,255,255,.06); }
+  pre { margin: 12px 0 0; padding: 8px 10px; border-radius: 8px; background: #0e1013;
+        border: 1px solid rgba(255,255,255,.07); font: 11px/1.5 Consolas, monospace;
+        white-space: pre-wrap; word-break: break-all; color: #9aa1ad; min-height: 1.5em; }
+</style>
+</head>
+<body>
+  <h1>游戏统计</h1>
+  <div class="grid">
+    <div class="card"><div class="k">包名</div><div class="v" id="pkg" style="font-size:13px">—</div></div>
+    <div class="card"><div class="k">前台应用</div><div class="v" id="fg" style="font-size:13px">—</div></div>
+    <div class="card"><div class="k">FPS</div><div class="v" id="fps">—</div></div>
+    <div class="card"><div class="k">Lua 错误</div><div class="v" id="err">—</div></div>
+  </div>
+  <button id="refresh">刷新</button>
+  <pre id="last">点“刷新”从插件取一次数据；插件每 3 秒也会推送一次。</pre>
+
+<script src="/plugin-web/sdk.js"></script>
+<script>
+  const $ = (id) => document.getElementById(id);
+
+  async function load() {
+    try {
+      const r = await droidbridge.call('stats', {});
+      $('pkg').textContent = r.package || '—';
+      $('fg').textContent = r.foreground || '（不在游戏里）';
+      $('fg').className = 'v' + (r.foreground === r.package ? ' ok' : '');
+      $('fps').textContent = r.fps == null ? '—' : Math.round(r.fps);
+      $('err').textContent = r.errors || 0;
+      $('err').className = 'v' + (r.errors ? ' bad' : '');
+      $('last').textContent = r.lastError || '没有 Lua 报错';
+    } catch (e) {
+      $('last').textContent = '调用失败：' + (e && e.message ? e.message : e);
+    }
+  }
+
+  // 插件通过 db.web.emit('stats', ...) 推送
+  droidbridge.on('stats', (data) => {
+    if (!data) return;
+    $('err').textContent = data.errors || 0;
+    $('err').className = 'v' + (data.errors ? ' bad' : '');
+    $('last').textContent = '插件推送于 ' + new Date((data.ts || 0) * 1000).toLocaleTimeString();
+  });
+
+  $('refresh').onclick = load;
+  droidbridge.on('ready', (device) => {
+    $('last').textContent = '已连接' + (device.serial ? '：' + device.serial : '');
+    load();
+  });
+  // 有些宿主环境不会发 ready，兜底自己拉一次
+  setTimeout(load, 300);
+</script>
+</body>
+</html>

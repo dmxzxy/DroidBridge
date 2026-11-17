@@ -58,7 +58,7 @@ const check = (label, ok, detail) => { console.log((ok ? '✓ ' : '✗ ') + labe
   // 2. 演示数据里的 viewers 消息：眼睛 + 人数、正在操作提示条
   let b = JSON.parse(await badge());
   check('观看者标记显示人数', b.hidden === false && b.n === '2', JSON.stringify(b));
-  check('悬停提示列出名称并标出“我”', b.title.includes('（我）') && b.title.includes('小王'), b.title);
+  check('悬停提示只列别人', !b.title.includes('Studio-PC') && b.title.includes('小王'), b.title);
   let c = JSON.parse(await bar());
   check('别人操作时显示提示条', c.hidden === false && c.text.includes('小王'), JSON.stringify(c));
 
@@ -95,11 +95,12 @@ const check = (label, ok, detail) => { console.log((ok ? '✓ ' : '✗ ') + labe
   ts = JSON.parse(await toasts());
   check('间隔足够后再次提示', ts.length === 2 && ts.some(x => x.includes('小林')), JSON.stringify(ts));
 
-  // 6. 侧栏设备行：别人也在看这个设备
-  const watch = await ev(`(() => { const w = document.querySelector('.dev .watch'); return w ? JSON.stringify({ n: w.textContent.trim(), title: w.title }) : ''; })()`);
-  const w = watch ? JSON.parse(watch) : null;
-  check('设备行显示眼睛 + 别人的人数', w && w.n === '1', watch);
-  check('设备行提示列出名称和操作者', w && w.title.includes('小王') && w.title.includes('正在操作'), watch);
+  // 7. 侧栏电脑标题行：连着这台电脑的其他人
+  const ppl = await ev(`(() => { const b = document.querySelector('.host.local .ppl'); return b ? JSON.stringify({ n: b.textContent.trim(), title: b.title }) : ''; })()`);
+  const pp = ppl ? JSON.parse(ppl) : null;
+  check('本机标题行显示连着的其他人数（不含自己）', pp && pp.n === '2', ppl);
+  check('悬停提示：名字 · 在看的设备', pp && pp.title === ['Lab-Mac · SM S9180', 'OPD2407 上的浏览器'].join(String.fromCharCode(10)), ppl);
+  check('只有自己连着的远程电脑不显示标记', (await ev(`[...document.querySelectorAll('.host:not(.local) .ppl')].length`)) === 0);
 
   console.log(errs.length ? 'page errors: ' + errs.join(' | ') : 'page errors: none');
   console.log(fails ? `\n${fails} 项失败` : '\n全部通过');

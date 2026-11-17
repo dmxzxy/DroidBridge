@@ -52,6 +52,8 @@
     }
     // 共享会话概况：谁在看、谁在操作
     if (u.pathname === '/api/mirrors') return json({ list: MIRRORS[u.searchParams.get('peer') || 'local'] || [] });
+    // 谁连着这台电脑
+    if (u.pathname === '/api/presence') return json({ list: PRESENCE[u.searchParams.get('peer') || 'local'] || [] });
     if (u.pathname === '/api/media') {
       SHOTS.forEach((s, i) => { if (!s.url) s.url = thumb(i, s.device); });
       return json({ dir: 'C:\\DroidBridge\\data\\media', items: SHOTS });
@@ -127,6 +129,14 @@
   };
   const KIND = { 'R5CT20ABCDE': 'home', '2A281FDH3000XY': 'settings', '192.168.1.31:5555': 'error' };
   const NAME = { 'R5CT20ABCDE': 'SM-S9180', '2A281FDH3000XY': 'Pixel 7' };
+  const PRESENCE = {
+    local: [
+      { key: 'local', name: 'Studio-PC', addr: '', ago: 0, you: true, views: [{ serial: 'R5CT20ABCDE', who: 'Studio-PC', controlling: false }] },
+      { key: 'c:a1', name: 'Lab-Mac', addr: '192.168.1.20', ago: 0, you: false, views: [{ serial: 'R5CT20ABCDE', who: '小王', controlling: true }] },
+      { key: 'c:b2', name: 'OPD2407 上的浏览器', addr: '192.168.1.41', ago: 2, you: false, views: [] },
+    ],
+    pB: [{ key: 'c:me', name: 'Studio-PC', addr: '192.168.1.10', ago: 0, you: true, views: [] }],
+  };
   // 侧栏的共享会话概况（/api/mirrors）；画面里的观看者消息由下方的 FakeWS 发送
   const MIRRORS = {
     local: [{ serial: 'R5CT20ABCDE', viewers: ['Studio-PC', '小王'], controller: '小王' }],
