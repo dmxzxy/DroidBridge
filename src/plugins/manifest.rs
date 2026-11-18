@@ -20,6 +20,8 @@ pub struct Manifest {
     #[serde(rename = "match")]
     pub match_rules: MatchRules,
     pub settings: Vec<Setting>,
+    /// 网页面板可以嵌入的外部网站（origin，如 `http://host:5173`），需要 `web.embed` 权限
+    pub embed: Vec<String>,
 }
 
 impl Default for Manifest {
@@ -34,6 +36,32 @@ impl Default for Manifest {
             permissions: Vec::new(),
             match_rules: MatchRules::default(),
             settings: Vec::new(),
+            embed: Vec::new(),
+        }
+    }
+}
+
+/// 规整成 origin（`scheme://host[:port]`，小写）；不是 http(s) 地址返回 None
+pub fn origin_of(url: &str) -> Option<String> {
+    let url = url.trim();
+    let (scheme, rest) = url.split_once("://")?;
+    let scheme = scheme.to_ascii_lowercase();
+    if scheme != "http" && scheme != "https" {
+        return None;
+    }
+    let host = rest.split(['/', '?', '#']).next()?.to_ascii_lowercase();
+    if host.is_empty() || host.contains('@') {
+        return None;
+    }
+    Some(format!("{scheme}://{host}"))
+}
+
+impl Manifest {
+    /// 这个地址是否在清单声明的可嵌入网站内
+    pub fn may_embed(&self, url: &str) -> bool {
+        match origin_of(url) {
+            Some(o) => self.embed.iter().filter_map(|e| origin_of(e)).any(|e| e == o),
+            None => false,
         }
     }
 }

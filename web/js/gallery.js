@@ -7,12 +7,34 @@ function isLocalHost() {
   return h === '127.0.0.1' || h === 'localhost' || h === '::1' || h === '[::1]';
 }
 
-// 截图 / 录屏完成后的提示：带“查看”按钮，打开相册并定位到该文件
+// 能否把媒体文件复制到剪贴板：本机走系统剪贴板（文件，飞书 / 微信里可直接粘贴）；
+// 远程浏览器只能复制截图图片（需要 HTTPS）
+function canCopyMedia(item) {
+  if (isLocalHost()) return true;
+  return item.kind === 'shot' && isSecureContext && !!(navigator.clipboard && navigator.clipboard.write) && typeof ClipboardItem !== 'undefined';
+}
+
+async function copyMedia(item) {
+  try {
+    if (isLocalHost()) {
+      await api('/api/media/copy?name=' + encodeURIComponent(item.name), { method: 'POST', body: '{}' });
+    } else {
+      // 把 Promise 交给 ClipboardItem，保住点击的用户手势（Safari 需要）
+      const blob = fetch(withToken(item.url)).then(r => { if (!r.ok) throw new Error(r.statusText); return r.blob(); })
+        .then(b => b.type === 'image/png' ? b : new Blob([b], { type: 'image/png' }));
+      await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+    }
+    toast(t('已复制，可直接粘贴发送'), { kind: 'ok' });
+  } catch (e) { toast(t('复制失败：') + e.message, { kind: 'bad', ms: 4000 }); }
+}
+
+// 截图 / 录屏完成后的提示：带“复制”“查看”按钮
 function galleryHint(item) {
   const msg = item.kind === 'rec' ? t('录屏已保存') : t('已保存到相册');
   toast(msg, { kind: 'ok', sticky: true });
   const el = $('#toasts').lastElementChild;
   if (el) {
+    if (canCopyMedia(item)) el.append(h('button', { class: 'linkbtn', type: 'button', onclick: () => { el.remove(); copyMedia(item); } }, t('复制')));
     el.append(h('button', { class: 'linkbtn', type: 'button', onclick: () => { el.remove(); openGallery(item.name); } }, t('查看')));
     setTimeout(() => el.remove(), 6000);
   }
@@ -124,6 +146,7 @@ async function openGallery(locate) {
       ? h('img', { src: url })
       : h('video', { src: url, controls: true, autoplay: true });
     const nameEl = h('span', { class: 'pname' }, it.name);
+    const copyBtn = h('button', { class: 'btn', type: 'button', hidden: !canCopyMedia(it), title: t('复制后可直接粘贴到飞书、微信等'), onclick: () => copyMedia(it) }, t('复制'));
     const dl = h('button', { class: 'btn', type: 'button', onclick: () => { const a = h('a', { href: url, download: it.name }); a.click(); } }, t('下载'));
     const revealBtn = h('button', { class: 'btn', type: 'button', hidden: !isLocalHost(), onclick: () => api('/api/media/reveal?name=' + encodeURIComponent(it.name), { method: 'POST', body: '{}' }).catch(e => toast(e.message, { kind: 'bad' })) }, t('打开所在文件夹'));
     const delBtn = h('button', { class: 'btn danger', type: 'button', onclick: async () => {
@@ -133,7 +156,7 @@ async function openGallery(locate) {
     prev.append(
       h('div', { class: 'phead' }, closeBtn, nameEl),
       h('div', { class: 'pbody' }, media),
-      h('div', { class: 'pfoot' }, dl, revealBtn, delBtn, h('span', { class: 'pname' }, it.device + ' · ' + fmtDate(it.time) + ' ' + fmtTime(it.time))));
+      h('div', { class: 'pfoot' }, copyBtn, dl, revealBtn, delBtn, h('span', { class: 'pname' }, it.device + ' · ' + fmtDate(it.time) + ' ' + fmtTime(it.time))));
     if (list.length > 1) {
       const prevBtn = h('button', { class: 'gal-nav prev-btn', type: 'button', html: svg('chevLeft') });
       prevBtn.onclick = () => { const ni = (previewIndex - 1 + list.length) % list.length; closePreview(); openPreview(ni); };
@@ -175,6 +198,7 @@ async function openGallery(locate) {
         const card = ctxMenu(h('div', { class: 'gal-card', onclick: () => openPreview(idx) }, thumb,
           h('div', { class: 'meta' }, h('span', { class: 'dev' }, it.device), h('div', { class: 'time' }, fmtTime(it.time)))), () => [
           { icon: 'max', label: t('查看'), fn: () => openPreview(idx) },
+          canCopyMedia(it) ? { icon: 'copy', label: t('复制'), fn: () => copyMedia(it) } : null,
           { icon: 'download', label: t('下载'), fn: () => { const a = h('a', { href: withToken(it.url), download: it.name }); document.body.append(a); a.click(); a.remove(); } },
           isLocalHost() ? { icon: 'folder', label: t('打开所在文件夹'), fn: () => api('/api/media/reveal?name=' + encodeURIComponent(it.name), { method: 'POST', body: '{}' }).catch(e => toast(e.message, { kind: 'bad' })) } : null,
           '-',

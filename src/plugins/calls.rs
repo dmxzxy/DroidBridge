@@ -100,6 +100,21 @@ async fn handle(app: &Arc<AppState>, ph: &Arc<Plugin>, m: &str, p: &Value) -> Re
             Ok(json!(true))
         }
         "dialog" => Ok(app.plugins.ask(ph, p, arg_str(p, "client")).await),
+        "uiopen" => {
+            let url = arg_str(p, "url").unwrap_or_default();
+            if !(url.starts_with("http://") || url.starts_with("https://")) {
+                return Err(tr!("只能打开 http(s) 地址", "Only http(s) URLs can be opened"));
+            }
+            app.plugins.emit(arg_str(p, "client"), json!({
+                "type": "open",
+                "plugin": ph.id,
+                "url": url,
+                "name": p.get("name").cloned().unwrap_or(Value::Null),
+                "title": p.get("title").cloned().unwrap_or(Value::Null),
+                "mode": p.get("mode").cloned().unwrap_or(Value::Null),
+            }));
+            Ok(json!(true))
+        }
         "progress" => {
             app.plugins.emit(None, json!({
                 "type": "progress",
@@ -176,7 +191,15 @@ fn register(app: &Arc<AppState>, ph: &Arc<Plugin>, p: &Value) -> Result<Value, S
             c.mcps.push(def);
         }
         "panel" | "webpanel" => {
-            let web = if kind == "webpanel" {
+            let external = kind == "webpanel" && def.get("url").and_then(|v| v.as_bool()) == Some(true);
+            if external {
+                // 嵌入外部网页：地址由插件按设备给出（web 处理函数 __url:<id>），前端再按清单的 embed 校验
+                need(ph, "web.embed")?;
+                if ph.manifest().embed.is_empty() {
+                    return Err(tr!("嵌入外部网页需要在 plugin.json 的 embed 里列出网站", "List the sites in plugin.json \"embed\" to embed external pages"));
+                }
+            }
+            let web = if kind == "webpanel" && !external {
                 let entry = def.get("entry").and_then(|v| v.as_str()).unwrap_or("");
                 if !manifest::safe_rel(entry) {
                     return Err(tr!("webpanel 的 entry 必须是插件目录内的相对路径", "webpanel entry must be a relative path inside the plugin"));
@@ -255,15 +278,17 @@ async fn device_op(app: &Arc<AppState>, ph: &Arc<Plugin>, m: &str, p: &Value, id
     match m {
         "overlay" => {
             let shapes = p.get("shapes").cloned().unwrap_or(Value::Null);
+            // size：形状坐标所在的空间（如设备分辨率），前端据此缩放到画面；不给则按画面像素
+            let size = p.get("size").filter(|s| s.is_object()).cloned().unwrap_or(Value::Null);
             {
                 let mut c = ph.contributions.lock().unwrap();
                 if shapes.is_null() {
                     c.overlays.remove(id);
                 } else {
-                    c.overlays.insert(id.to_string(), shapes.clone());
+                    c.overlays.insert(id.to_string(), json!({"shapes": shapes.clone(), "size": size.clone()}));
                 }
             }
-            app.plugins.emit(None, json!({"type": "overlay", "plugin": ph.id, "serial": id, "shapes": shapes}));
+            app.plugins.emit(None, json!({"type": "overlay", "plugin": ph.id, "serial": id, "shapes": shapes, "size": size}));
             return Ok(json!(true));
         }
         "badge" => {

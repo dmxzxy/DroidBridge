@@ -136,8 +136,18 @@ const check = (l, ok, d) => { console.log((ok ? '✓ ' : '✗ ') + l + (d ? '  '
     const pt = await ev(`(() => { const el = document.querySelector(${JSON.stringify(sel)}); if (!el) return null; const r = el.getBoundingClientRect(); return JSON.stringify({ x: r.left + r.width * ${x}, y: r.top + r.height / 2 }); })()`);
     if (!pt) return 'NOT FOUND';
     const c = JSON.parse(pt);
-    await rclick(c.x, c.y);
-    return menuItems();
+    // 侧栏会定时重绘、菜单也可能稍晚出现：等菜单出现，没出现就重新定位再右键一次
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const p = attempt ? JSON.parse((await ev(`(() => { const el = document.querySelector(${JSON.stringify(sel)}); if (!el) return null; const r = el.getBoundingClientRect(); return JSON.stringify({ x: r.left + r.width * ${x}, y: r.top + r.height / 2 }); })()`)) || 'null') : c;
+      if (!p) return 'NOT FOUND';
+      await rclick(p.x, p.y);
+      for (let i = 0; i < 12; i++) {
+        const items = await menuItems();
+        if (items) return items;
+        await sleep(100);
+      }
+    }
+    return '';
   };
   await send('Page.navigate', { url: 'http://127.0.0.1:8892/?s=desk&lang=zh' });
   await waitReady();
@@ -180,7 +190,8 @@ const check = (l, ok, d) => { console.log((ok ? '✓ ' : '✗ ') + l + (d ? '  '
   await ev(`document.querySelectorAll('dialog[open]').forEach(d => d.close()); openGallery(); 1`);
   for (let i = 0; i < 20 && !(await ev(`!!document.querySelector('.gal-card')`)); i++) await sleep(250);
   items = await rmenu('.gal-card', 0.5, true);
-  check('相册：查看/下载/…/删除', items.startsWith('查看/下载') && items.endsWith('删除…'), items);
+  // 本机打开时可以把文件复制到系统剪贴板（远程浏览器只在 HTTPS 下能复制截图）
+  check('相册：查看/复制/下载/…/删除', items.startsWith('查看/复制/下载') && items.endsWith('删除…'), items);
   await ev(`document.querySelectorAll('dialog[open]').forEach(d => d.close()); closeMenu(); 1`);
   // 点菜单项真的执行：设备行“复制序列号”
   await rmenu('.dev.na');

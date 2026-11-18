@@ -9,6 +9,7 @@
 mod api;
 mod json;
 mod local;
+mod proc;
 mod state;
 
 use mlua::{Function, Lua, MultiValue, Table, Thread, Value};
@@ -188,6 +189,7 @@ impl Driver {
                 Ok(Msg::Line(line)) => self.on_line(&line),
                 Ok(Msg::Eof) => break,
                 Ok(Msg::Bg { id, ok }) => self.on_bg(id, ok),
+                Ok(Msg::Proc { id, kind, data, code }) => self.on_proc(id, kind, data, code),
                 Err(RecvTimeoutError::Timeout) => {}
                 Err(RecvTimeoutError::Disconnected) => break,
             }
@@ -359,7 +361,7 @@ impl Driver {
                 let m: String = req.get("m").unwrap_or_default();
                 let p = req.get::<Option<Value>>("p").ok().flatten().map(|v| json::to_json(&v));
                 let mut p = p.unwrap_or_else(|| J::Object(Map::new()));
-                if m == "dialog" {
+                if m == "dialog" || m == "uiopen" {
                     if let (Some(c), J::Object(o)) = (task.client.as_ref(), &mut p) {
                         o.insert("client".to_string(), J::String(c.clone()));
                     }
@@ -497,6 +499,7 @@ impl Driver {
             timer_seq: Cell::new(0),
             store: RefCell::new(None),
             closed: Cell::new(false),
+            procs: RefCell::new(proc::Procs::default()),
         });
         let lua = Lua::new();
         if let Err(e) = lua.set_memory_limit(self.cfg.mem_limit) {
@@ -646,6 +649,33 @@ impl Driver {
         Ok(id)
     }
 
+    /// 常驻子进程的一行输出 / 退出：在新协程里调用 H.proc_event(id, kind, data, code)
+    fn on_proc(&mut self, id: u64, kind: &str, data: String, code: Option<i32>) {
+        if kind == "exit" {
+            if let Some(ctl) = &self.ctl {
+                ctl.procs.borrow_mut().exited(id);
+            }
+        }
+        let Some(h) = self.h.clone() else { return };
+        let Some(lua) = self.lua.as_ref() else { return };
+        let Ok(f) = h.get::<Function>("proc_event") else { return };
+        let Ok(args) = lua.create_table() else { return };
+        let _ = args.set(1, id);
+        let _ = args.set(2, kind);
+        match lua.create_string(&data) {
+            Ok(s) => {
+                let _ = args.set(3, s);
+            }
+            Err(_) => return,
+        }
+        if let Some(c) = code {
+            let _ = args.set(4, c);
+        }
+        if let Err(e) = self.new_task(f, Some(args), TaskKind::Spawn, None) {
+            self.log_error(&e);
+        }
+    }
+
     fn fire_timer(&mut self, id: u64, repeat: bool) {
         let Some(h) = self.h.clone() else { return };
         let Some(lua) = self.lua.as_ref() else { return };
@@ -717,6 +747,15 @@ impl Driver {
     // ------------------------------------------------------------ 退出
 
     fn shutdown(&mut self) {
+        self.shutdown_lua();
+        // plugin.unload 里可能还会用到子进程：最后再结束它们
+        if let Some(ctl) = &self.ctl {
+            ctl.procs.borrow_mut().kill_all();
+        }
+        self.stop = true;
+    }
+
+    fn shutdown_lua(&mut self) {
         if self.lua.is_none() {
             return;
         }
@@ -813,7 +852,7 @@ fn opt_f64(req: &Table, key: &str) -> Option<f64> {
     req.get::<Option<f64>>(key).ok().flatten()
 }
 
-fn str_list(v: Option<&Table>) -> Vec<String> {
+pub(crate) fn str_list(v: Option<&Table>) -> Vec<String> {
     let mut out = Vec::new();
     if let Some(t) = v {
         for i in 1..=t.raw_len() {
@@ -830,7 +869,7 @@ fn str_list(v: Option<&Table>) -> Vec<String> {
     out
 }
 
-fn str_pairs(v: Option<&Table>) -> Vec<(String, String)> {
+pub(crate) fn str_pairs(v: Option<&Table>) -> Vec<(String, String)> {
     let mut out = Vec::new();
     if let Some(t) = v {
         for pair in t.clone().pairs::<Value, Value>() {

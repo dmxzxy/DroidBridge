@@ -310,6 +310,12 @@ function DbUiNs.pickFile(opts) end
 ---@return DbProgress
 function DbUiNs.progress(title) end
 
+--- 在发起操作的界面里打开网页：桌面版为应用内窗口（按 name 复用，关闭只隐藏），浏览器为同名标签页；只接受 http(s)
+---@param url string
+---@param opts {name: string|nil, title: string|nil, mode: "window"|"browser"|nil}|nil
+---@return boolean
+function DbUiNs.openUrl(url, opts) end
+
 ---@class DbWeb
 local DbWeb = {}
 
@@ -393,10 +399,34 @@ function DbJson.decode(s) end
 ---@field status fun(id: string, text: string|nil, opts?: { kind?: string, tip?: string, onClick?: fun() }): any
 ---@field badge fun(dev: DbDevice, text: string|nil, opts?: { kind?: string, tip?: string }): any
 ---@field notify fun(text: string, opts?: { kind?: string }): any
----@field overlay fun(dev: DbDevice, shapes: table[]|nil): any
+---@field overlay fun(dev: DbDevice, shapes: table[]|nil, size: {w: number, h: number}|nil): any
 ---@field repaint fun(panelId?: string): any
 ---@field exec fun(program: string, args?: string[], opts?: { cwd?: string, timeout?: number, env?: table<string, string>, input?: string }): { code: number, stdout: string, stderr: string }
 ---@field open fun(pathOrUrl: string): any
 ---@field media { save: fun(path: string, serial?: string): string }
 ---@field shell fun(serial: string, cmd: string, opts?: { timeout?: number }): string, number
 db = {}
+
+---@class DbProc
+---@field id integer
+local DbProc = {}
+--- 写一行（自动加换行）
+function DbProc:send(line) end
+--- 原样写入 stdin
+function DbProc:write(s) end
+--- 关闭 stdin
+function DbProc:close() end
+--- 结束进程
+function DbProc:kill() end
+---@return boolean
+function DbProc:alive() end
+
+---@class DbProcNs
+local DbProcNs = {}
+--- 启动常驻子进程（exec 权限）。stdout/stderr 每一行在新协程里回调；最多 8 个；插件停止时自动结束
+---@param program string
+---@param args string[]|nil
+---@param opts {cwd: string|nil, env: table<string,string>|nil, onLine: fun(line: string)|nil, onStderr: fun(line: string)|nil, onExit: fun(code: integer)|nil}|nil
+---@return DbProc
+function DbProcNs.start(program, args, opts) end
+db.proc = DbProcNs

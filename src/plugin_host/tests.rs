@@ -20,6 +20,8 @@ struct Harness {
     dir: PathBuf,
     /// 已经回复过的 call id
     answered: std::collections::HashSet<u64>,
+    /// 后台线程（子进程等）投递给驱动的消息
+    rx: std::sync::mpsc::Receiver<Msg>,
 }
 
 impl Drop for Harness {
@@ -43,7 +45,7 @@ impl Harness {
                 }
             })
         };
-        let (tx, _rx) = channel::<Msg>();
+        let (tx, rx) = channel::<Msg>();
         let mut driver = Driver::new(cfg, tx, sink);
         let init = json!({
             "t": "init",
@@ -61,9 +63,26 @@ impl Harness {
             "node": "PC",
         });
         driver.on_line(&init.to_string());
-        let mut h = Self { driver, out, dir, answered: Default::default() };
+        let mut h = Self { driver, out, dir, answered: Default::default(), rx };
         h.settle(&devices());
         h
+    }
+
+    /// 处理后台线程投递的消息，直到 cond 成立或超时
+    fn wait_msgs(&mut self, secs: f64, cond: impl Fn(&[J]) -> bool) -> bool {
+        let end = Instant::now() + Duration::from_secs_f64(secs);
+        while Instant::now() < end {
+            match self.rx.recv_timeout(Duration::from_millis(20)) {
+                Ok(Msg::Proc { id, kind, data, code }) => self.driver.on_proc(id, kind, data, code),
+                Ok(Msg::Bg { id, ok }) => self.driver.on_bg(id, ok),
+                _ => {}
+            }
+            self.settle(&devices());
+            if cond(&self.out.borrow()) {
+                return true;
+            }
+        }
+        false
     }
 
     fn pump(&mut self) {
@@ -464,6 +483,47 @@ end)
 }
 
 #[test]
+fn ui_open_url_carries_client() {
+    let mut h = Harness::new(
+        "uiopen",
+        r#"
+db.menu("tools", "Open", function()
+  db.ui.openUrl("http://example.com/x", { name = "w1", title = "T", mode = "window" })
+  return pcall(db.ui.openUrl, "file:///etc/passwd")
+end)
+"#,
+        HostConfig::default(),
+    );
+    h.req("menu", json!({"id": "tools:Open", "ctx": {}, "client": "c1"}));
+    let out = h.out.borrow().clone();
+    let calls: Vec<_> = out.iter().filter(|v| v["t"] == "call" && v["m"] == "uiopen").collect();
+    assert_eq!(calls.len(), 1, "非 http 地址应在宿主里就被拒绝: {out:?}");
+    assert_eq!(calls[0]["p"]["url"], "http://example.com/x");
+    assert_eq!(calls[0]["p"]["name"], "w1");
+    assert_eq!(calls[0]["p"]["client"], "c1");
+}
+
+#[test]
+fn overlay_size_is_passed_through() {
+    let mut h = Harness::new(
+        "ovsize",
+        r#"
+db.menu("device", "Ov", function(dev)
+  db.overlay(dev, { { type = "rect", x = 1, y = 2, w = 3, h = 4 } }, { w = 2000, h = 2800 })
+  db.overlay(dev, { { type = "rect", x = 1, y = 2, w = 3, h = 4 } }, { w = "bad" })
+end)
+"#,
+        HostConfig::default(),
+    );
+    h.req("menu", json!({"id": "device:Ov", "ctx": {"serial": "S1"}}));
+    let out = h.out.borrow().clone();
+    let calls: Vec<_> = out.iter().filter(|v| v["t"] == "call" && v["m"] == "overlay").collect();
+    assert_eq!(calls.len(), 2, "{out:?}");
+    assert_eq!(calls[0]["p"]["size"], json!({"w": 2000, "h": 2800}));
+    assert_eq!(calls[1]["p"]["size"], J::Null);
+}
+
+#[test]
 fn spawned_coroutine_starts_without_new_messages() {
     let mut h = Harness::new(
         "spawn",
@@ -550,4 +610,44 @@ fn unload_event_fires_even_if_boot_is_blocked() {
         out.borrow()
     );
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+
+fn logs_of(out: &[J]) -> Vec<String> {
+    out.iter().filter(|v| v["t"] == "log").filter_map(|v| v["msg"].as_str().map(String::from)).collect()
+}
+
+#[test]
+fn proc_streams_lines_and_exit() {
+    // 读 stdin 按行原样输出的程序
+    let (prog, args) = if cfg!(windows) { ("findstr", r#"{ "^" }"#) } else { ("cat", "{}") };
+    let main = format!(
+        r#"
+local p = db.proc.start("{prog}", {args}, {{
+  onLine = function(line) db.log("line:" .. line) end,
+  onExit = function(code) db.log("exit:" .. tostring(code)) end,
+}})
+p:send("hello")
+p:send("中文 world")
+db.after(0.3, function() p:close() end)
+"#
+    );
+    let mut h = Harness::new("proc", &main, HostConfig::default());
+    let ok = h.wait_msgs(10.0, |out| logs_of(out).iter().any(|l| l.starts_with("exit:")));
+    let logs = logs_of(&h.out.borrow());
+    assert!(ok, "等不到退出: {logs:?}");
+    let lines: Vec<&String> = logs.iter().filter(|l| l.starts_with("line:") || l.starts_with("exit:")).collect();
+    assert_eq!(lines, vec!["line:hello", "line:中文 world", "exit:0"], "{logs:?}");
+}
+
+#[test]
+fn proc_reports_missing_program() {
+    let main = r#"
+local ok, e = pcall(db.proc.start, "definitely-not-a-program-xyz", {})
+db.log("missing:" .. tostring(ok) .. ":" .. tostring(e and e:find("无法启动") ~= nil))
+"#;
+    let mut h = Harness::new("procmiss", main, HostConfig::default());
+    h.settle(&devices());
+    let logs = logs_of(&h.out.borrow());
+    assert!(logs.iter().any(|l| l == "missing:false:true"), "{logs:?}");
 }

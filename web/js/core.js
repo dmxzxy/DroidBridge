@@ -121,5 +121,9 @@ function toast(text, opt = {}) {
     close(ms = 0) { clearTimeout(timer); timer = setTimeout(() => el.remove(), ms); },
   };
   if (!opt.sticky) api.close(opt.ms || 2600);
+  if (opt.onclick) {
+    el.classList.add('click');
+    el.addEventListener('click', () => { api.close(); opt.onclick(); });
+  }
   return api;
 }

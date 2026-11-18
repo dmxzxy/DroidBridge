@@ -27,6 +27,7 @@ const PLUGIN_PERMS = {
   'clipboard': '读写这台电脑的剪贴板',
   'media': '把图片、录屏保存到相册',
   'mcp': '向 AI（MCP）注册工具',
+  'web.embed': '在面板里嵌入插件声明的外部网站',
 };
 
 const pluginContribMaps = new Map();  // 设备标识 -> { at, data }；'' 表示整台电脑的贡献
@@ -663,9 +664,40 @@ function pluginOpenWindow(def, devId) {
 }
 
 function pluginPanelView(def, devId) {
+  if (def && Array.isArray(def.embed)) return new PluginExtView(def, devId);
   if (def && def.web) return new PluginWebView(def, devId);
   return new PluginPanelView(def, devId);
 }
+
+// ---------------- 打开网页（db.ui.openUrl / 插件网页 SDK 的 droidbridge.open） ----------------
+// 桌面版：应用内窗口，按 name 复用（关闭只是隐藏，再次打开立即出现）；浏览器：同名标签页
+function pluginOpenUrl(plugin, url, opts) {
+  url = String(url || '');
+  if (!/^https?:\/\//i.test(url)) return false;
+  opts = opts || {};
+  const name = String(opts.name || url).slice(0, 200);
+  const key = String(plugin || '') + ':' + name;
+  if (opts.mode !== 'browser' && window.ipc && window.__DB_CHROME) {
+    try {
+      window.ipc.postMessage('openwin:' + JSON.stringify({ url, name: key, title: String(opts.title || '') }));
+      return true;
+    } catch {}
+  }
+  // 浏览器里自己记住打开过的窗口引用：跨站点跳转后浏览器会清掉 window.name，按名字找不回来
+  const prev = pluginOpenWins.get(key);
+  if (prev && !prev.w.closed) {
+    // 同一地址：只切到前面，不重新加载（页面和连接保留）
+    if (prev.url !== url) { try { prev.w.location.href = url; prev.url = url; } catch {} }
+    prev.w.focus();
+    return true;
+  }
+  // 桌面版里 window.open 会交给系统浏览器
+  const w = window.open(url, 'dbp_' + key.replace(/[^\w-]/g, '_'));
+  if (w) pluginOpenWins.set(key, { w, url });
+  else if (!window.__DB_CHROME) toast(t('浏览器拦截了弹出窗口'), { kind: 'warn' });
+  return true;
+}
+const pluginOpenWins = new Map();
 
 // ---------------- 网页面板（sandbox iframe + postMessage） ----------------
 function pluginWebUrl(def) {
@@ -698,6 +730,71 @@ class PluginWebView {
   }
 }
 
+// ---------------- 嵌入的外部网页（plugin.json 的 embed 列出的网站） ----------------
+// 地址由插件按设备给出（__url:<id>）；还没有地址时显示占位并每 3 秒再问一次。
+// 和插件自己的网页不同：外部网站有自己的登录和存储，所以带 allow-same-origin（它的 origin 是外部网站，不是 DroidBridge）
+function pluginOriginOf(url) {
+  try { const u = new URL(url); return /^https?:$/.test(u.protocol) ? u.protocol + '//' + u.host : ''; } catch { return ''; }
+}
+
+class PluginExtView {
+  constructor(def, devId) {
+    this.def = def; this.serial = devId || '';
+    this.plugin = def.plugin; this.id = def.id;
+    this.title = def.title || def.id;
+    this.allowed = new Set((def.embed || []).map(pluginOriginOf).filter(Boolean));
+    this.wait = h('div', { class: 'plug-ext-wait', html: svg('globe') });
+    this.el = h('div', { class: 'plug-panel plug-webpanel' }, this.wait);
+    this.frame = null; this.url = ''; this.timer = 0; this.dead = false;
+    pluginViews.add(this);
+    this.resolve();
+  }
+  async resolve() {
+    clearTimeout(this.timer);
+    if (this.dead) return;
+    let url = '';
+    try {
+      const r = await api('/api/plugins/web', {
+        method: 'POST',
+        body: JSON.stringify({ plugin: this.plugin, name: '__url:' + this.id, args: {}, serial: this.serial, client: PLUGIN_CLIENT }),
+      });
+      url = r && typeof r.ok === 'string' ? r.ok : '';
+    } catch {}
+    if (this.dead) return;
+    const origin = pluginOriginOf(url);
+    // https 页面里不能嵌 http（浏览器拦截混合内容）：交给“打开网页”
+    const mixed = location.protocol === 'https:' && origin.startsWith('http:');
+    if (!url || !this.allowed.has(origin) || mixed) {
+      this.wait.title = mixed ? t('当前页面是 https，无法嵌入 http 网页') : url ? t('这个网址不在插件允许嵌入的网站里') : '';
+      if (this.frame) { this.frame.remove(); this.frame = null; this.url = ''; this.wait.hidden = false; }
+      this.timer = setTimeout(() => this.resolve(), 3000);
+      return;
+    }
+    if (url === this.url && this.frame) return;
+    this.url = url;
+    if (!this.frame) {
+      this.frame = h('iframe', {
+        class: 'plug-frame', title: this.title, allow: 'clipboard-read; clipboard-write',
+        sandbox: 'allow-scripts allow-forms allow-same-origin allow-popups allow-popups-to-escape-sandbox allow-modals allow-downloads',
+      });
+      this.el.append(this.frame);
+    }
+    this.frame.src = url;
+    this.wait.hidden = true;
+  }
+  /** 刷新：重新向插件要地址（设备换了客户端时会换页面），同一地址则重新加载 */
+  refresh() {
+    if (this.frame) { const u = this.url; this.url = ''; this.frame.src = 'about:blank'; this.frame.src = u; this.url = u; }
+    this.resolve();
+  }
+  destroy() {
+    this.dead = true;
+    clearTimeout(this.timer);
+    pluginViews.delete(this);
+    this.el.remove();
+  }
+}
+
 function pluginWebPost(ctx, msg) {
   try { ctx.frame.contentWindow.postMessage(msg, '*'); } catch {}
 }
@@ -710,11 +807,31 @@ function pluginWebCtxOf(source) {
   return null;
 }
 
+// 嵌入的外部网页发来的消息：来源窗口和 origin 都对得上才转给插件（db.webpanel 的 onMessage）
+addEventListener('message', (e) => {
+  for (const view of pluginViews) {
+    if (!(view instanceof PluginExtView) || !view.frame) continue;
+    let mine = false;
+    try { mine = view.frame.contentWindow === e.source; } catch {}
+    if (!mine) continue;
+    if (!view.url || e.origin !== pluginOriginOf(view.url) || !view.def.onMessage) return;
+    let body;
+    try { body = JSON.stringify(e.data); } catch { return; }
+    if (!body || body.length > 65536) return;
+    api('/api/plugins/web', {
+      method: 'POST',
+      body: JSON.stringify({ plugin: view.plugin, name: '__msg:' + view.id, args: JSON.parse(body), serial: view.serial, client: PLUGIN_CLIENT }),
+    }).catch(() => {});
+    return;
+  }
+});
+
 addEventListener('message', (e) => {
   const ctx = pluginWebCtxOf(e.source);
   if (!ctx) return;
   const d = e.data;
   if (!d || typeof d !== 'object' || d.__droidbridge !== 1) return;
+  if (d.t === 'open') { pluginOpenUrl(ctx.plugin, d.url, { name: d.name, title: d.title, mode: d.mode }); return; }
   if (d.t !== 'call') return;
   const rid = d.id;
   const reply = (ok, err) => pluginWebPost(ctx, { __droidbridge: 1, t: 'result', id: rid, ok, err });
@@ -733,7 +850,7 @@ addEventListener('message', (e) => {
 const PLUGIN_PERM_ICON = {
   'device.shell': 'terminal', 'device.files': 'folder', 'device.install': 'package', 'device.apps': 'grid',
   'device.input': 'target', 'device.screen': 'camera', 'device.forward': 'swap', 'device.logs': 'logs',
-  'device.perf': 'activity', 'fs.read': 'file', 'fs': 'drive', 'exec': 'play', 'net': 'globe',
+  'device.perf': 'activity', 'fs.read': 'file', 'fs': 'drive', 'exec': 'play', 'net': 'globe', 'web.embed': 'globe',
   'clipboard': 'paste', 'media': 'images', 'mcp': 'bot',
 };
 
@@ -842,7 +959,12 @@ function pluginSettingsPane() {
   function row(p) {
     const st = p.state || (p.enabled ? 'stopped' : 'disabled');
     const tip = [pluginTxt(p.name || p.id) + (p.version ? '  v' + pluginTxt(p.version) : ''), pluginStateText(st), pluginTxt(p.description || '')].filter(Boolean).join('\n');
-    const err = st === 'needs_grant' ? t('需要权限确认') : ['failed', 'invalid', 'crashed'].includes(st) ? pluginTxt(p.error || pluginStateText(st)) : '';
+    const err = st === 'needs_grant' ? '' : ['failed', 'invalid', 'crashed'].includes(st) ? pluginTxt(p.error || pluginStateText(st)) : '';
+    // 已启用、升级后申请了新权限：行内直接给“授权”按钮
+    const grantBtn = st === 'needs_grant' && p.enabled && info.manage
+      ? h('button', { class: 'btn sm primary plug-grant-btn', type: 'button', title: t('需要权限确认'),
+          onclick: (e) => { e.stopPropagation(); pluginGrant(p); } }, t('授权'))
+      : null;
     const open = () => { selected = p.id; render(); };
     return h('div', { class: 'plug-row' + (p.enabled ? '' : ' off'), role: 'button', tabindex: '0', title: tip,
       onclick: open, onkeydown: (e) => { if (e.key === 'Enter' && e.target === e.currentTarget) open(); } },
@@ -850,6 +972,7 @@ function pluginSettingsPane() {
       h('div', { class: 'plug-row-m' },
         h('div', { class: 'plug-row-n' }, h('span', { class: 'dot ' + pluginStateDot(st) }), h('b', {}, pluginTxt(p.name || p.id))),
         err ? h('div', { class: 'plug-row-e' }, err) : null),
+      grantBtn,
       info.manage ? toggle(p) : null,
       h('span', { class: 'plug-row-c', html: svg('chevRight') }));
   }
@@ -878,6 +1001,10 @@ function pluginSettingsPane() {
       can ? ib('folder', t('打开目录') + (p.dir ? '\n' + p.dir : ''), () => manage({ id: p.id, action: 'open_dir' })) : null,
       can ? toggle(p) : null));
     if (p.description) nodes.push(h('div', { class: 'plugd-d' }, pluginTxt(p.description)));
+    if (st === 'needs_grant' && p.enabled && can) {
+      nodes.push(h('div', { class: 'plug-note warn' }, svgEl('shield'), h('span', { class: 'grow' }, t('需要权限确认')),
+        h('button', { class: 'btn sm primary', type: 'button', onclick: () => pluginGrant(p) }, t('授权'))));
+    }
     if (p.error) nodes.push(h('div', { class: 'plug-note bad' }, svgEl('alert'), h('span', {}, pluginTxt(p.error))));
     if (p.permissions && p.permissions.length) nodes.push(pluginPermIcons(p.permissions, p.enabled ? p.granted || [] : null));
     if (p.enabled) nodes.push(pluginEntryList(p));
@@ -1051,18 +1178,35 @@ function pluginSettingRow(f, values, can, save) {
 function pluginGrantDialog(p) {
   const perms = Array.isArray(p.permissions) ? p.permissions : [];
   if (!perms.length) return Promise.resolve(true);
+  // 已启用的插件升级后申请了新权限：只列出新增的，按钮是“授权”
+  const upgrade = !!p.enabled && p.state === 'needs_grant';
+  const granted = Array.isArray(p.granted) ? p.granted : [];
+  const has = (k) => granted.includes(k) || (k === 'fs.read' && granted.includes('fs'));
+  const shown = upgrade ? perms.filter((k) => !has(k)) : perms;
   return new Promise((res) => {
     let ok = false;
     const dlg = dialog({
-      title: t('启用“{0}”？', pluginTxt(p.name || p.id)),
-      body: [h('div', { class: 'set-c plug-grant' }, perms.map((k) => h('div', { class: 'set-r' },
+      title: upgrade ? t('“{0}”需要新的权限', pluginTxt(p.name || p.id)) : t('启用“{0}”？', pluginTxt(p.name || p.id)),
+      body: [h('div', { class: 'set-c plug-grant' }, (shown.length ? shown : perms).map((k) => h('div', { class: 'set-r' },
         h('span', { class: 'plug-pi', html: svg(PLUGIN_PERM_ICON[k] || 'shield') }), h('span', { class: 'k' }, t(PLUGIN_PERMS[k] || k)))))],
       actions: [h('button', { class: 'btn', type: 'button', onclick: () => dlg.close() }, t('取消')),
-        h('button', { class: 'btn primary', type: 'submit' }, t('启用'))],
+        h('button', { class: 'btn primary', type: 'submit' }, upgrade ? t('授权') : t('启用'))],
       onsubmit: () => { ok = true; dlg.close(); },
     });
     dlg.addEventListener('close', () => res(ok));
   });
+}
+
+/** 对已启用、等待权限确认的插件：弹出新增权限，确认后直接授权并启动（不用先关再开） */
+async function pluginGrant(p) {
+  if (!(await pluginGrantDialog(p))) return false;
+  try {
+    await api('/api/plugins/manage', { method: 'POST', body: JSON.stringify({ id: p.id, action: 'enable' }) });
+    return true;
+  } catch (e) {
+    toast(e.message, { kind: 'bad' });
+    return false;
+  }
 }
 
 function pluginTime(v) {
@@ -1237,6 +1381,10 @@ function pluginOnEvent(m) {
       pluginSideChanged();
       for (const v of viewers.values()) pluginViewerUpdate(v);
       break;
+    case 'open': {
+      pluginOpenUrl(pluginTxt(m.plugin), m.url, { name: m.name, title: m.title, mode: m.mode });
+      break;
+    }
     case 'toast': {
       const kind = m.kind === 'error' ? 'bad' : m.kind === 'warn' ? 'warn' : m.kind === 'ok' ? 'ok' : undefined;
       toast(pluginTxt(m.text), { kind, ms: 5000 });
@@ -1245,6 +1393,10 @@ function pluginOnEvent(m) {
     case 'state': {
       if (pluginList && pluginList.list) {
         const p = pluginList.list.find((x) => x.id === m.plugin);
+        // 已启用的插件升级后申请了新权限：提示一次，点提示直接去授权
+        if (p && p.enabled && m.state === 'needs_grant' && p.state !== 'needs_grant' && pluginList.manage) {
+          toast(t('“{0}”需要新的权限', pluginTxt(p.name || p.id)), { kind: 'warn', ms: 8000, onclick: () => pluginOpenSettings(p.id) });
+        }
         if (p) { p.state = m.state; p.error = m.error || ''; }
         if (pluginManager) pluginManager.reload();
       }
@@ -1282,7 +1434,7 @@ function pluginOnEvent(m) {
     case 'overlay': {
       const devId = pluginTxt(m.serial);
       const list = (pluginOverlayMaps.get(devId) || []).filter((x) => x.plugin !== m.plugin);
-      if (m.shapes && m.shapes.length) list.push({ plugin: m.plugin, shapes: m.shapes });
+      if (m.shapes && m.shapes.length) list.push({ plugin: m.plugin, shapes: m.shapes, size: m.size });
       pluginOverlayMaps.set(devId, list);
       pluginRepaintOverlay(devId);
       break;
@@ -1326,6 +1478,10 @@ function pluginOverlayPaint(v) {
   const ctx = cv.getContext('2d');
   ctx.clearRect(0, 0, cv.width, cv.height);
   for (const item of list) {
+    // size：插件声明的坐标空间（如设备分辨率），画面可能被缩小过（max_size）
+    const sz = item.size;
+    const sx = sz && sz.w > 0 ? cv.width / sz.w : 1;
+    const sy = sz && sz.h > 0 ? cv.height / sz.h : 1;
     for (const s of item.shapes || []) {
       if (!s || typeof s !== 'object') continue;
       const color = typeof s.color === 'string' && s.color.length < 40 ? s.color : '#ff4d4f';
@@ -1333,14 +1489,19 @@ function pluginOverlayPaint(v) {
       ctx.fillStyle = color;
       ctx.lineWidth = Math.max(1, Math.round(cv.width / 400));
       ctx.font = Math.round(Math.max(10, cv.width / 60)) + 'px sans-serif';
-      const x = Number(s.x) || 0, y = Number(s.y) || 0;
+      const x = (Number(s.x) || 0) * sx, y = (Number(s.y) || 0) * sy;
       if (s.type === 'rect') {
-        const w = Number(s.w) || 0, ht = Number(s.h) || 0;
+        const w = (Number(s.w) || 0) * sx, ht = (Number(s.h) || 0) * sy;
+        const fill = typeof s.fill === 'number' ? Math.max(0, Math.min(1, s.fill)) : 0.2;
         ctx.save();
-        ctx.globalAlpha = 0.2;
-        ctx.fillRect(x, y, w, ht);
-        ctx.restore();
+        if (fill > 0) {
+          ctx.globalAlpha = fill;
+          ctx.fillRect(x, y, w, ht);
+          ctx.globalAlpha = 1;
+        }
+        if (s.dash) ctx.setLineDash([ctx.lineWidth * 4, ctx.lineWidth * 3]);
         ctx.strokeRect(x, y, w, ht);
+        ctx.restore();
       } else if (s.type === 'text') {
         ctx.fillText(pluginTxt(s.text), x, y);
       } else if (s.type === 'point') {
@@ -1417,11 +1578,32 @@ function pluginViewerUpdate(v) {
   else if (v.plugDock) pluginDockSync(v);
 }
 
+// 同一插件里 group 相同的面板合成一个页签：页签上用小图标切换，各页面一直保留（切换不重新加载）
+const pluginGroupKey = (p) => (p.group ? p.plugin + '#' + pluginTxt(p.group) : p.plugin + '|' + p.id);
+
+/** 按页签分组：[{key, title, panels:[...]}]，保持首次出现的顺序 */
+function pluginDockGroups(panels) {
+  const out = [];
+  const byKey = new Map();
+  for (const p of panels) {
+    const k = pluginGroupKey(p);
+    let g = byKey.get(k);
+    if (!g) {
+      g = { key: k, title: p.group ? pluginTxt(p.group) : pluginTxt(p.title || p.id), panels: [] };
+      byKey.set(k, g);
+      out.push(g);
+    }
+    g.panels.push(p);
+  }
+  return out;
+}
+
 function pluginDockMenu(v) {
   const devId = pluginDevId(v.host, v.dev.serial);
   const items = [];
-  for (const p of pluginPanelsFor(devId, 'device')) {
-    items.push({ icon: pluginIcon(p.icon, 'monitor'), label: pluginTxt(p.title), fn: () => pluginDockOpen(v, p) });
+  for (const g of pluginDockGroups(pluginPanelsFor(devId, 'device'))) {
+    const p = (v.plugDock && v.plugDock.groupSel.get(g.key)) || g.panels[0];
+    items.push({ icon: pluginIcon(g.panels[0].icon, 'monitor'), label: g.title, fn: () => pluginDockOpen(v, p) });
   }
   const menus = pluginMenuEntries(devId, 'toolbar', { serial: devId });
   if (menus.length) {
@@ -1435,7 +1617,7 @@ function pluginDockInit(v) {
   if (v.plugDock) return v.plugDock;
   const tabs = h('div', { class: 'plug-tabs' });
   const stack = h('div', { class: 'plug-stack' });
-  v.plugDock = { el: h('div', { class: 'plug-dock' }, tabs, stack), tabs, stack, views: new Map(), active: null, defs: new Map() };
+  v.plugDock = { el: h('div', { class: 'plug-dock' }, tabs, stack), tabs, stack, views: new Map(), active: null, defs: new Map(), groupSel: new Map() };
   return v.plugDock;
 }
 
@@ -1466,12 +1648,25 @@ function pluginDockTabs(v) {
   const dock = v.plugDock;
   if (!dock) return;
   const panels = pluginPanelsFor(pluginDevId(v.host, v.dev.serial), 'device');
-  dock.tabs.replaceChildren(...panels.map((p) => {
-    const key = p.plugin + '|' + p.id;
-    return h('button', {
-      class: 'plug-tab' + (dock.active === key ? ' on' : ''), type: 'button', title: pluginTxt(p.title),
-      onclick: () => pluginDockShow(v, key),
-    }, h('span', { class: 'ico', html: svg(pluginIcon(p.icon, 'monitor')) }), h('span', { class: 't' }, pluginTxt(p.title)));
+  const activeDef = dock.defs.get(dock.active);
+  const activeGroup = activeDef ? pluginGroupKey(activeDef) : '';
+  dock.tabs.replaceChildren(...pluginDockGroups(panels).map((g) => {
+    const on = g.key === activeGroup;
+    const first = dock.groupSel.get(g.key) || g.panels[0];
+    const tab = h('button', {
+      class: 'plug-tab' + (on ? ' on' : ''), type: 'button', title: g.title,
+      onclick: () => pluginDockShow(v, first.plugin + '|' + first.id),
+    }, h('span', { class: 'ico', html: svg(pluginIcon(g.panels[0].icon, 'monitor')) }), h('span', { class: 't' }, g.title));
+    if (g.panels.length < 2) return tab;
+    // 组内切换：只在当前页签上显示，图标 + 悬停标题
+    const seg = h('span', { class: 'plug-seg' }, g.panels.map((p) => {
+      const key = p.plugin + '|' + p.id;
+      return h('button', {
+        class: 'plug-segb' + (dock.active === key ? ' on' : ''), type: 'button', title: pluginTxt(p.title),
+        html: svg(pluginIcon(p.icon, 'monitor')), onclick: (e) => { e.stopPropagation(); pluginDockShow(v, key); },
+      });
+    }));
+    return h('span', { class: 'plug-tabg' + (on ? ' on' : '') }, tab, on ? seg : null);
   }), ib('x', t('关闭插件面板'), () => pluginDockClose(v)));
 }
 
@@ -1479,10 +1674,13 @@ function pluginDockShow(v, key) {
   const dock = v.plugDock;
   if (!dock) return;
   dock.active = key;
+  const def = dock.defs.get(key);
+  if (def) dock.groupSel.set(pluginGroupKey(def), def);
   for (const [k, view] of dock.views) view.el.hidden = k !== key;
   pluginDockTabs(v);
   const view = dock.views.get(key);
-  if (view) view.refresh();
+  // 网页面板一直保留，切回来不重新加载；即时模式面板重绘一次
+  if (view && !(view instanceof PluginWebView) && !(view instanceof PluginExtView)) view.refresh();
 }
 
 function pluginDockOpen(v, p) {

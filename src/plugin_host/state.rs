@@ -18,6 +18,8 @@ pub enum Msg {
     Eof,
     /// 后台任务完成
     Bg { id: u64, ok: Result<J, String> },
+    /// 常驻子进程的事件：kind = "out" | "err"（一行输出）| "exit"（code 为退出码）
+    Proc { id: u64, kind: &'static str, data: String, code: Option<i32> },
 }
 
 /// 输出一行 NDJSON 的回调（生产环境写 stdout，测试里收集到内存）。
@@ -59,6 +61,8 @@ pub struct Ctl {
     pub store: RefCell<Option<J>>,
     /// stdout 已关闭（找不到写端）时不再尝试输出
     pub closed: Cell<bool>,
+    /// db.proc 启动的常驻子进程
+    pub procs: RefCell<super::proc::Procs>,
 }
 
 impl Ctl {

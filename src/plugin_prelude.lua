@@ -457,6 +457,7 @@ function db.panel(id, opts, fn)
     id = id,
     title = opts.title or id,
     icon = opts.icon,
+    group = opts.group,
     dock = opts.dock or "device",
     filter = opts.filter,
     refresh = opts.refresh,
@@ -475,12 +476,32 @@ end
 function db.webpanel(id, opts)
   if type(id) ~= "string" then error("db.webpanel: id 必须是字符串", 2) end
   opts = opts or {}
-  if type(opts.entry) ~= "string" then error("db.webpanel: 需要 entry", 2) end
+  local external = opts.url ~= nil
+  if external then
+    -- 外部网页：url 为 function(dev) -> 地址|nil（nil 表示暂时没有，界面会稍后再问），或固定地址
+    if not H.has_perm("web.embed") then error("db.webpanel: 嵌入外部网页需要 web.embed 权限", 2) end
+    local u = opts.url
+    if type(u) ~= "function" and type(u) ~= "string" then error("db.webpanel: url 必须是字符串或函数", 2) end
+    db.web.handle("__url:" .. id, function(dev)
+      if type(u) == "function" then return u(dev) end
+      return u
+    end)
+    -- 页面用 postMessage 发来的消息（界面已核对来源窗口和 origin）
+    if type(opts.onMessage) == "function" then
+      local on = opts.onMessage
+      db.web.handle("__msg:" .. id, function(dev, data) return on(dev, data) end)
+    end
+  elseif type(opts.entry) ~= "string" then
+    error("db.webpanel: 需要 entry 或 url", 2)
+  end
   local def = {
     id = id,
     title = opts.title or id,
     icon = opts.icon,
     entry = opts.entry,
+    url = external or nil,
+    onMessage = (external and type(opts.onMessage) == "function") or nil,
+    group = opts.group,
     dock = opts.dock or "device",
     filter = opts.filter,
   }
@@ -525,10 +546,14 @@ function db.notify(text, opts)
   call("notify", { text = tostring(text), kind = opts.kind })
 end
 
-function db.overlay(dev, shapes)
+function db.overlay(dev, shapes, size)
   if dev == nil and shapes ~= nil then error("db.overlay: 需要设备", 2) end
   if not H.has_perm("device.screen") then error("db.overlay 需要 device.screen 权限", 2) end
-  call("overlay", { serial = dev and dev.serial, shapes = shapes == nil and NULL or shapes })
+  local sz = NULL
+  if type(size) == "table" and tonumber(size.w) and tonumber(size.h) then
+    sz = { w = tonumber(size.w), h = tonumber(size.h) }
+  end
+  call("overlay", { serial = dev and dev.serial, shapes = shapes == nil and NULL or shapes, size = sz })
 end
 
 function db.repaint(panel_id)
@@ -710,6 +735,43 @@ function db.spawn(fn, ...)
   H.spawn(H.task(fn, unpack(args, 1, args.n)))
 end
 
+-- ---------------------------------------------------------------- 常驻子进程
+
+db.proc = {}
+local procs = {}   -- id -> {p, onLine, onStderr, onExit}
+
+--- 启动常驻子进程。opts: {cwd, env, onLine(line), onStderr(line), onExit(code)}
+--- 每输出一行就在新协程里调用一次 onLine；返回的对象：p:write(s) p:send(line) p:close() p:kill() p:alive()
+function db.proc.start(program, args, opts)
+  if not H.has_perm("exec") then error("db.proc 需要 exec 权限", 2) end
+  if type(program) ~= "string" or program == "" then error("db.proc.start: 需要程序路径", 2) end
+  opts = opts or {}
+  local ok, id = pcall(H.proc_start, program, args or {}, opts.cwd, opts.env)
+  if not ok then error((tostring(id):gsub("^runtime error: ", "")), 2) end
+  local p = { id = id }
+  function p:write(s) H.proc_write(self.id, tostring(s)) end
+  function p:send(line) H.proc_write(self.id, tostring(line) .. "\n") end
+  function p:close() H.proc_close(self.id) end
+  function p:kill() H.proc_kill(self.id) end
+  function p:alive() return H.proc_alive(self.id) end
+  procs[id] = { p = p, onLine = opts.onLine, onStderr = opts.onStderr, onExit = opts.onExit }
+  return p
+end
+
+-- 宿主投递的子进程事件
+function H.proc_event(id, kind, data, code)
+  local e = procs[id]
+  if not e then return end
+  if kind == "exit" then
+    procs[id] = nil
+    if e.onExit then e.onExit(code) end
+  elseif kind == "err" then
+    if e.onStderr then e.onStderr(data) end
+  elseif e.onLine then
+    e.onLine(data)
+  end
+end
+
 -- 宿主触发定时器回调
 function H.fire_timer(id, repeat_)
   local fn = timer_fns[id]
@@ -742,6 +804,15 @@ end
 function db.ui.pickFile(opts)
   opts = opts or {}
   return call("dialog", { kind = "file", title = opts.title, accept = opts.accept })
+end
+
+--- 在发起操作的那个界面里打开网页：桌面版为应用内窗口（按 name 复用），浏览器里为同名标签页
+--- opts: {name, title, mode = "window" | "browser"}
+function db.ui.openUrl(url, opts)
+  if type(url) ~= "string" or not (url:match("^https?://")) then error("db.ui.openUrl: 只能打开 http(s) 地址", 2) end
+  opts = opts or {}
+  call("uiopen", { url = url, name = opts.name, title = opts.title, mode = opts.mode })
+  return true
 end
 
 function db.ui.progress(title)

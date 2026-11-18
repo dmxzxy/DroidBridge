@@ -471,6 +471,7 @@ fn router(state: Shared) -> Router {
         .route("/api/media/rec/{id}", axum::routing::post(media::media_rec_chunk_handler).delete(media::media_rec_abort_handler).layer(DefaultBodyLimit::max(64usize << 20)))
         .route("/api/media/{name}", axum::routing::delete(media::media_delete_handler))
         .route("/api/media/reveal", post(media::media_reveal_handler))
+        .route("/api/media/copy", post(media::media_copy_handler))
         .route("/api/update/check", get(update_check))
         .route("/api/update/apply", post(update_apply))
         .route("/api/settings", axum::routing::get(media::settings_get_handler).put(media::settings_put_handler))

@@ -219,6 +219,56 @@ pub fn install(
         })?,
     )?;
 
+    // ---- 常驻子进程（db.proc；exec 权限在 Lua 层检查，这里再查一次）
+    h.set(
+        "proc_start",
+        lua.create_function({
+            let ctl = ctl.clone();
+            move |_lua, (program, args, cwd, env): (String, Option<Table>, Option<String>, Option<Table>)| {
+                if !ctl.has_perm("exec") {
+                    return Err(err("db.proc 需要 exec 权限"));
+                }
+                let args = super::str_list(args.as_ref());
+                let env = super::str_pairs(env.as_ref());
+                ctl.procs.borrow_mut().start(&ctl.tx, &program, &args, cwd.as_deref(), &env).map_err(err)
+            }
+        })?,
+    )?;
+    h.set(
+        "proc_write",
+        lua.create_function({
+            let ctl = ctl.clone();
+            move |_lua, (id, data): (u64, Value)| ctl.procs.borrow_mut().write(id, as_bytes(&data)).map_err(err)
+        })?,
+    )?;
+    h.set(
+        "proc_close",
+        lua.create_function({
+            let ctl = ctl.clone();
+            move |_lua, id: u64| {
+                ctl.procs.borrow_mut().close_stdin(id);
+                Ok(())
+            }
+        })?,
+    )?;
+    h.set(
+        "proc_kill",
+        lua.create_function({
+            let ctl = ctl.clone();
+            move |_lua, id: u64| {
+                ctl.procs.borrow_mut().kill(id);
+                Ok(())
+            }
+        })?,
+    )?;
+    h.set(
+        "proc_alive",
+        lua.create_function({
+            let ctl = ctl.clone();
+            move |_lua, id: u64| Ok(ctl.procs.borrow().alive(id))
+        })?,
+    )?;
+
     // ---- 定时器
     h.set(
         "new_timer",

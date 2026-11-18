@@ -285,7 +285,7 @@ pub fn exec(
 }
 
 /// 杀进程（Windows 上连同子进程一起杀，避免孙进程占着管道）
-fn kill_tree(child: &mut std::process::Child) {
+pub(super) fn kill_tree(child: &mut std::process::Child) {
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;

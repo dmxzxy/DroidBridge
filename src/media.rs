@@ -338,6 +338,153 @@ pub async fn reveal(st: &AppState, name: &str) -> Result<(), String> {
     }
 }
 
+/// 把媒体文件放到系统剪贴板（文件形式，仅本机），之后可在飞书、微信等应用里直接粘贴发送。
+pub async fn copy(st: &AppState, name: &str) -> Result<(), String> {
+    let p = resolve_path(st, name).await?;
+    if tokio::fs::metadata(&p).await.is_err() {
+        return Err(tr!("文件不存在", "File not found"));
+    }
+    let p = tokio::fs::canonicalize(&p).await.unwrap_or(p);
+    tokio::task::spawn_blocking(move || copy_file_blocking(&p))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// Windows：直接写 CF_HDROP（和在资源管理器里“复制”文件一样），比起 PowerShell 快得多。
+#[cfg(windows)]
+fn copy_file_blocking(p: &FsPath) -> Result<(), String> {
+    use windows_sys::Win32::System::DataExchange::{
+        CloseClipboard, EmptyClipboard, OpenClipboard, RegisterClipboardFormatW, SetClipboardData,
+    };
+    use windows_sys::Win32::Foundation::GlobalFree;
+    use windows_sys::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE, GMEM_ZEROINIT};
+    use windows_sys::Win32::UI::Shell::DROPFILES;
+    const CF_HDROP: u32 = 15;
+    const DROPEFFECT_COPY: u32 = 1;
+
+    // canonicalize 在 Windows 上返回 \\?\ 前缀，粘贴目标不一定认
+    let mut path = p.to_string_lossy().to_string();
+    if let Some(s) = path.strip_prefix(r"\\?\UNC\") {
+        path = format!(r"\\{s}");
+    } else if let Some(s) = path.strip_prefix(r"\\?\") {
+        path = s.to_string();
+    }
+    // 文件列表：每个路径以 0 结尾，整个列表再以 0 结尾
+    let mut wide: Vec<u16> = path.encode_utf16().collect();
+    wide.extend([0, 0]);
+    let fail = |what: &str| {
+        let e = std::io::Error::last_os_error();
+        tr!("无法复制到剪贴板（{what}）：{e}", "Cannot copy to clipboard ({what}): {e}")
+    };
+
+    unsafe {
+        let head = std::mem::size_of::<DROPFILES>();
+        let size = head + wide.len() * 2;
+        let h = GlobalAlloc(GMEM_MOVEABLE | GMEM_ZEROINIT, size);
+        if h.is_null() {
+            return Err(fail("GlobalAlloc"));
+        }
+        let ptr = GlobalLock(h) as *mut u8;
+        if ptr.is_null() {
+            GlobalFree(h);
+            return Err(fail("GlobalLock"));
+        }
+        let df = ptr as *mut DROPFILES;
+        (*df).pFiles = head as u32;
+        (*df).fWide = 1;
+        std::ptr::copy_nonoverlapping(wide.as_ptr() as *const u8, ptr.add(head), wide.len() * 2);
+        GlobalUnlock(h);
+
+        // 剪贴板可能正被别的程序占用，稍等重试
+        let mut opened = false;
+        for _ in 0..20 {
+            if OpenClipboard(std::ptr::null_mut()) != 0 {
+                opened = true;
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(25));
+        }
+        if !opened {
+            GlobalFree(h);
+            return Err(fail("OpenClipboard"));
+        }
+        EmptyClipboard();
+        if SetClipboardData(CF_HDROP, h).is_null() {
+            let e = fail("SetClipboardData");
+            CloseClipboard();
+            GlobalFree(h);
+            return Err(e);
+        }
+        // 告诉资源管理器这是“复制”而不是“剪切”
+        let name: Vec<u16> = "Preferred DropEffect\0".encode_utf16().collect();
+        let fmt = RegisterClipboardFormatW(name.as_ptr());
+        if fmt != 0 {
+            let he = GlobalAlloc(GMEM_MOVEABLE, 4);
+            if !he.is_null() {
+                let pe = GlobalLock(he) as *mut u32;
+                if !pe.is_null() {
+                    *pe = DROPEFFECT_COPY;
+                    GlobalUnlock(he);
+                    if SetClipboardData(fmt, he).is_null() {
+                        GlobalFree(he);
+                    }
+                } else {
+                    GlobalFree(he);
+                }
+            }
+        }
+        CloseClipboard();
+    }
+    Ok(())
+}
+
+/// macOS / Linux：交给系统自带的命令。
+#[cfg(not(windows))]
+fn copy_file_blocking(p: &FsPath) -> Result<(), String> {
+    use std::process::{Command, Stdio};
+    let path = p.to_string_lossy().to_string();
+    #[cfg(target_os = "macos")]
+    let (mut cmd, input) = {
+        let mut c = Command::new("osascript");
+        c.args([
+            "-l",
+            "JavaScript",
+            "-e",
+            "function run(a){ObjC.import('AppKit');var pb=$.NSPasteboard.generalPasteboard;pb.clearContents;pb.writeObjects($([$.NSURL.fileURLWithPath(a[0])]));}",
+        ]);
+        c.arg(&path);
+        (c, None::<String>)
+    };
+    #[cfg(not(target_os = "macos"))]
+    let (mut cmd, input) = {
+        let wayland = std::env::var_os("WAYLAND_DISPLAY").is_some();
+        let mut c = if wayland { Command::new("wl-copy") } else { Command::new("xclip") };
+        if wayland {
+            c.args(["--type", "text/uri-list"]);
+        } else {
+            c.args(["-selection", "clipboard", "-t", "text/uri-list", "-i"]);
+        }
+        let uri = format!("file://{}\r\n", crate::util::url_encode(&path).replace("%2F", "/"));
+        (c, Some(uri))
+    };
+    cmd.stdout(Stdio::null()).stderr(Stdio::piped());
+    cmd.stdin(if input.is_some() { Stdio::piped() } else { Stdio::null() });
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| tr!("无法复制到剪贴板：{e}", "Cannot copy to clipboard: {e}"))?;
+    if let (Some(text), Some(mut si)) = (input, child.stdin.take()) {
+        use std::io::Write;
+        let _ = si.write_all(text.as_bytes());
+    }
+    let out = child.wait_with_output().map_err(|e| e.to_string())?;
+    if out.status.success() {
+        Ok(())
+    } else {
+        let err = String::from_utf8_lossy(&out.stderr).trim().to_string();
+        Err(tr!("无法复制到剪贴板：{err}", "Cannot copy to clipboard: {err}"))
+    }
+}
+
 /// 打开媒体目录本身（仅本机）。
 pub async fn reveal_dir(st: &AppState) -> Result<(), String> {
     let dir = media_dir(st).await;
@@ -512,6 +659,24 @@ pub async fn media_delete_handler(
     Path((name,)): Path<(String,)>,
 ) -> Response {
     match delete(&st, &name).await {
+        Ok(()) => Json(serde_json::json!({ "ok": true })).into_response(),
+        Err(e) => err_resp(StatusCode::BAD_REQUEST, &e),
+    }
+}
+
+pub async fn media_copy_handler(
+    State(st): State<Shared>,
+    Query(q): Query<HashMap<String, String>>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+) -> Response {
+    if !is_loopback(addr) {
+        return err_resp(
+            StatusCode::FORBIDDEN,
+            &tr!("仅本机可执行此操作", "Only local requests can do this"),
+        );
+    }
+    let name = q.get("name").map(String::as_str).unwrap_or("");
+    match copy(&st, name).await {
         Ok(()) => Json(serde_json::json!({ "ok": true })).into_response(),
         Err(e) => err_resp(StatusCode::BAD_REQUEST, &e),
     }

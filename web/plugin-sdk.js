@@ -24,6 +24,14 @@
         post({ __droidbridge: 1, t: 'call', id: id, name: String(name), args: args === undefined ? null : args });
       });
     },
+    /**
+     * 打开网页：桌面版为应用内窗口（按 name 复用，关闭只隐藏），浏览器里为同名标签页。
+     * 请在点击处理里直接调用（浏览器只允许用户操作触发弹窗）。opts: {name, title, mode: 'window' | 'browser'}
+     */
+    open: function (url, opts) {
+      opts = opts || {};
+      post({ __droidbridge: 1, t: 'open', url: String(url), name: opts.name, title: opts.title, mode: opts.mode });
+    },
     /** 监听 db.web.emit 发来的消息 */
     on: function (name, fn) {
       if (typeof fn !== 'function') return function () {};

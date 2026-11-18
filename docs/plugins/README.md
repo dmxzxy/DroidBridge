@@ -305,11 +305,12 @@ db.overlay(dev, {
   { type = "text", x = 100, y = 180, text = "这里", color = "#ffffff" },
   { type = "point", x = 250, y = 260, color = "#ffd666", text = "点这里" },
 })
+db.overlay(dev, shapes, { w = 1080, h = 2400 })   -- 第三个参数：坐标所在的空间（设备分辨率）
 db.overlay(dev, nil)     -- 清除
 db.repaint("main")       -- 让某个面板立刻重绘（省略参数 = 全部）
 ```
 
-覆盖层坐标是 **设备像素**，会随画面缩放和旋转自动跟随，并且不拦截鼠标（点击仍然作用到设备）。
+覆盖层不拦截鼠标（点击仍然作用到设备）。投屏画面可能被缩小过（默认最长边 1280），所以用设备坐标画时请传第三个参数 `{ w, h }`（设备当前方向下的分辨率，可用 `dev:shell("wm size")` 得到），程序会按画面实际尺寸换算；不传时坐标按画面像素。矩形还可以设 `fill`（填充不透明度 0–1，默认 0.2，0 为不填充）和 `dash = true`（虚线）。
 
 内置图标名（`icon` 只能用这些，其他会显示默认图标）：
 `phone plus more gear x monitor chevDown chevRight max power volUp volDown rotate camera record stop images keyboard paste bell sliders moon sun refresh upload back home recent chevLeft file folder activity grid link package eraser scissors arrowLeft arrowUp bookmark folderPlus sort blank copy edit trash check lock wifi wifiOff headphones download logs pause play target alert`
@@ -332,6 +333,16 @@ p:set(nil, "等待设备确认…")   -- 不确定进度
 p:close()
 ```
 
+打开网页：
+
+```lua
+-- 桌面版：应用内窗口（同一个 name 复用同一个窗口，关闭只是隐藏，再次打开立即出现）
+-- 浏览器：新标签页（同一个 name 复用同一个标签页）；mode = "browser" 时桌面版也交给系统浏览器
+db.ui.openUrl("http://example.com/tool?id=1", { name = "tool-1", title = "工具", mode = "window" })
+```
+
+在发起操作的那个界面里打开（不是插件所在的电脑），只允许 http(s) 地址，不需要权限。网页面板里请直接用 SDK 的 `droidbridge.open(url, opts)`，在点击处理里调用，浏览器不会拦截弹窗。
+
 `pickFile` 选中的文件会被上传到这台电脑的临时目录，返回的是 **本机路径**，可以直接 `dev:install(path)`。
 
 ### 4.8 本机文件、程序、网络
@@ -347,6 +358,18 @@ db.fs.join("a", "b", "c")            -- 拼路径
 db.exec("adb", { "devices" }, { cwd = "D:/", timeout = 60, env = { A = "1" }, input = "y\n" })
 -- -> { code = 0, stdout = "...", stderr = "" }
 db.open("https://example.com")        -- 打开文件或网址
+
+-- 常驻子进程（exec 权限）：一行一个消息的命令行程序，适合长连接的命令行客户端
+local p = db.proc.start("mytool.exe", { "serve" }, {
+  env = { MYTOOL_URL = "http://x" }, cwd = nil,
+  onLine = function(line) end,      -- stdout 每一行（各自在新协程里调用）
+  onStderr = function(line) end,
+  onExit = function(code) end,
+})
+p:send('{"id":1}')    -- 写一行（自动加 
+）；p:write(s) 原样写入
+p:close()             -- 关闭 stdin；p:kill() 结束；p:alive()
+-- 同时最多 8 个；插件停止时自动结束
 db.http.request({ url = "https://x", method = "GET", headers = {}, body = nil, timeout = 30 })
 -- -> { status = 200, headers = {}, body = "..." }
 db.clipboard.get(), db.clipboard.set("文字")
@@ -472,6 +495,8 @@ db.webpanel("web", { title = "MyGame", dock = "window", entry = "web/index.html"
   const r = await droidbridge.call("stats", { since: 60 });
   // 接收 db.web.emit 发来的消息
   droidbridge.on("tick", (data) => { document.title = data.n; });
+  // 打开网页（见 db.ui.openUrl），请在点击处理里直接调用
+  droidbridge.open("http://example.com", { name: "ex", title: "Example" });
   // 面板是从哪台设备打开的（可能为空字符串）
   droidbridge.device.serial;
 </script>

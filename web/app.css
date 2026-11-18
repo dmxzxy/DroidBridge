@@ -600,11 +600,22 @@ body.win-max .tb-edge{display:none}
 .plug-tab .ico{display:flex}
 .plug-tab .t{max-width:120px;overflow:hidden;text-overflow:ellipsis}
 .plug-tabs .ib{margin-left:auto;flex:none}
+.plug-tabg{display:flex;align-items:center;gap:2px;flex:none;border-radius:6px}
+.plug-tabg.on{background:var(--active)}
+.plug-tabg.on .plug-tab{background:none}
+.plug-seg{display:flex;gap:1px;padding:0 3px 0 1px}
+.plug-segb{width:24px;height:22px;display:grid;place-items:center;border:0;border-radius:5px;background:none;color:var(--sub);padding:0}
+.plug-segb svg{width:14px;height:14px}
+.plug-segb:hover{color:var(--text);background:var(--hover)}
+.plug-segb.on{color:var(--accent);background:var(--surface);box-shadow:0 1px 2px rgba(0,0,0,.18)}
 .plug-stack{position:relative;flex:1;min-height:0}
 .plug-stack>.plug-panel{position:absolute;inset:0}
 .plug-panel{display:flex;flex-direction:column;min-height:0;background:var(--surface)}
 .plug-panel[hidden]{display:none}
 .plug-body{flex:1;min-height:0;overflow:auto;padding:10px 12px;display:flex;flex-direction:column;gap:10px}
+.plug-ext-wait{flex:1;display:grid;place-items:center;color:var(--faint)}
+.plug-ext-wait[hidden]{display:none}
+.plug-ext-wait svg{width:28px;height:28px;opacity:.5}
 .plug-frame{flex:1;min-height:0;width:100%;border:0;background:var(--bg)}
 .plug-head{display:flex;align-items:center;gap:4px;padding:6px 8px 0}
 .plug-head .pl-title{flex:1;min-width:0;font-weight:600;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -696,6 +707,10 @@ dialog.settings .dlg-b{flex:1;min-height:0;max-height:none;overflow:hidden;paddi
 .plug-row-n{display:flex;align-items:center;gap:7px;min-width:0}
 .plug-row-n b{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .plug-row-e{color:var(--bad);font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.plug-grant-btn{flex:none;height:24px;padding:0 10px;font-size:12px}
+.plug-note .grow{flex:1;align-self:center}
+.plug-note .btn{flex:none}
+.toast.click{cursor:pointer;pointer-events:auto}
 .plug-row-c{display:flex;color:var(--faint)}.plug-row-c svg{width:14px;height:14px}
 .plug-row .switch{margin-left:4px}
 .plug-tile{flex:none;display:grid;place-items:center;width:30px;height:30px;border-radius:8px;background:hsl(var(--h) 55% 50% / .16);color:hsl(var(--h) 60% 55%);font-weight:700;font-size:14px;line-height:1}

@@ -610,7 +610,11 @@ impl Plugins {
                     }
                 }
                 let mut v = with_plugin(d, &ph.id);
-                if *is_web {
+                if *is_web && d.get("url").and_then(|x| x.as_bool()) == Some(true) {
+                    // 外部网页：前端调插件的 __url:<id> 取地址，只允许这些网站
+                    let man = ph.manifest();
+                    v["embed"] = json!(man.embed.iter().filter_map(|e| manifest::origin_of(e)).collect::<Vec<_>>());
+                } else if *is_web {
                     v["web"] = json!(format!("/plugin-web/{}/{}", ph.id, entry));
                 }
                 panels.push(v);
@@ -636,9 +640,9 @@ impl Plugins {
                     a.push(v);
                 }
             }
-            for (serial, shapes) in o_list {
+            for (serial, ov) in o_list {
                 if let Some(a) = overlays.entry(serial).or_insert_with(|| json!([])).as_array_mut() {
-                    a.push(json!({"plugin": ph.id, "shapes": shapes}));
+                    a.push(json!({"plugin": ph.id, "shapes": ov["shapes"], "size": ov["size"]}));
                 }
             }
         }

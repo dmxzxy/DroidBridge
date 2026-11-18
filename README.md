@@ -19,9 +19,9 @@ See and control Android devices from your computer — not only the ones plugged
 - **Shared viewing** — several people can watch the same device at once over a single mirroring session; everyone sees who is watching and who is in control, and only one person operates at a time
 - **Batch install & group control** — install one APK on many devices at once; mirror taps and keys on several devices
 - **AI agents (MCP)** — let Claude Code, Cursor and other MCP clients read the screen and operate any device; you watch every action live and can pause the AI
-- **Plugins (Lua)** — build project-specific tools: menu items for devices, apps and files, panels next to the screen, status items, performance metrics, log highlights and AI tools; plugins run in separate processes, so a broken plugin cannot take the app down. See [docs/plugins/README.md](docs/plugins/README.md) (Chinese)
+- **Plugins (Lua)** — build project-specific tools: menu items for devices, apps and files, panels next to the screen (including embedded web pages of your own tools), drawings on the mirrored screen, status items, performance metrics, log highlights, AI tools and long-running helper processes; plugins run in separate processes, so a broken plugin cannot take the app down. See [docs/plugins/README.md](docs/plugins/README.md) (Chinese)
 - **Install APKs / send files** — drop them onto a device screen
-- **Gallery** — screenshots and recordings are saved on the node and browsed in a gallery (filter by type / device, preview, download, reveal in file manager)
+- **Gallery** — screenshots and recordings are saved on the node and browsed in a gallery (filter by type / device, preview, copy to the clipboard to paste into chat apps, download, reveal in file manager)
 - **Desktop app or browser** — native desktop app for Windows, macOS and Linux; Windows has an installer and the desktop app updates itself; phones and other computers can also use a browser. Closing the window can keep it running in the tray (asked the first time; change it in Settings → General), so other computers and AI tools stay connected
 
 | Device logs | Wireless pairing | Phone browser |
@@ -106,7 +106,7 @@ Click the headphones icon in the side toolbar, or turn on **Settings → Audio �
 
 Click the **camera** icon to capture the current screen, or the **record** icon (red dot) to start / stop a screen recording. Screenshots are saved as PNG, recordings as WebM / MP4 (with audio when audio forwarding is on). Files are stored on the node you are connected to, in the **media directory** (default `<data>/media`, changeable in Settings → Save screenshots to, or with `--media-dir`). If the app closes or the page is reloaded mid-recording, the partial file is recovered automatically (a recording left idle for 2 minutes is finalised as a playable file).
 
-Click the **gallery** icon next to the sidebar gear to browse everything: filter by type or device, click a thumbnail to preview (arrow keys / buttons to step, Esc to close), download, reveal in the file manager, or delete.
+Click the **gallery** icon next to the sidebar gear to browse everything: filter by type or device, click a thumbnail to preview (arrow keys / buttons to step, Esc to close), copy it (paste straight into chat apps), download, reveal in the file manager, or delete.
 
 ### Device logs
 

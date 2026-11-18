@@ -108,6 +108,8 @@ enum WinCmd {
     Show,
     Quit,
     Tray(tray_icon::TrayIconEvent),
+    /// 插件请求打开网页：应用内窗口，按 name 复用（关闭只是隐藏，再次打开立即显示）
+    OpenWin { url: String, name: String, title: String },
 }
 
 /// 关闭窗口时：最小化到托盘 / 退出 / 每次询问
@@ -163,6 +165,16 @@ impl WinCmd {
                 Self::CloseChoice(pref, it.next() == Some("save"))
             }
             _ if s.starts_with("closepref:") => Self::SetClosePref(ClosePref::parse(&s["closepref:".len()..])?),
+            _ if s.starts_with("openwin:") => {
+                let v: serde_json::Value = serde_json::from_str(&s["openwin:".len()..]).ok()?;
+                let url = v.get("url")?.as_str()?.to_string();
+                if !(url.starts_with("http://") || url.starts_with("https://")) {
+                    return None;
+                }
+                let name = v.get("name").and_then(|n| n.as_str()).filter(|n| !n.is_empty()).unwrap_or(&url).to_string();
+                let title = v.get("title").and_then(|n| n.as_str()).unwrap_or("").to_string();
+                Self::OpenWin { url, name, title }
+            }
             _ => Self::Resize(match s.strip_prefix("resize:")? {
                 "n" => ResizeDirection::North,
                 "s" => ResizeDirection::South,
@@ -294,8 +306,11 @@ fn run_window(target: Result<String, String>, data_dir: &std::path::Path) -> Res
     let mut last_state = (false, true);
     let mut tray: Option<tray_icon::TrayIcon> = None;
     let mut tray_ok = tray_ok;
-    event_loop.run(move |event, _, control_flow| {
-        let _keep = (&webview, &ctx);
+    let main_id = window.id();
+    // 插件打开的应用内窗口：name -> (窗口, WebView, 当前地址)
+    let mut subs: std::collections::HashMap<String, (tao::window::Window, wry::WebView, String)> = std::collections::HashMap::new();
+    event_loop.run(move |event, target, control_flow| {
+        let _keep = &webview;
         *control_flow = ControlFlow::Wait;
         let show = |window: &tao::window::Window| {
             window.set_visible(true);
@@ -312,17 +327,39 @@ fn run_window(target: Result<String, String>, data_dir: &std::path::Path) -> Res
                     let _ = webview.evaluate_script("window.__DB_TRAY=false");
                 }
             },
-            Event::WindowEvent { event: WindowEvent::CloseRequested, .. } | Event::UserEvent(WinCmd::Close) => {
-                // 启动失败的错误页、没有托盘：直接退出
-                let pref = if !custom || !tray_ok { ClosePref::Quit } else { close_pref };
-                match pref {
-                    ClosePref::Quit => *control_flow = ControlFlow::Exit,
-                    ClosePref::Tray => window.set_visible(false),
-                    ClosePref::Ask => {
-                        show(&window);
-                        let _ = webview.evaluate_script("window.__dbAskClose&&window.__dbAskClose()");
+            // 插件窗口：关闭只是隐藏，页面和连接保留
+            Event::WindowEvent { window_id, event: WindowEvent::CloseRequested, .. } if window_id != main_id => {
+                if let Some((w, _, _)) = subs.values().find(|(w, _, _)| w.id() == window_id) {
+                    w.set_visible(false);
+                }
+            }
+            Event::UserEvent(WinCmd::OpenWin { url, name, title }) => {
+                if let Some((w, wv, cur)) = subs.get_mut(&name) {
+                    if *cur != url {
+                        let _ = wv.load_url(&url);
+                        *cur = url;
+                    }
+                    if !title.is_empty() {
+                        w.set_title(&title);
+                    }
+                    show(w);
+                } else {
+                    match open_sub_window(target, &mut ctx, &url, &title) {
+                        Ok((w, wv)) => {
+                            subs.insert(name, (w, wv, url));
+                        }
+                        Err(e) => {
+                            tracing::warn!("open window failed: {e}");
+                            open_external(&url);
+                        }
                     }
                 }
+            }
+            Event::WindowEvent { window_id, event: WindowEvent::CloseRequested, .. } if window_id == main_id => {
+                main_close(&mut *control_flow, custom, tray_ok, close_pref, &window, &webview, &show);
+            }
+            Event::UserEvent(WinCmd::Close) => {
+                main_close(&mut *control_flow, custom, tray_ok, close_pref, &window, &webview, &show);
             }
             Event::UserEvent(WinCmd::CloseChoice(pref, save)) => {
                 if save {
@@ -366,7 +403,7 @@ fn run_window(target: Result<String, String>, data_dir: &std::path::Path) -> Res
                 }
             }
             // 把最大化 / 焦点状态告诉网页：切换“还原”图标、标题栏变暗
-            Event::WindowEvent { event: WindowEvent::Resized(_) | WindowEvent::Focused(_), .. } if custom => {
+            Event::WindowEvent { window_id, event: WindowEvent::Resized(_) | WindowEvent::Focused(_), .. } if custom && window_id == main_id => {
                 let state = (window.is_maximized(), window.is_focused());
                 if state != last_state {
                     last_state = state;
@@ -379,6 +416,61 @@ fn run_window(target: Result<String, String>, data_dir: &std::path::Path) -> Res
             _ => {}
         }
     });
+}
+
+/// 主窗口关闭：启动失败的错误页、没有托盘时直接退出；否则按“关闭窗口时”的设置处理
+fn main_close(
+    control_flow: &mut ControlFlow,
+    custom: bool,
+    tray_ok: bool,
+    close_pref: ClosePref,
+    window: &tao::window::Window,
+    webview: &wry::WebView,
+    show: &dyn Fn(&tao::window::Window),
+) {
+    let pref = if !custom || !tray_ok { ClosePref::Quit } else { close_pref };
+    match pref {
+        ClosePref::Quit => *control_flow = ControlFlow::Exit,
+        ClosePref::Tray => window.set_visible(false),
+        ClosePref::Ask => {
+            show(window);
+            let _ = webview.evaluate_script("window.__dbAskClose&&window.__dbAskClose()");
+        }
+    }
+}
+
+/// 插件打开的应用内窗口：系统标题栏，和主窗口共用 WebView 存储（登录状态等），没有 IPC
+fn open_sub_window(
+    target: &tao::event_loop::EventLoopWindowTarget<WinCmd>,
+    ctx: &mut WebContext,
+    url: &str,
+    title: &str,
+) -> Result<(tao::window::Window, wry::WebView), String> {
+    let window = WindowBuilder::new()
+        .with_title(if title.is_empty() { "DroidBridge" } else { title })
+        .with_inner_size(LogicalSize::new(1180.0, 800.0))
+        .with_min_inner_size(LogicalSize::new(420.0, 320.0))
+        .with_window_icon(app_icon())
+        .build(target)
+        .map_err(|e| e.to_string())?;
+    let builder = WebViewBuilder::new_with_web_context(ctx)
+        .with_background_color((15, 17, 21, 255))
+        .with_url(url)
+        .with_new_window_req_handler(|url, _| {
+            open_external(&url);
+            NewWindowResponse::Deny
+        });
+    #[cfg(target_os = "linux")]
+    let webview = {
+        use tao::platform::unix::WindowExtUnix;
+        use wry::WebViewBuilderExtUnix;
+        let vbox = window.default_vbox().ok_or("no GTK container")?;
+        builder.build_gtk(vbox)
+    };
+    #[cfg(not(target_os = "linux"))]
+    let webview = builder.build(&window);
+    let webview = webview.map_err(|e| e.to_string())?;
+    Ok((window, webview))
 }
 
 /// macOS 菜单栏：没有“编辑”菜单时，WebView 中的复制 / 粘贴快捷键不可用
@@ -513,4 +605,27 @@ fn tray_supported() -> bool {
 fn app_icon() -> Option<Icon> {
     let (rgba, n) = droidbridge::icon::rgba(64);
     Icon::from_rgba(rgba, n, n).ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::WinCmd;
+
+    #[test]
+    fn parses_open_window_requests() {
+        match WinCmd::parse(r#"openwin:{"url":"http://a/b?c=1","name":"tool:x","title":"T"}"#) {
+            Some(WinCmd::OpenWin { url, name, title }) => {
+                assert_eq!(url, "http://a/b?c=1");
+                assert_eq!(name, "tool:x");
+                assert_eq!(title, "T");
+            }
+            other => panic!("{other:?}"),
+        }
+        // 没有 name 时用地址作为窗口名
+        assert!(matches!(WinCmd::parse(r#"openwin:{"url":"https://x"}"#), Some(WinCmd::OpenWin { name, .. }) if name == "https://x"));
+        // 只接受 http(s)
+        assert!(WinCmd::parse(r#"openwin:{"url":"file:///c:/x"}"#).is_none());
+        assert!(WinCmd::parse(r#"openwin:{"url":"javascript:alert(1)"}"#).is_none());
+        assert!(WinCmd::parse("openwin:not json").is_none());
+    }
 }

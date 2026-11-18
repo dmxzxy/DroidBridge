@@ -120,9 +120,10 @@
 - `badge` `{serial, text|null, kind?, tip?}`
 - `notify` `{text, kind?}`
 - `dialog` `{kind, title, message?, fields?, default?, accept?, client?}` → 用户答案：confirm→bool；prompt→string|null；form→object|null；file→本机路径|null（kind=file 时浏览器上传文件到这台电脑的临时目录）
+- `uiopen` `{url, name?, title?, mode?, client?}`：在发起操作的界面打开网页（WS 事件 `open`）；只接受 http(s)。桌面版为应用内窗口（按 name 复用，关闭只隐藏），浏览器为同名标签页；`mode="browser"` 时桌面版交给系统浏览器。宿主像 dialog 一样自动附上 `client`
 - `progress` `{id, title?, frac?, text?, done?}`（frac 0–1 或 null 表示不确定）
 - `repaint` `{panel?}`
-- `overlay` `{serial, shapes|null}`；shape：`{type:"rect",x,y,w,h,color?,text?}` | `{type:"text",x,y,text,color?}` | `{type:"point",x,y,color?,text?}`，坐标为设备像素
+- `overlay` `{serial, shapes|null, size?:{w,h}}`；shape：`{type:"rect",x,y,w,h,color?,text?,fill?,dash?}` | `{type:"text",x,y,text,color?}` | `{type:"point",x,y,color?,text?}`。`size` 为形状坐标所在的空间（如设备分辨率），前端按画面实际尺寸缩放；不给时坐标为画面像素。rect 的 `fill` 为填充不透明度（0–1，默认 0.2，0 不填充），`dash` 为虚线描边
 - `webemit` `{name, data}`
 
 设备：
@@ -191,7 +192,7 @@
 |---|---|---|
 | GET `/api/plugins` | | `{manage: bool, dir: "插件目录", safeMode: bool, list:[{id,name,version,description,author,dir,state,error?,enabled,permissions,granted,settings:[schema],values:{}}]}` |
 | POST `/api/plugins/manage` | `{id?, action, ...}` action ∈ `enable`(同时授予当前 permissions) `disable` `reload` `settings`(values) `open_dir`(id 可省略，打开插件根目录或该插件目录) `create`(id,name：用模板新建并直接启用) `rescan` | `{ok:true}`。**仅本机请求可用**（与 auth 中“本机”判断一致：本机 IP 且非反向代理；或桌面窗口），否则 403 |
-| GET `/api/plugins/contrib?serial=` | | `{menus:[{plugin,id,target,path,icon,filter}], panels:[{plugin,id,title,icon,dock,refresh,web?:"/plugin-web/<id>/<entry>"}], status:[{plugin,id,text,kind,tip,clickable}], metrics:[{plugin,id,label,unit}], loghl:[{plugin,id,text,tag,kind,label}], badges:{serial:[{plugin,text,kind,tip}]}, overlays:{serial:[{plugin,shapes}]}}`。给了 serial 时，菜单/面板/指标按 hasApp/models/serials 和插件 match 过滤 |
+| GET `/api/plugins/contrib?serial=` | | `{menus:[{plugin,id,target,path,icon,filter}], panels:[{plugin,id,title,icon,dock,refresh,web?:"/plugin-web/<id>/<entry>"}], status:[{plugin,id,text,kind,tip,clickable}], metrics:[{plugin,id,label,unit}], loghl:[{plugin,id,text,tag,kind,label}], badges:{serial:[{plugin,text,kind,tip}]}, overlays:{serial:[{plugin,shapes,size}]}}`。给了 serial 时，菜单/面板/指标按 hasApp/models/serials 和插件 match 过滤 |
 | POST `/api/plugins/invoke` | `{plugin, kind:"menu"\|"status", id, ctx:{serial?,package?,path?,isDir?}, client?}` | 处理函数返回值 `{ok:..}` 或 `{error}`（等待完成，最长 10 分钟） |
 | POST `/api/plugins/panel` | `{plugin, panel, serial?, event?, client?}` | `{title, tree}`（5 秒超时） |
 | GET `/api/plugins/metrics?serial=` | | `[{plugin,id,label,unit,value}]`（每个 3 秒超时，失败 value=null） |
@@ -214,8 +215,9 @@ WS 事件（JSON 文本帧）：
 {"type":"dialog","id","plugin","kind","title","message","fields","default","accept"}
 {"type":"dialog.close","id"}
 {"type":"progress","plugin","id","title","frac","text","done"}
+{"type":"open","plugin","url","name","title","mode"}
 {"type":"repaint","plugin","panel"}
-{"type":"overlay","plugin","serial","shapes"}
+{"type":"overlay","plugin","serial","shapes","size"}
 {"type":"console","plugin","entry":{time,level,msg,src}}
 {"type":"webmsg","plugin","name","data"}
 {"type":"state","plugin","state","error"}
@@ -227,7 +229,7 @@ WS 事件（JSON 文本帧）：
 - 设置里新增“插件”页：列表（状态、版本、权限）、启用（弹窗列出权限中文说明并确认）/停用/重新加载/打开目录/新建插件、设置表单（按 settings schema 生成）、控制台（实时日志，error 红色，可清空、可复制）。非本机（manage=false）时只读并提示“只能在这台电脑上管理插件”。远程电脑的插件在列表里按电脑分组。
 - 菜单贡献：设备卡片右键菜单、应用管理右键菜单、文件浏览器右键菜单、侧边栏“工具”菜单（有 tools 菜单时才出现按钮）、投屏工具栏“插件”按钮（toolbar 项）。path 多级 → 子菜单（不支持子菜单时用 “MyGame ▸ 安装测试包” 文本）。点击 → invoke，执行中 toast 显示进度，失败 toast error。
 - 面板：dock=device 的面板作为投屏窗口侧边的页签（与日志、文件同级）；dock=window 从工具菜单打开为对话框；dock=settings 显示在插件设置页。根据 tree 绘制控件；交互 → 发送 event 并用返回的 tree 重绘；收到 repaint 或 refresh 到期时重绘。
-- webpanel：sandbox iframe（`sandbox="allow-scripts allow-forms"`，不加 allow-same-origin），postMessage 桥接：只接受 `e.source === iframe.contentWindow` 的消息；iframe 只能调用自己插件的 `web` 处理函数；`webmsg` 转发给该插件的 iframe。
+- webpanel：sandbox iframe（`sandbox="allow-scripts allow-forms"`，不加 allow-same-origin），postMessage 桥接：只接受 `e.source === iframe.contentWindow` 的消息；iframe 只能调用自己插件的 `web` 处理函数；`webmsg` 转发给该插件的 iframe。iframe 发来的 `{t:"open", url, name, title, mode}`（SDK 的 `droidbridge.open`）按 `uiopen` 的规则直接在本界面打开，name 加上插件 id 前缀，避免不同插件互相复用窗口。
 - 徽标显示在设备卡片；状态栏项显示在侧边栏底部；指标在性能浮层追加行（每 2 秒拉 metrics）；日志高亮在 logcat 行上加样式与标签；覆盖层在投屏画面上绘制（canvas 叠加层，pointer-events:none，坐标按设备像素缩放）。
 - 对话框：confirm / prompt / form / file（选择文件后上传到 `/api/plugins/upload`，把返回 path 作为答案）；progress 显示为常驻 toast。
 - 所有插件提供的文字都用 textContent 插入，绝不用 innerHTML。
@@ -268,7 +270,7 @@ db.web.handle(name, fn(dev, args)) ; db.web.emit(name, data)
 db.status(id, text, {kind, tip, onClick}) ; db.status(id, nil) 移除
 db.badge(dev, text, {kind, tip}) ; db.badge(dev, nil)
 db.notify(text, {kind})
-db.overlay(dev, shapes) ; db.overlay(dev, nil)
+db.overlay(dev, shapes, size) ; db.overlay(dev, nil)
 db.repaint(panelId)
 db.perf.metric(id, {label, unit, filter}, fn(dev) -> number)
 db.mcp.tool(name, {description, params={x={type,description}}, required={..}}, fn(dev, args))
@@ -278,10 +280,13 @@ db.ui.prompt(title, message, default) -> string|nil
 db.ui.form(title, fields) -> table|nil
 db.ui.pickFile({accept=".apk"}) -> path|nil
 db.ui.progress(title) -> p ; p:set(frac, text) ; p:close()
+db.ui.openUrl(url, {name, title, mode = "window" | "browser"})
 
 db.fs.read(path) db.fs.write(path, data) db.fs.append(path, data) db.fs.list(dir) db.fs.exists(path)
 db.fs.stat(path) -> {size, mtime, dir} db.fs.mkdir(path) db.fs.remove(path) db.fs.copy(a, b) db.fs.join(...)
 db.exec(program, args, {cwd, timeout=60, env, input}) -> {code, stdout, stderr}
+db.proc.start(program, args, {cwd, env, onLine, onStderr, onExit}) -> p ; p:send(line) p:write(s) p:close() p:kill() p:alive()
+-- 常驻子进程（exec 权限，宿主本地实现）：stdout/stderr 按行投递，每行一个新协程；最多 8 个；插件停止时先关 stdin 等 0.3 秒，再强杀
 db.open(pathOrUrl)
 db.http.request({url, method="GET", headers, body, timeout=30}) -> {status, headers, body}
 db.clipboard.get() db.clipboard.set(text)
