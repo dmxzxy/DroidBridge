@@ -47,7 +47,7 @@
 | `fs.read` | 读本机任意路径 |
 | `fs` | 读写本机任意路径（含 `fs.read`） |
 | `exec` | `db.exec` 运行本机程序、`db.open` 打开文件/网址 |
-| `net` | `db.http.request` |
+| `net` | `db.http.request` / `db.http.download` |
 | `clipboard` | `db.clipboard.get/set` |
 | `media` | `db.media.save` 存入图库 |
 | `mcp` | `db.mcp.tool` 注册 AI 工具 |
@@ -148,7 +148,7 @@
 
 ### 3.4 宿主本地实现（不经过主进程）
 
-`db.fs.*`、`db.exec`、`db.open`、`db.http.request`、`db.clipboard.*`、`db.store.*`、定时器、`require`、日志。权限检查在宿主内完成（init 里的 `granted`）。阻塞操作（exec、http、clipboard）放到后台线程执行，结果通过内部通道恢复协程。
+`db.fs.*`、`db.exec`、`db.open`、`db.http.request`、`db.clipboard.*`、`db.store.*`、定时器、`require`、日志。权限检查在宿主内完成（init 里的 `granted`）。阻塞操作（exec、http、download、walk、tar、clipboard）放到后台线程执行，结果通过内部通道恢复协程。
 
 ### 3.5 调度模型（必须）
 
@@ -279,16 +279,21 @@ db.ui.confirm(title, message) -> bool
 db.ui.prompt(title, message, default) -> string|nil
 db.ui.form(title, fields) -> table|nil
 db.ui.pickFile({accept=".apk"}) -> path|nil
+db.ui.pickDir({title, default}) -> path|nil   -- dialog kind="dir"：本机桌面版弹系统文件夹对话框（IPC pickdir:），否则退回输入路径
 db.ui.progress(title) -> p ; p:set(frac, text) ; p:close()
 db.ui.openUrl(url, {name, title, mode = "window" | "browser"})
 
 db.fs.read(path) db.fs.write(path, data) db.fs.append(path, data) db.fs.list(dir) db.fs.exists(path)
 db.fs.stat(path) -> {size, mtime, dir} db.fs.mkdir(path) db.fs.remove(path) db.fs.copy(a, b) db.fs.join(...)
+db.fs.walk(dir, {ext, hidden=false}) -> {{path, size, mtime}}   -- 递归，path 相对 dir（/ 分隔），默认跳过 . 开头的项；后台线程
+db.fs.tar(dir, out, files?, {gzip=false}) -> {count, size}      -- ustar（长路径用 prefix，含目录项）；后台线程
+db.fs.hash(dir, files) -> {[path]=hex}                           -- FNV-1a 64 内容哈希；后台线程
 db.exec(program, args, {cwd, timeout=60, env, input}) -> {code, stdout, stderr}
 db.proc.start(program, args, {cwd, env, onLine, onStderr, onExit}) -> p ; p:send(line) p:write(s) p:close() p:kill() p:alive()
 -- 常驻子进程（exec 权限，宿主本地实现）：stdout/stderr 按行投递，每行一个新协程；最多 8 个；插件停止时先关 stdin 等 0.3 秒，再强杀
 db.open(pathOrUrl)
 db.http.request({url, method="GET", headers, body, timeout=30}) -> {status, headers, body}
+db.http.download(url, path, {headers, timeout=1800}) -> {status, headers, size}   -- 流式写文件（先写 .part 再改名），非 2xx 不留文件
 db.clipboard.get() db.clipboard.set(text)
 db.store.get(key) db.store.set(key, value)   -- JSON 持久化到 dataDir/store.json
 db.json.encode(v) db.json.decode(s)

@@ -110,6 +110,12 @@ enum WinCmd {
     Tray(tray_icon::TrayIconEvent),
     /// 插件请求打开网页：应用内窗口，按 name 复用（关闭只是隐藏，再次打开立即显示）
     OpenWin { url: String, name: String, title: String },
+    /// 网页请求选择文件夹（插件的 db.ui.pickDir）
+    PickDir { id: u64, start: String, title: String },
+    /// 选择结果回到事件循环：path 为 None 表示取消；ok 为假表示平台不支持
+    PickedDir { id: u64, path: Option<String>, ok: bool },
+    /// 网页告诉窗口哪些网站的弹窗留在应用内打开（插件声明可嵌入的网站）
+    InApp(Vec<String>),
 }
 
 /// 关闭窗口时：最小化到托盘 / 退出 / 每次询问
@@ -165,6 +171,15 @@ impl WinCmd {
                 Self::CloseChoice(pref, it.next() == Some("save"))
             }
             _ if s.starts_with("closepref:") => Self::SetClosePref(ClosePref::parse(&s["closepref:".len()..])?),
+            _ if s.starts_with("pickdir:") => {
+                let v: serde_json::Value = serde_json::from_str(&s["pickdir:".len()..]).ok()?;
+                let text = |k: &str| v.get(k).and_then(|x| x.as_str()).unwrap_or("").to_string();
+                Self::PickDir { id: v.get("id")?.as_u64()?, start: text("start"), title: text("title") }
+            }
+            _ if s.starts_with("inapp:") => {
+                let v: Vec<String> = serde_json::from_str(&s["inapp:".len()..]).ok()?;
+                Self::InApp(v.iter().filter_map(|o| origin_of(o)).collect())
+            }
             _ if s.starts_with("openwin:") => {
                 let v: serde_json::Value = serde_json::from_str(&s["openwin:".len()..]).ok()?;
                 let url = v.get("url")?.as_str()?.to_string();
@@ -246,14 +261,15 @@ fn run_window(target: Result<String, String>, data_dir: &std::path::Path) -> Res
 
     let proxy = event_loop.create_proxy();
     let mut ctx = WebContext::new(Some(data_dir.join("webview")));
+    // 插件嵌入网站的弹窗（如 window.open 打开的调试窗口）留在应用内：和面板共用登录
+    let inapp: InAppOrigins = Default::default();
+    let popup_proxy = event_loop.create_proxy();
+    let pick_proxy = event_loop.create_proxy();
     // 托盘：Linux 缺少 AppIndicator 库、或创建失败时，关闭窗口就直接退出
     let tray_ok = tray_supported();
     let builder = WebViewBuilder::new_with_web_context(&mut ctx)
         .with_background_color((15, 17, 21, 255))
-        .with_new_window_req_handler(|url, _| {
-            open_external(&url);
-            NewWindowResponse::Deny
-        });
+        .with_new_window_req_handler(popup_handler(inapp.clone(), popup_proxy.clone()));
     let builder = if custom {
         builder
             .with_initialization_script(format!(
@@ -271,7 +287,7 @@ fn run_window(target: Result<String, String>, data_dir: &std::path::Path) -> Res
     #[cfg(windows)]
     let builder = {
         use wry::WebViewBuilderExtWindows;
-        builder.with_browser_accelerator_keys(false)
+        builder.with_browser_accelerator_keys(false).with_additional_browser_args(BROWSER_ARGS)
     };
     let builder = match &target {
         Ok(url) => builder.with_url(url.as_str()),
@@ -333,6 +349,30 @@ fn run_window(target: Result<String, String>, data_dir: &std::path::Path) -> Res
                     w.set_visible(false);
                 }
             }
+            Event::UserEvent(WinCmd::PickDir { id, start, title }) => {
+                #[cfg(windows)]
+                let owner = {
+                    use tao::platform::windows::WindowExtWindows;
+                    window.hwnd()
+                };
+                #[cfg(not(windows))]
+                let owner = 0isize;
+                let proxy = pick_proxy.clone();
+                std::thread::spawn(move || {
+                    let (path, ok) = match pick_folder(owner, &start, &title) {
+                        Ok(p) => (p, true),
+                        Err(()) => (None, false),
+                    };
+                    let _ = proxy.send_event(WinCmd::PickedDir { id, path, ok });
+                });
+            }
+            Event::UserEvent(WinCmd::PickedDir { id, path, ok }) => {
+                let path = serde_json::to_string(&path).unwrap_or_else(|_| "null".into());
+                let _ = webview.evaluate_script(&format!("window.__dbPickedDir&&window.__dbPickedDir({id},{path},{ok})"));
+            }
+            Event::UserEvent(WinCmd::InApp(list)) => {
+                *inapp.lock().unwrap() = list.into_iter().collect();
+            }
             Event::UserEvent(WinCmd::OpenWin { url, name, title }) => {
                 if let Some((w, wv, cur)) = subs.get_mut(&name) {
                     if *cur != url {
@@ -344,7 +384,7 @@ fn run_window(target: Result<String, String>, data_dir: &std::path::Path) -> Res
                     }
                     show(w);
                 } else {
-                    match open_sub_window(target, &mut ctx, &url, &title) {
+                    match open_sub_window(target, &mut ctx, &url, &title, popup_handler(inapp.clone(), popup_proxy.clone())) {
                         Ok((w, wv)) => {
                             subs.insert(name, (w, wv, url));
                         }
@@ -439,12 +479,50 @@ fn main_close(
     }
 }
 
+type InAppOrigins = std::sync::Arc<std::sync::Mutex<std::collections::HashSet<String>>>;
+
+/// WebView2 启动参数（所有窗口必须相同）：wry 的默认值，再关掉第三方存储分区——
+/// 否则嵌在面板里的网站和单独窗口里的同一网站各存一份登录，打开窗口就要重新登录
+#[cfg(windows)]
+const BROWSER_ARGS: &str = "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,ThirdPartyStoragePartitioning,PartitionedCookies";
+
+/// `scheme://host[:port]`（小写）；不是 http(s) 返回 None
+fn origin_of(url: &str) -> Option<String> {
+    let (scheme, rest) = url.trim().split_once("://")?;
+    let scheme = scheme.to_ascii_lowercase();
+    if scheme != "http" && scheme != "https" {
+        return None;
+    }
+    let host = rest.split(['/', '?', '#']).next()?.to_ascii_lowercase();
+    if host.is_empty() || host.contains('@') {
+        return None;
+    }
+    Some(format!("{scheme}://{host}"))
+}
+
+/// window.open / target=_blank：插件声明的网站在应用内窗口打开（按地址复用），其他交给系统浏览器
+fn popup_handler(
+    inapp: InAppOrigins,
+    proxy: tao::event_loop::EventLoopProxy<WinCmd>,
+) -> impl Fn(String, wry::NewWindowFeatures) -> NewWindowResponse + 'static {
+    move |url, _| {
+        let keep = origin_of(&url).is_some_and(|o| inapp.lock().unwrap().contains(&o));
+        if keep {
+            let _ = proxy.send_event(WinCmd::OpenWin { name: format!("popup:{url}"), url, title: String::new() });
+        } else {
+            open_external(&url);
+        }
+        NewWindowResponse::Deny
+    }
+}
+
 /// 插件打开的应用内窗口：系统标题栏，和主窗口共用 WebView 存储（登录状态等），没有 IPC
 fn open_sub_window(
     target: &tao::event_loop::EventLoopWindowTarget<WinCmd>,
     ctx: &mut WebContext,
     url: &str,
     title: &str,
+    on_popup: impl Fn(String, wry::NewWindowFeatures) -> NewWindowResponse + 'static,
 ) -> Result<(tao::window::Window, wry::WebView), String> {
     let window = WindowBuilder::new()
         .with_title(if title.is_empty() { "DroidBridge" } else { title })
@@ -456,10 +534,12 @@ fn open_sub_window(
     let builder = WebViewBuilder::new_with_web_context(ctx)
         .with_background_color((15, 17, 21, 255))
         .with_url(url)
-        .with_new_window_req_handler(|url, _| {
-            open_external(&url);
-            NewWindowResponse::Deny
-        });
+        .with_new_window_req_handler(on_popup);
+    #[cfg(windows)]
+    let builder = {
+        use wry::WebViewBuilderExtWindows;
+        builder.with_additional_browser_args(BROWSER_ARGS)
+    };
     #[cfg(target_os = "linux")]
     let webview = {
         use tao::platform::unix::WindowExtUnix;
@@ -498,6 +578,69 @@ fn mac_menu() -> Option<muda::Menu> {
     let menu = Menu::with_items(&[&app, &edit, &win]).ok()?;
     menu.init_for_nsapp();
     Some(menu)
+}
+
+/// 系统文件夹选择框（阻塞，放在后台线程调用）。Ok(None) 为取消，Err 为平台不支持
+#[cfg(windows)]
+fn pick_folder(owner: isize, start: &str, title: &str) -> Result<Option<String>, ()> {
+    use windows::core::HSTRING;
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::System::Com::{CoCreateInstance, CoInitializeEx, CoTaskMemFree, CoUninitialize, CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED, IBindCtx};
+    use windows::Win32::UI::Shell::{FileOpenDialog, IFileOpenDialog, IShellItem, SHCreateItemFromParsingName, FOS_FORCEFILESYSTEM, FOS_PICKFOLDERS, SIGDN_FILESYSPATH};
+    unsafe {
+        let inited = CoInitializeEx(None, COINIT_APARTMENTTHREADED).is_ok();
+        let r = (|| -> Result<Option<String>, ()> {
+            let dlg: IFileOpenDialog = CoCreateInstance(&FileOpenDialog, None, CLSCTX_INPROC_SERVER).map_err(|_| ())?;
+            let opts = dlg.GetOptions().map_err(|_| ())?;
+            dlg.SetOptions(opts | FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM).map_err(|_| ())?;
+            if !title.is_empty() {
+                let _ = dlg.SetTitle(&HSTRING::from(title));
+            }
+            let start = start.replace('/', "\\");
+            if !start.is_empty() {
+                if let Ok(item) = SHCreateItemFromParsingName::<_, Option<&IBindCtx>, IShellItem>(&HSTRING::from(start.as_str()), None) {
+                    let _ = dlg.SetFolder(&item);
+                }
+            }
+            if dlg.Show(Some(HWND(owner as *mut core::ffi::c_void))).is_err() {
+                return Ok(None);
+            }
+            let item = dlg.GetResult().map_err(|_| ())?;
+            let name = item.GetDisplayName(SIGDN_FILESYSPATH).map_err(|_| ())?;
+            let path = name.to_string().ok();
+            CoTaskMemFree(Some(name.0 as *const core::ffi::c_void));
+            Ok(path)
+        })();
+        if inited {
+            CoUninitialize();
+        }
+        r
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn pick_folder(_owner: isize, start: &str, title: &str) -> Result<Option<String>, ()> {
+    let esc = |s: &str| s.replace('\\', "\\\\").replace('"', "\\\"");
+    let mut script = format!("POSIX path of (choose folder with prompt \"{}\"", esc(title));
+    if !start.is_empty() {
+        script.push_str(&format!(" default location (POSIX file \"{}\")", esc(start)));
+    }
+    script.push(')');
+    let out = std::process::Command::new("osascript").args(["-e", &script]).output().map_err(|_| ())?;
+    let p = String::from_utf8_lossy(&out.stdout).trim().trim_end_matches('/').to_string();
+    Ok(if out.status.success() && !p.is_empty() { Some(p) } else { None })
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn pick_folder(_owner: isize, start: &str, title: &str) -> Result<Option<String>, ()> {
+    let mut cmd = std::process::Command::new("zenity");
+    cmd.args(["--file-selection", "--directory", "--title", title]);
+    if !start.is_empty() {
+        cmd.arg(format!("--filename={}/", start.trim_end_matches('/')));
+    }
+    let out = cmd.output().map_err(|_| ())?;
+    let p = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    Ok(if out.status.success() && !p.is_empty() { Some(p) } else { None })
 }
 
 fn open_external(url: &str) {
@@ -627,5 +770,15 @@ mod tests {
         assert!(WinCmd::parse(r#"openwin:{"url":"file:///c:/x"}"#).is_none());
         assert!(WinCmd::parse(r#"openwin:{"url":"javascript:alert(1)"}"#).is_none());
         assert!(WinCmd::parse("openwin:not json").is_none());
+        match WinCmd::parse(r#"pickdir:{"id":3,"start":"D:/x","title":"T"}"#) {
+            Some(WinCmd::PickDir { id, start, title }) => assert_eq!((id, start.as_str(), title.as_str()), (3, "D:/x", "T")),
+            other => panic!("{other:?}"),
+        }
+        assert!(WinCmd::parse(r#"pickdir:{"start":"D:/x"}"#).is_none());
+        // 应用内打开的网站：只留 http(s) origin
+        match WinCmd::parse(r#"inapp:["http://Host:5173/a?b","file:///x","https://h"]"#) {
+            Some(WinCmd::InApp(v)) => assert_eq!(v, vec!["http://host:5173".to_string(), "https://h".to_string()]),
+            other => panic!("{other:?}"),
+        }
     }
 }

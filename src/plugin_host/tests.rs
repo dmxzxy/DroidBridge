@@ -651,3 +651,97 @@ db.log("missing:" .. tostring(ok) .. ":" .. tostring(e and e:find("无法启动"
     let logs = logs_of(&h.out.borrow());
     assert!(logs.iter().any(|l| l == "missing:false:true"), "{logs:?}");
 }
+
+#[test]
+fn fs_walk_and_tar() {
+    let long = format!("{}/{}/deep.lua", "d".repeat(60), "e".repeat(60));
+    let main = format!(
+        r#"
+db.fs.write("src/a.lua", "A")
+db.fs.write("src/sys/b.lua", "BB")
+db.fs.write("src/sys/skip.txt", "x")
+db.fs.write("src/.svn/c.lua", "x")
+db.fs.write("src/{long}", "C")
+db.spawn(function()
+  local all = db.fs.walk("src", {{ ext = {{ "lua" }} }})
+  table.sort(all, function(x, y) return x.path < y.path end)
+  local names = {{}}
+  for _, f in ipairs(all) do names[#names + 1] = f.path .. ":" .. f.size end
+  db.log("walk:" .. table.concat(names, ","))
+  local r = db.fs.tar("src", "out.tar", {{ "a.lua", "sys/b.lua", "{long}" }})
+  db.log("tar:" .. r.count .. ":" .. r.size)
+  local g = db.fs.tar("src", "out.tgz", {{ "a.lua", "sys/b.lua" }}, {{ gzip = true }})
+  local hs = db.fs.hash("src", {{ "a.lua", "missing.lua" }})
+  db.log("gz:" .. g.count .. ":" .. tostring(hs["a.lua"]) .. ":" .. tostring(hs["missing.lua"]))
+end)
+"#
+    );
+    let mut h = Harness::new("walktar", &main, HostConfig::default());
+    let ok = h.wait_msgs(10.0, |out| logs_of(out).iter().any(|l| l.starts_with("gz:")));
+    let logs = logs_of(&h.out.borrow());
+    assert!(ok, "{logs:?}");
+    assert!(logs.contains(&format!("walk:a.lua:1,{long}:1,sys/b.lua:2")), "{logs:?}");
+    assert!(logs.contains(&"tar:3:4".to_string()), "{logs:?}");
+    assert!(logs.contains(&"gz:2:af63fc4c860222ec:nil".to_string()), "{logs:?}");
+    let gz = std::fs::read(h.dir.join("data/out.tgz")).unwrap();
+    let mut raw = Vec::new();
+    std::io::Read::read_to_end(&mut flate2::read::GzDecoder::new(&gz[..]), &mut raw).unwrap();
+    assert_eq!(&raw[512..517], b"a.lua");
+
+    let data = std::fs::read(h.dir.join("data/out.tar")).unwrap();
+    let mut names = Vec::new();
+    let mut off = 0;
+    while off + 512 <= data.len() && data[off] != 0 {
+        let hd = &data[off..off + 512];
+        let sum: u32 = hd.iter().enumerate().map(|(i, &c)| if (148..156).contains(&i) { 32 } else { c as u32 }).sum();
+        let stored = u32::from_str_radix(std::str::from_utf8(&hd[148..154]).unwrap(), 8).unwrap();
+        assert_eq!(sum, stored);
+        let cstr = |b: &[u8]| String::from_utf8_lossy(&b[..b.iter().position(|&c| c == 0).unwrap_or(b.len())]).to_string();
+        let (prefix, name) = (cstr(&hd[345..500]), cstr(&hd[..100]));
+        names.push(if prefix.is_empty() { name } else { format!("{prefix}/{name}") });
+        let size = u64::from_str_radix(cstr(&hd[124..136]).trim(), 8).unwrap() as usize;
+        off += 512 + size.div_ceil(512) * 512;
+    }
+    assert_eq!(names, vec!["d".repeat(60), format!("{}/{}", "d".repeat(60), "e".repeat(60)), "sys".into(), "a.lua".into(), long.clone(), "sys/b.lua".into()]);
+}
+
+#[test]
+fn http_download_streams_to_file() {
+    use std::io::{Read, Write};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let body = vec![7u8; 3 * 1024 * 1024 + 5];
+    let served = body.clone();
+    std::thread::spawn(move || {
+        for (i, s) in listener.incoming().take(2).enumerate() {
+            let mut s = s.unwrap();
+            let mut buf = [0u8; 4096];
+            let n = s.read(&mut buf).unwrap();
+            let req = String::from_utf8_lossy(&buf[..n]).to_lowercase();
+            if i == 0 {
+                assert!(req.contains("private-token: abc"), "{req}");
+                let _ = write!(s, "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", served.len());
+                let _ = s.write_all(&served);
+            } else {
+                let _ = s.write_all(b"HTTP/1.1 404 Not Found\r\nContent-Length: 2\r\nConnection: close\r\n\r\nno");
+            }
+        }
+    });
+    let main = format!(
+        r#"
+db.spawn(function()
+  local r = db.http.download("http://127.0.0.1:{port}/a.apk", "dl/a.apk", {{ headers = {{ ["PRIVATE-TOKEN"] = "abc" }} }})
+  db.log("ok:" .. r.status .. ":" .. r.size)
+  local r2 = db.http.download("http://127.0.0.1:{port}/b.apk", "dl/b.apk")
+  db.log("miss:" .. r2.status .. ":" .. tostring(db.fs.exists("dl/b.apk")))
+end)
+"#
+    );
+    let mut h = Harness::new("download", &main, HostConfig::default());
+    let ok = h.wait_msgs(15.0, |out| logs_of(out).iter().any(|l| l.starts_with("miss:")));
+    let logs = logs_of(&h.out.borrow());
+    assert!(ok, "{logs:?}");
+    assert!(logs.contains(&format!("ok:200:{}", body.len())), "{logs:?}");
+    assert!(logs.contains(&"miss:404:false".to_string()), "{logs:?}");
+    assert_eq!(std::fs::read(h.dir.join("data/dl/a.apk")).unwrap(), body);
+}

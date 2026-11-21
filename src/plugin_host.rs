@@ -378,7 +378,7 @@ impl Driver {
                 self.sleeping.push((Instant::now() + Duration::from_secs_f64(sec), tid));
                 self.tasks.insert(tid, task);
             }
-            "exec" | "open" | "http" | "clip" => match self.start_bg(&req, &k) {
+            "exec" | "open" | "http" | "download" | "walk" | "tar" | "hash" | "clip" => match self.start_bg(&req, &k) {
                 Ok(bg) => {
                     self.bgs.insert(bg, tid);
                     self.tasks.insert(tid, task);
@@ -725,6 +725,43 @@ impl Driver {
                 let timeout = Duration::from_secs_f64(opt_f64(req, "timeout").unwrap_or(30.0).clamp(0.1, 600.0));
                 std::thread::spawn(move || {
                     let r = local::http(&url, &method, &headers, body.as_deref(), timeout);
+                    let _ = tx.send(Msg::Bg { id, ok: r });
+                });
+            }
+            "download" => {
+                let url: String = req.get("url").map_err(|e| err_text(&e))?;
+                let dst = local::resolve(&ctl, &req.get::<String>("path").map_err(|e| err_text(&e))?, true)?;
+                let headers = str_pairs(req.get::<Table>("headers").ok().as_ref());
+                let timeout = Duration::from_secs_f64(opt_f64(req, "timeout").unwrap_or(1800.0).clamp(1.0, 7200.0));
+                std::thread::spawn(move || {
+                    let r = local::download(&url, &headers, &dst, timeout);
+                    let _ = tx.send(Msg::Bg { id, ok: r });
+                });
+            }
+            "walk" => {
+                let dir = local::resolve(&ctl, &req.get::<String>("dir").map_err(|e| err_text(&e))?, false)?;
+                let ext = str_list(req.get::<Table>("ext").ok().as_ref());
+                let hidden = req.get::<bool>("hidden").unwrap_or(false);
+                std::thread::spawn(move || {
+                    let r = local::walk(&dir, &ext, hidden);
+                    let _ = tx.send(Msg::Bg { id, ok: r });
+                });
+            }
+            "tar" => {
+                let dir = local::resolve(&ctl, &req.get::<String>("dir").map_err(|e| err_text(&e))?, false)?;
+                let out = local::resolve(&ctl, &req.get::<String>("out").map_err(|e| err_text(&e))?, true)?;
+                let files = req.get::<Table>("files").ok().map(|t| str_list(Some(&t)));
+                let gzip = req.get::<bool>("gzip").unwrap_or(false);
+                std::thread::spawn(move || {
+                    let r = local::tar(&dir, files, &out, gzip);
+                    let _ = tx.send(Msg::Bg { id, ok: r });
+                });
+            }
+            "hash" => {
+                let dir = local::resolve(&ctl, &req.get::<String>("dir").map_err(|e| err_text(&e))?, false)?;
+                let files = str_list(req.get::<Table>("files").ok().as_ref());
+                std::thread::spawn(move || {
+                    let r = local::hash(&dir, &files);
                     let _ = tx.send(Msg::Bg { id, ok: r });
                 });
             }

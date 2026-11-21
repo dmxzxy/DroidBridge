@@ -1204,7 +1204,7 @@ async fn foreground_of(st: &Arc<AppState>, id: &str) -> String {
             }
             None => String::new(),
         },
-        None => agent::foreground(st, id).await,
+        None => agent::foreground(st, id).await.split('/').next().unwrap_or("").to_string(),
     }
 }
 

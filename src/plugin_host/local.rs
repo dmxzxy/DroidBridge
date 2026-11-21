@@ -411,13 +411,9 @@ fn run_text(prog: &str, args: &[String], input: Option<&str>) -> Result<String, 
 
 // ---------------------------------------------------------------- HTTP
 
-pub fn http(
-    url: &str,
-    method: &str,
-    headers: &[(String, String)],
-    body: Option<&str>,
-    timeout: Duration,
-) -> Result<J, String> {
+type Resp = ureq::http::Response<ureq::Body>;
+
+fn send(url: &str, method: &str, headers: &[(String, String)], body: Option<&str>, timeout: Duration) -> Result<Resp, String> {
     let cfg = ureq::Agent::config_builder()
         .timeout_global(Some(timeout))
         .http_status_as_error(false)
@@ -426,24 +422,22 @@ pub fn http(
     let method = method.to_ascii_uppercase();
     let resp = match method.as_str() {
         "POST" | "PUT" | "PATCH" => {
-            let req = match method.as_str() {
+            let mut req = match method.as_str() {
                 "POST" => agent.post(url),
                 "PUT" => agent.put(url),
                 _ => agent.patch(url),
             };
-            let mut req = req;
             for (k, v) in headers {
                 req = req.header(k.as_str(), v.as_str());
             }
             req.send(body.unwrap_or(""))
         }
         "GET" | "DELETE" | "HEAD" => {
-            let req = match method.as_str() {
+            let mut req = match method.as_str() {
                 "GET" => agent.get(url),
                 "DELETE" => agent.delete(url),
                 _ => agent.head(url),
             };
-            let mut req = req;
             for (k, v) in headers {
                 req = req.header(k.as_str(), v.as_str());
             }
@@ -451,14 +445,29 @@ pub fn http(
         }
         m => return Err(format!("不支持的 HTTP 方法: {m}")),
     };
-    let mut resp = resp.map_err(|e| format!("请求失败: {e}"))?;
-    let status = resp.status().as_u16();
+    resp.map_err(|e| format!("请求失败: {e}"))
+}
+
+fn header_map(resp: &Resp) -> Map<String, J> {
     let mut hs = Map::new();
     for (k, v) in resp.headers() {
         if let Ok(s) = v.to_str() {
             hs.insert(k.as_str().to_string(), J::String(s.to_string()));
         }
     }
+    hs
+}
+
+pub fn http(
+    url: &str,
+    method: &str,
+    headers: &[(String, String)],
+    body: Option<&str>,
+    timeout: Duration,
+) -> Result<J, String> {
+    let mut resp = send(url, method, headers, body, timeout)?;
+    let status = resp.status().as_u16();
+    let hs = header_map(&resp);
     let text = resp
         .body_mut()
         .with_config()
@@ -466,4 +475,191 @@ pub fn http(
         .read_to_string()
         .map_err(|e| format!("读取响应失败: {e}"))?;
     Ok(json!({"status": status, "headers": hs, "body": text}))
+}
+
+/// GET 到文件（流式写入，不限大小）；非 2xx 时不留文件
+pub fn download(url: &str, headers: &[(String, String)], dst: &Path, timeout: Duration) -> Result<J, String> {
+    let mut resp = send(url, "GET", headers, None, timeout)?;
+    let status = resp.status().as_u16();
+    let hs = header_map(&resp);
+    if !(200..300).contains(&status) {
+        return Ok(json!({"status": status, "headers": hs, "size": 0}));
+    }
+    if let Some(parent) = dst.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let mut part = dst.as_os_str().to_owned();
+    part.push(".part");
+    let part = PathBuf::from(part);
+    let written = std::fs::File::create(&part)
+        .map_err(|e| format!("创建文件失败 {}: {e}", part.display()))
+        .and_then(|f| {
+            let mut w = std::io::BufWriter::new(f);
+            let n = std::io::copy(&mut resp.body_mut().as_reader(), &mut w).map_err(|e| format!("下载失败: {e}"))?;
+            w.flush().map_err(|e| format!("写入失败: {e}"))?;
+            Ok(n)
+        });
+    let size = match written {
+        Ok(n) => n,
+        Err(e) => {
+            let _ = std::fs::remove_file(&part);
+            return Err(e);
+        }
+    };
+    std::fs::rename(&part, dst).map_err(|e| format!("保存失败 {}: {e}", dst.display()))?;
+    Ok(json!({"status": status, "headers": hs, "size": size}))
+}
+
+// ---------------------------------------------------------------- 目录遍历与打包
+
+fn mtime_of(meta: &std::fs::Metadata) -> f64 {
+    meta.modified()
+        .ok()
+        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+        .map(|d| d.as_millis() as f64 / 1000.0)
+        .unwrap_or(0.0)
+}
+
+/// 递归列出 root 下的文件：{path（相对，/ 分隔）, size, mtime}；ext 为空表示全部，hidden 为假时跳过 . 开头的文件和目录
+pub fn walk(root: &Path, ext: &[String], hidden: bool) -> Result<J, String> {
+    let ext: Vec<String> = ext.iter().map(|e| e.trim_start_matches('.').to_ascii_lowercase()).collect();
+    let mut out = Vec::new();
+    let mut stack = vec![(root.to_path_buf(), String::new())];
+    while let Some((dir, rel)) = stack.pop() {
+        let rd = std::fs::read_dir(&dir).map_err(|e| format!("读取目录失败 {}: {e}", dir.display()))?;
+        for ent in rd.flatten() {
+            let name = ent.file_name().to_string_lossy().to_string();
+            if !hidden && name.starts_with('.') {
+                continue;
+            }
+            let path = if rel.is_empty() { name.clone() } else { format!("{rel}/{name}") };
+            let Ok(meta) = ent.metadata() else { continue };
+            if meta.is_dir() {
+                stack.push((ent.path(), path));
+                continue;
+            }
+            if !ext.is_empty() {
+                let e = Path::new(&name).extension().map(|e| e.to_string_lossy().to_ascii_lowercase()).unwrap_or_default();
+                if !ext.contains(&e) {
+                    continue;
+                }
+            }
+            out.push(json!({"path": path, "size": meta.len(), "mtime": mtime_of(&meta)}));
+        }
+    }
+    Ok(J::Array(out))
+}
+
+fn tar_octal(field: &mut [u8], v: u64) {
+    let s = format!("{:0w$o}", v, w = field.len() - 1);
+    field[..s.len()].copy_from_slice(s.as_bytes());
+}
+
+/// ustar 头；路径超过 100 字节时拆到 prefix
+fn tar_header(path: &str, size: u64, mtime: u64, dir: bool) -> Result<[u8; 512], String> {
+    let b = path.as_bytes();
+    let (prefix, name) = if b.len() <= 100 {
+        (&b[..0], b)
+    } else {
+        match (0..b.len()).rev().find(|&i| b[i] == b'/' && i <= 155 && b.len() - i - 1 <= 100) {
+            Some(i) => (&b[..i], &b[i + 1..]),
+            None => return Err(format!("路径太长，无法打包：{path}")),
+        }
+    };
+    let mut h = [0u8; 512];
+    h[..name.len()].copy_from_slice(name);
+    tar_octal(&mut h[100..108], if dir { 0o755 } else { 0o644 });
+    tar_octal(&mut h[108..116], 0);
+    tar_octal(&mut h[116..124], 0);
+    tar_octal(&mut h[124..136], size);
+    tar_octal(&mut h[136..148], mtime);
+    h[156] = if dir { b'5' } else { b'0' };
+    h[257..263].copy_from_slice(b"ustar\0");
+    h[263..265].copy_from_slice(b"00");
+    h[345..345 + prefix.len()].copy_from_slice(prefix);
+    h[148..156].fill(b' ');
+    let sum: u32 = h.iter().map(|&c| c as u32).sum();
+    h[148..156].copy_from_slice(format!("{sum:06o}\0 ").as_bytes());
+    Ok(h)
+}
+
+/// 文件内容的 FNV-1a 64 位哈希（16 位十六进制）；不存在的文件跳过
+pub fn hash(root: &Path, files: &[String]) -> Result<J, String> {
+    let mut out = Map::new();
+    for rel in files {
+        check_rel(rel)?;
+        let Ok(data) = std::fs::read(root.join(rel)) else { continue };
+        let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+        for b in &data {
+            h ^= *b as u64;
+            h = h.wrapping_mul(0x0100_0000_01b3);
+        }
+        out.insert(rel.clone(), J::String(format!("{h:016x}")));
+    }
+    Ok(J::Object(out))
+}
+
+fn check_rel(f: &str) -> Result<(), String> {
+    if f.is_empty() || f.starts_with('/') || f.contains('\\') || f.split('/').any(|c| c == ".." || c.is_empty()) {
+        return Err(format!("路径不合法：{f}"));
+    }
+    Ok(())
+}
+
+/// 把 root 下的文件打成 tar（含上级目录项，gzip 时为 .tar.gz）；files 为 None 时打包全部
+pub fn tar(root: &Path, files: Option<Vec<String>>, out: &Path, gzip: bool) -> Result<J, String> {
+    let mut files = match files {
+        Some(f) => f,
+        None => walk(root, &[], false)?
+            .as_array()
+            .map(|a| a.iter().filter_map(|v| v["path"].as_str().map(String::from)).collect())
+            .unwrap_or_default(),
+    };
+    for f in &files {
+        check_rel(f)?;
+    }
+    files.sort();
+    files.dedup();
+    let mut dirs: Vec<&str> = files.iter().flat_map(|f| f.match_indices('/').map(move |(i, _)| &f[..i])).collect();
+    dirs.sort();
+    dirs.dedup();
+
+    if let Some(parent) = out.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let f = std::fs::File::create(out).map_err(|e| format!("创建文件失败 {}: {e}", out.display()))?;
+    let io = |e: std::io::Error| format!("写入失败 {}: {e}", out.display());
+    let file = std::io::BufWriter::new(f);
+    let total = if gzip {
+        let mut gz = flate2::write::GzEncoder::new(file, flate2::Compression::fast());
+        let n = write_tar(&mut gz, root, &dirs, &files).map_err(io)?;
+        gz.finish().and_then(|mut f| f.flush()).map_err(io)?;
+        n
+    } else {
+        let mut file = file;
+        let n = write_tar(&mut file, root, &dirs, &files).map_err(io)?;
+        file.flush().map_err(io)?;
+        n
+    };
+    Ok(json!({"count": files.len(), "size": total}))
+}
+
+fn write_tar(w: &mut impl Write, root: &Path, dirs: &[&str], files: &[String]) -> std::io::Result<u64> {
+    let bad = |e: String| std::io::Error::other(e);
+    let now = std::time::SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+    for d in dirs {
+        w.write_all(&tar_header(d, 0, now, true).map_err(bad)?)?;
+    }
+    let mut total = 0u64;
+    for rel in files {
+        let src = root.join(rel);
+        let data = std::fs::read(&src).map_err(|e| bad(format!("读取失败 {}: {e}", src.display())))?;
+        let mtime = std::fs::metadata(&src).map(|m| mtime_of(&m) as u64).unwrap_or(now);
+        w.write_all(&tar_header(rel, data.len() as u64, mtime, false).map_err(bad)?)?;
+        w.write_all(&data)?;
+        w.write_all(&vec![0u8; (512 - data.len() % 512) % 512])?;
+        total += data.len() as u64;
+    }
+    w.write_all(&[0u8; 1024])?;
+    Ok(total)
 }

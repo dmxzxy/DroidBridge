@@ -693,11 +693,12 @@ checksum = "d8b14ccef22fc6f5a8f4d7d768562a182c04ce9a3b3157b91390b52ddfdf1a76"
 
 [[package]]
 name = "droidbridge"
-version = "0.9.3"
+version = "0.9.4"
 dependencies = [
  "axum",
  "axum-server",
  "chrono",
+ "flate2",
  "futures-util",
  "if-addrs",
  "image",
@@ -720,6 +721,7 @@ dependencies = [
  "tracing-subscriber",
  "tray-icon",
  "ureq",
+ "windows",
  "windows-sys 0.61.2",
  "winresource",
  "wry",

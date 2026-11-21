@@ -130,9 +130,12 @@ function pluginConnect() {
   ws.onerror = () => {};
 }
 
+// 贡献变化：缓存只标记过期（重新拉取前仍用旧数据，已打开的插件面板不会因一时拿不到数据被关掉）
+let pluginContribGen = 0;
 function pluginInvalidate() {
-  pluginContribMaps.clear();
+  for (const c of pluginContribMaps.values()) c.at = 0;
   pluginFetches.clear();
+  pluginContribGen++;
   pluginList = null;
 }
 
@@ -162,14 +165,16 @@ function pluginContrib(devId, force) {
   if (pluginFetches.has(key)) return pluginFetches.get(key);
   // 一律问本机：设备用 <电脑id>/<serial> 标识，带 ?peer= 的转发已不再需要
   const url = '/api/plugins/contrib' + (key ? '?serial=' + encodeURIComponent(key) : '');
+  const gen = pluginContribGen;
   const p = api(url).then((d) => {
+    if (gen !== pluginContribGen) return pluginContrib(key);
     pluginFetches.delete(key);
     const data = d || {};
     pluginContribMaps.set(key, { at: Date.now(), data });
     if (!key) pluginApplyHostContrib(data);
     else pluginOnSerialContrib(key);
     return data;
-  }, (e) => { pluginFetches.delete(key); throw e; });
+  }, (e) => { if (gen === pluginContribGen) pluginFetches.delete(key); throw e; });
   pluginFetches.set(key, p);
   return p;
 }
@@ -737,12 +742,23 @@ function pluginOriginOf(url) {
   try { const u = new URL(url); return /^https?:$/.test(u.protocol) ? u.protocol + '//' + u.host : ''; } catch { return ''; }
 }
 
+// 桌面版：嵌入网站自己弹出的窗口（window.open）留在应用内打开，和面板共用登录状态
+const pluginInAppOrigins = new Set();
+function pluginInAppSync(origins) {
+  let changed = false;
+  for (const o of origins) if (!pluginInAppOrigins.has(o)) { pluginInAppOrigins.add(o); changed = true; }
+  if (changed && window.ipc && window.__DB_CHROME) {
+    try { window.ipc.postMessage('inapp:' + JSON.stringify([...pluginInAppOrigins])); } catch {}
+  }
+}
+
 class PluginExtView {
   constructor(def, devId) {
     this.def = def; this.serial = devId || '';
     this.plugin = def.plugin; this.id = def.id;
     this.title = def.title || def.id;
     this.allowed = new Set((def.embed || []).map(pluginOriginOf).filter(Boolean));
+    pluginInAppSync(this.allowed);
     this.wait = h('div', { class: 'plug-ext-wait', html: svg('globe') });
     this.el = h('div', { class: 'plug-panel plug-webpanel' }, this.wait);
     this.frame = null; this.url = ''; this.timer = 0; this.dead = false;
@@ -1231,12 +1247,45 @@ function pluginPushConsole(pluginId, entry) {
 }
 
 // ---------------- 插件发起的对话框 ----------------
+const pluginDirWaits = new Map();
+let pluginDirSeq = 0;
+/** 桌面版且连的是本机（插件就跑在这台电脑上）才用系统文件夹对话框 */
+function pluginNativeDir() {
+  return !!(window.ipc && window.__DB_CHROME) && ['127.0.0.1', 'localhost', '[::1]'].includes(location.hostname);
+}
+/** 结果：路径 / null（取消）/ undefined（不支持） */
+function pluginPickDirNative(start, title) {
+  return new Promise((res) => {
+    const id = ++pluginDirSeq;
+    pluginDirWaits.set(id, res);
+    try { window.ipc.postMessage('pickdir:' + JSON.stringify({ id, start, title })); } catch { pluginDirWaits.delete(id); res(undefined); }
+  });
+}
+window.__dbPickedDir = (id, path, ok) => {
+  const res = pluginDirWaits.get(id);
+  if (!res) return;
+  pluginDirWaits.delete(id);
+  res(ok ? (path || null) : undefined);
+};
 function pluginAnswerDialog(id, value) {
   api('/api/plugins/dialog', { method: 'POST', body: JSON.stringify({ id, value }) }).catch(() => {});
 }
 
 function pluginShowDialog(m) {
   if (!m || !m.id) return;
+  // 选文件夹：本机桌面版用系统对话框，其他情况（浏览器、平台不支持）退回输入路径
+  if (pluginTxt(m.kind) === 'dir') {
+    const fallback = () => pluginShowDialog(Object.assign({}, m, { kind: 'prompt', message: m.message || t('文件夹路径') }));
+    if (!pluginNativeDir()) return fallback();
+    pluginOpenDialogs.set(String(m.id), () => pluginOpenDialogs.delete(String(m.id)));
+    pluginPickDirNative(pluginTxt(m.default), pluginTxt(m.title)).then((v) => {
+      if (!pluginOpenDialogs.has(String(m.id))) return;
+      if (v === undefined) return fallback();
+      pluginOpenDialogs.delete(String(m.id));
+      pluginAnswerDialog(m.id, v);
+    });
+    return;
+  }
   const kind = pluginTxt(m.kind);
   const title = pluginTxt(m.title || (m.plugin || ''));
   let closed = false;

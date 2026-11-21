@@ -134,7 +134,7 @@ end)
 | `fs.read` | 读这台电脑上的任意路径 |
 | `fs` | 读写这台电脑上的任意路径（含 `fs.read`） |
 | `exec` | `db.exec` 运行本机程序、`db.open` 打开文件/网址 |
-| `net` | `db.http.request` |
+| `net` | `db.http.request` / `db.http.download` |
 | `clipboard` | `db.clipboard.get` / `set` |
 | `media` | `db.media.save` 存入相册 |
 | `mcp` | `db.mcp.tool` 注册 AI 工具 |
@@ -326,6 +326,7 @@ local r = db.ui.form("新建配置", {
   { name = "mode", label = "模式", type = "select", options = { "debug", "release" } },
 })                                                       -- 取消返回 nil
 local path = db.ui.pickFile({ accept = ".apk" })          -- 取消返回 nil
+local dir = db.ui.pickDir({ title = "Lua 目录", default = "D:/proj" })  -- 选文件夹，取消返回 nil
 
 local p = db.ui.progress("正在安装测试包")
 p:set(0.3, "拷贝中…")
@@ -345,6 +346,8 @@ db.ui.openUrl("http://example.com/tool?id=1", { name = "tool-1", title = "工具
 
 `pickFile` 选中的文件会被上传到这台电脑的临时目录，返回的是 **本机路径**，可以直接 `dev:install(path)`。
 
+`pickDir` 返回这台电脑上的文件夹路径：在本机的桌面版里弹出系统的文件夹选择框；在浏览器或远程界面里改为输入路径。
+
 ### 4.8 本机文件、程序、网络
 
 ```lua
@@ -354,6 +357,9 @@ db.fs.exists(path)   -- 布尔
 db.fs.stat(path)     -- {size, mtime, dir}
 db.fs.mkdir(path), db.fs.remove(path), db.fs.copy(a, b)
 db.fs.join("a", "b", "c")            -- 拼路径
+db.fs.walk(dir, { ext = { "lua" } })  -- 递归列文件：{{path, size, mtime}, ...}，path 相对 dir，默认跳过 . 开头的项（hidden = true 包含）
+db.fs.tar(dir, "out.tar", files, { gzip = true })  -- 把 dir 下的 files（相对路径，省略=全部）打成 tar（gzip 时为 .tar.gz）：{count, size}
+db.fs.hash(dir, files)              -- 文件内容哈希：{[path] = "16 位十六进制"}，不存在的文件不出现
 
 db.exec("adb", { "devices" }, { cwd = "D:/", timeout = 60, env = { A = "1" }, input = "y\n" })
 -- -> { code = 0, stdout = "...", stderr = "" }
@@ -371,7 +377,9 @@ p:send('{"id":1}')    -- 写一行（自动加
 p:close()             -- 关闭 stdin；p:kill() 结束；p:alive()
 -- 同时最多 8 个；插件停止时自动结束
 db.http.request({ url = "https://x", method = "GET", headers = {}, body = nil, timeout = 30 })
--- -> { status = 200, headers = {}, body = "..." }
+-- -> { status = 200, headers = {}, body = "..." }（响应体最多 32 MB）
+db.http.download("https://x/app.apk", "app.apk", { headers = {}, timeout = 1800 })
+-- -> { status = 200, headers = {}, size = 123 }（直接写文件，不限大小；非 2xx 不留文件）
 db.clipboard.get(), db.clipboard.set("文字")
 db.store.get("key"), db.store.set("key", { any = "值" })   -- JSON 持久化到 dataDir/store.json
 db.json.encode(v), db.json.decode(s)

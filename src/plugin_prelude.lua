@@ -806,6 +806,13 @@ function db.ui.pickFile(opts)
   return call("dialog", { kind = "file", title = opts.title, accept = opts.accept })
 end
 
+function db.ui.pickDir(opts)
+  opts = opts or {}
+  local v = call("dialog", { kind = "dir", title = opts.title, default = opts.default })
+  if v == nil or v == "" then return nil end
+  return tostring(v)
+end
+
 --- 在发起操作的那个界面里打开网页：桌面版为应用内窗口（按 name 复用），浏览器里为同名标签页
 --- opts: {name, title, mode = "window" | "browser"}
 function db.ui.openUrl(url, opts)
@@ -1133,6 +1140,16 @@ db.fs = {
     H.fs_copy(from, to)
     return true
   end,
+  walk = function(dir, opts)
+    opts = opts or {}
+    return sched({ k = "walk", dir = dir, ext = opts.ext, hidden = opts.hidden == true })
+  end,
+  tar = function(dir, out, files, opts)
+    return sched({ k = "tar", dir = dir, out = out, files = files, gzip = (opts or {}).gzip == true })
+  end,
+  hash = function(dir, files)
+    return sched({ k = "hash", dir = dir, files = files or {} })
+  end,
   join = function(...)
     local parts = pack(...)
     local out = ""
@@ -1183,6 +1200,13 @@ function db.http.request(opts)
     body = opts.body,
     timeout = opts.timeout,
   })
+end
+
+function db.http.download(url, path, opts)
+  if not H.has_perm("net") then error("db.http.download 需要 net 权限", 2) end
+  if type(url) ~= "string" or type(path) ~= "string" then error("db.http.download: 需要 url 和 path", 2) end
+  opts = opts or {}
+  return sched({ k = "download", url = url, path = path, headers = opts.headers, timeout = opts.timeout })
 end
 
 db.clipboard = {}

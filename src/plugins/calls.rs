@@ -553,7 +553,9 @@ pub(crate) async fn exec_local(app: &AppState, m: &str, p: &Value, s: &str) -> R
             DevOut::Json(json!(r["msg"].as_str().unwrap_or("OK")))
         }
         "foreground" => {
-            let pkg = agent::foreground(app, s).await;
+            let fg = agent::foreground(app, s).await;
+            // agent 给的是 包名/Activity，插件只要包名
+            let pkg = fg.split('/').next().unwrap_or("");
             DevOut::Json(if pkg.is_empty() { Value::Null } else { json!(pkg) })
         }
         "input" => {

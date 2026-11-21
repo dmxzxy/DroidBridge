@@ -279,6 +279,26 @@ function DbFs.remove(path) end
 ---@param b string
 function DbFs.copy(a, b) end
 
+--- 递归列出目录下的文件（path 为相对路径，/ 分隔；mtime 为带小数的秒）
+---@param dir string
+---@param opts? { ext?: string[], hidden?: boolean } ext 只列这些扩展名；hidden 为假（默认）时跳过 . 开头的文件和目录
+---@return { path: string, size: number, mtime: number }[]
+function DbFs.walk(dir, opts) end
+
+--- 把 dir 下的文件打成 tar（ustar，含上级目录项）
+---@param dir string
+---@param out string 输出文件
+---@param files? string[] 相对 dir 的路径；省略时打包全部（跳过 . 开头的）
+---@param opts? { gzip?: boolean } gzip 为真时输出 .tar.gz
+---@return { count: number, size: number }
+function DbFs.tar(dir, out, files, opts) end
+
+--- 文件内容哈希（FNV-1a 64，16 位十六进制）；不存在的文件不出现在结果里
+---@param dir string
+---@param files string[] 相对 dir 的路径
+---@return table<string, string>
+function DbFs.hash(dir, files) end
+
 ---@param ... string
 ---@return string
 function DbFs.join(...) end
@@ -305,6 +325,11 @@ function DbUiNs.form(title, fields) end
 ---@param opts? { accept?: string }
 ---@return string|nil 本机路径，取消返回 nil
 function DbUiNs.pickFile(opts) end
+
+--- 选择这台电脑上的文件夹：本机桌面版为系统对话框，其他界面为输入路径
+---@param opts? { title?: string, default?: string }
+---@return string|nil 取消返回 nil
+function DbUiNs.pickDir(opts) end
 
 ---@param title string
 ---@return DbProgress
@@ -346,6 +371,13 @@ local DbHttp = {}
 ---@param req { url: string, method?: string, headers?: table<string, string>, body?: string, timeout?: number }
 ---@return { status: number, headers: table<string, string>, body: string }
 function DbHttp.request(req) end
+
+--- GET 并流式写入文件（不限大小）；非 2xx 时不留文件。需要 net 权限
+---@param url string
+---@param path string 本机路径（相对 dataDir）
+---@param opts? { headers?: table<string, string>, timeout?: number } timeout 默认 1800 秒
+---@return { status: number, headers: table<string, string>, size: number }
+function DbHttp.download(url, path, opts) end
 
 ---@class DbClipboard
 local DbClipboard = {}
