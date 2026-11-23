@@ -21,6 +21,10 @@ DroidBridge 的插件用 **Lua 5.4** 编写：一个文件夹里放 `plugin.json
 
 启用时会列出插件申请的权限，确认后才会运行。新放进来的插件默认是 **停用** 状态。
 
+### 方式三：从插件源安装
+
+团队把插件发布成插件源（一个 `index.json` 清单 + 插件包）后，在 **设置 → 插件 → 插件源** 里点 **+** 填入清单地址（或本机文件夹），就能安装、更新里面的插件。发布方法和清单格式见 [SOURCES.md](SOURCES.md)。
+
 ### 第一个插件
 
 `plugins/hello/plugin.json`：
@@ -123,20 +127,21 @@ end)
 | 权限 | 允许 |
 |---|---|
 | `device.shell` | 在设备上执行任意 shell 命令 |
-| `device.files` | `dev:push` / `dev:pull` |
+| `device.files` | `dev:push` / `dev:pull`，`dev:list` `mkdir` `rename` `remove`（共享存储 `/sdcard`） |
 | `device.install` | `dev:install` / `dev:uninstall` |
 | `device.apps` | `dev:apps` `hasApp` `launch` `stop` `clear` `foreground`，`app.foreground` 事件 |
-| `device.input` | `dev:tap` `swipe` `key` `text` |
-| `device.screen` | `dev:screenshot`、`db.overlay` |
+| `device.input` | `dev:tap` `swipe` `longpress` `key` `text` `cmd`，`dev:getClipboard` / `setClipboard` |
+| `device.screen` | `dev:screenshot`、`dev:ui` `find` `waitFor`、`db.overlay` |
 | `device.forward` | `dev:forward` / `dev:reverse` / `dev:unforward` |
 | `device.logs` | `dev:logcat`、`db.logcat.watch` |
 | `device.perf` | `dev:perf` |
+| `device.connect` | `db.adb.*` 连接、配对、断开无线设备，`dev:tcpip` |
 | `fs.read` | 读这台电脑上的任意路径 |
 | `fs` | 读写这台电脑上的任意路径（含 `fs.read`） |
 | `exec` | `db.exec` 运行本机程序、`db.open` 打开文件/网址 |
 | `net` | `db.http.request` / `db.http.download` |
 | `clipboard` | `db.clipboard.get` / `set` |
-| `media` | `db.media.save` 存入相册 |
+| `media` | `db.media.save` 存入相册，`db.media.list` / `remove` |
 | `mcp` | `db.mcp.tool` 注册 AI 工具 |
 
 清单里出现新权限时，插件会变成“需要权限确认”并停止运行，直到用户再次确认。启用时确认的权限会被记录下来，之后清单里只增加权限、不减少，也会再次要求确认。
@@ -214,6 +219,56 @@ dev:reverse("tcp:1234", 0)
 dev:unforward(port)
 local log = dev:logcat({ lines = 200, level = "E", grep = "Unity", package = "com.my.game" })  -- device.logs
 local perf = dev:perf()                      -- device.perf：性能快照（fps/cpu/内存/温度…）
+dev:mirror()                                 -- 在发起操作的界面里打开投屏窗口（无需权限）
+```
+
+界面元素（`device.screen`）：
+
+```lua
+local ui = dev:ui()      -- {width, height, nodes = {{text, desc, id, class, package, bounds = {x1, y1, x2, y2}, x, y,
+                         --   clickable, scrollable, checked, selected, focused, enabled}, ...}}
+local n = dev:find("登录")                    -- 文字、说明或资源 id（写 "login" 或 "com.x:id/login" 都行），返回第一个匹配的节点或 nil
+dev:find({ id = "login", clickable = true })  -- 表：各字段都相等
+dev:find(function(n) return n.text:find("确定") end)
+local n = dev:waitFor("确定", 10)            -- 最多等 10 秒，超时返回 nil
+if n then dev:tap(n.x, n.y) end               -- x, y 是元素中心（设备像素）
+```
+
+由 uiautomator 读取，和 AI 工具共用同一把设备锁；游戏、动画不停或安全界面可能读不到。
+
+设备上的文件（`device.files`，只能访问共享存储 `/sdcard`）：
+
+```lua
+local r = dev:list("/sdcard/Download")   -- {path, parent, items = {{name, dir, size, mtime}, ...}, space = {total, free}}
+dev:mkdir("/sdcard/MyGame/logs")         -- 返回新路径
+dev:rename("/sdcard/a.txt", "b.txt")     -- 返回新路径
+dev:remove("/sdcard/b.txt")              -- 或 dev:remove({ "/sdcard/x", "/sdcard/y" })
+```
+
+输入与系统操作（`device.input`）：
+
+```lua
+dev:longpress(540, 1200, 800)        -- 长按，毫秒可省略
+dev:setClipboard("文字")             -- 写设备剪贴板（不粘贴）
+local s = dev:getClipboard()
+dev:cmd("notif")                     -- notif 展开通知栏 / settings 展开快捷设置 / collapse 收起 / rotate 旋转屏幕
+```
+
+无线连接（`device.connect`，只作用于这台电脑的 adb）：
+
+```lua
+db.adb.connect("192.168.1.5")                  -- 端口默认 5555，返回设备标识
+local r = db.adb.pair("192.168.1.5:37000", "123456")   -- {serial, host}；serial 为 nil 表示已配对但没找到连接端口
+db.adb.disconnect("192.168.1.5:5555")
+local list = db.adb.discover()                -- 局域网里的无线调试服务：{{name, kind, addr}, ...}
+local addr = dev:tcpip()                      -- USB 设备切换为无线，返回新的设备标识（只支持本机设备）
+```
+
+这台电脑的其他信息（无需权限）：
+
+```lua
+db.mirrors()     -- 正在投屏的设备：{{serial, viewers = {名字...}, controller}, ...}
+db.computers()   -- 已添加的远程电脑：{{id, name, addr}, ...}
 ```
 
 插件停止时，它建立的所有端口转发会被主进程自动清理。
@@ -237,7 +292,7 @@ db.logcat.highlight("LUA ERROR", { tag = "Unity", kind = "error", label = "LUA" 
 菜单：
 
 ```lua
--- target: device | app | file | tools | toolbar
+-- target: device | app | file | tools | toolbar | media | logcat
 local item = db.menu("device", "MyGame/安装测试包", {
   icon = "package",
   filter = { hasApp = "com.my.game", ext = { "apk" }, dir = false },
@@ -248,7 +303,7 @@ item:remove()
 - `path` 用 `/` 分级，界面会做成子菜单：`MyGame ▸ 安装测试包`
 - `icon` 只能用程序内置的图标名（见下）
 - `filter`：`hasApp`（布尔）、`models`、`serials`（glob 列表）由主程序按设备判断；`packages`（glob 列表，匹配包名）、`ext`（glob 列表，匹配扩展名）、`dir`（布尔）由界面判断
-- 处理函数参数：`device`/`toolbar` → `fn(dev)`；`app` → `fn(dev, pkg)`；`file` → `fn(dev, path, isDir)`；`tools` → `fn()`
+- 处理函数参数：`device`/`toolbar` → `fn(dev)`；`app` → `fn(dev, pkg)`；`file` → `fn(dev, path, isDir)`；`tools` → `fn()`；`media`（相册里的截图、录屏）→ `fn(item)`，item = `{name, kind, device, size, time, path}`；`logcat`（日志行）→ `fn(dev, line)`，line 是原始文字
 - 返回值：字符串会作为提示显示，其他值只表示成功
 
 面板：
@@ -384,7 +439,11 @@ db.clipboard.get(), db.clipboard.set("文字")
 db.store.get("key"), db.store.set("key", { any = "值" })   -- JSON 持久化到 dataDir/store.json
 db.json.encode(v), db.json.decode(s)
 db.media.save("D:/shot.png")          -- 存入相册，返回文件名
+db.media.list()                       -- 相册里的文件（新的在前）：{{name, kind = "shot"|"rec", device, size, time, path}, ...}
+db.media.remove(name)                 -- 删除相册里的一个文件
 ```
+
+读取相册文件的内容（`path`）仍然需要 `fs.read`。
 
 相对路径相对于 `dataDir`（插件的数据目录）；`plugin://x` 表示插件目录内的文件（只读）。
 
@@ -411,6 +470,8 @@ db.on("device.connected", function(dev) db.log("接入 " .. dev.serial) end)
 db.on("device.disconnected", function(dev) end)
 db.on("app.foreground", function(dev, pkg) end)   -- 需要 device.apps
 db.on("app.installed", function(dev, pkg) end)
+db.on("app.uninstalled", function(dev, pkg) end)   -- 应用管理或插件卸载后
+db.on("media.saved", function(item) end)           -- 截图、录屏存入相册后；item 同 db.media.list
 db.on("settings.changed", function(values) end)
 db.on("plugin.unload", function() end)            -- 停止前收尾
 ```
@@ -419,7 +480,21 @@ db.on("plugin.unload", function() end)            -- 停止前收尾
 - 只要没有插件订阅 `app.foreground`，主程序就不会去轮询前台应用
 - 插件启动完成后，会为每台在线设备补发一次 `device.connected`
 
-### 4.11 `require`
+### 4.11 插件之间互相调用
+
+```lua
+-- 提供方：只有 export 过的函数才能被其他插件调用，用的是提供方自己的权限
+db.export("token", function(args, from) return { token = "..." } end)
+
+-- 调用方
+local r = db.plugins.call("account", "token", { scope = "read" })   -- 对方没有运行或没有提供时报错
+local list = db.plugins.list()   -- {{id, name, version, state, exports = {...}}, ...}
+```
+
+- `from` 是调用方的插件 id，提供方可以据此决定是否响应
+- 参数和返回值都会经过 JSON，只能传数据；单次调用最长 120 秒
+
+### 4.12 `require`
 
 ```lua
 local util = require("util")       -- 插件目录 util.lua
@@ -507,6 +582,10 @@ db.webpanel("web", { title = "MyGame", dock = "window", entry = "web/index.html"
   droidbridge.open("http://example.com", { name: "ex", title: "Example" });
   // 面板是从哪台设备打开的（可能为空字符串）
   droidbridge.device.serial;
+  // 界面语言 "zh" / "en"（收到 ready 事件后可用）
+  droidbridge.lang;
+  // 在界面上弹提示，kind: info | ok | warn | error
+  droidbridge.notify("已保存", { kind: "ok" });
 </script>
 ```
 
@@ -556,8 +635,8 @@ db.web.emit("tick", { n = 42 })     -- 广播给所有打开的网页面板
 插件运行在 **你正在操作的这台电脑** 上，作用于这台电脑能看到的 **全部设备**：本机插着的设备，加上已添加的远程电脑上的设备。远程电脑上 **不需要** 安装插件，但需要是支持插件的 DroidBridge 版本（旧版本会提示“版本太旧，请先更新”）。
 
 - 远程设备的 `dev.serial` 形如 `<电脑id>/<序列号>`，`dev.remote` 为 `true`，`dev.computer` 是那台电脑的名字；`match` 规则按原始序列号和型号匹配。
-- `dev:shell / push / pull / install / logcat / perf / screenshot / tap …` 都可以用在远程设备上；文件会在两台电脑之间自动传输。
-- `dev:forward / reverse` 暂不支持远程设备（端口只能开在设备所在的那台电脑上）。
+- `dev:shell / push / pull / install / logcat / perf / screenshot / tap / ui / list / getClipboard / cmd …` 都可以用在远程设备上；文件会在两台电脑之间自动传输。
+- `dev:forward / reverse / tcpip` 不支持远程设备（端口只能开在设备所在的那台电脑上）；`db.adb.*` 只作用于这台电脑的 adb。
 - 设备连接/断开、前台应用切换等事件也包括远程设备。
 
 ---
@@ -589,7 +668,7 @@ db.web.emit("tick", { n = 42 })     -- 广播给所有打开的网页面板
 渲染函数出错会记录到控制台。另外注意渲染函数里不能调用会等待的 API，要用 `db.spawn`。
 
 **Q：菜单没出现？**
-检查 `target`（`device`/`app`/`file`/`tools`/`toolbar`）、`filter`（`hasApp`/`ext`/`dir`/`packages`）、`match` 是否把设备过滤掉了。设备右键菜单里的插件项在首次拉取贡献后出现，最多几秒。
+检查 `target`（`device`/`app`/`file`/`tools`/`toolbar`/`media`/`logcat`）、`filter`（`hasApp`/`ext`/`dir`/`packages`）、`match` 是否把设备过滤掉了。设备右键菜单里的插件项在首次拉取贡献后出现，最多几秒。
 
 **Q：为什么 `dev:shell` 报错“没有权限”？**
 `plugin.json` 的 `permissions` 里要写 `device.shell`，改完需要在列表里重新启用并确认权限。

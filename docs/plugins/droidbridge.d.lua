@@ -96,6 +96,78 @@ function DbDevice:logcat(opts) end
 ---@return table 性能快照（fps / cpu / mem / temp / level …）
 function DbDevice:perf() end
 
+---长按（device.input）
+---@param x number
+---@param y number
+---@param ms? number 按住时长（毫秒），默认 800
+function DbDevice:longpress(x, y, ms) end
+
+---@return string 设备剪贴板内容（device.input）
+function DbDevice:getClipboard() end
+
+---写入设备剪贴板，不粘贴（device.input）
+---@param text string
+function DbDevice:setClipboard(text) end
+
+---系统操作（device.input）
+---@param name "notif"|"settings"|"collapse"|"rotate" 展开通知栏 / 展开快捷设置 / 收起 / 旋转屏幕
+function DbDevice:cmd(name) end
+
+---@class DbUiNode 界面元素（坐标为设备像素）
+---@field text string
+---@field desc string content-desc
+---@field id string 资源 id，如 "com.x:id/login"
+---@field class string
+---@field package string
+---@field bounds integer[] {x1, y1, x2, y2}
+---@field x integer 中心
+---@field y integer 中心
+---@field clickable boolean
+---@field scrollable boolean
+---@field checked boolean
+---@field selected boolean
+---@field focused boolean
+---@field enabled boolean
+
+---读取界面结构（device.screen，uiautomator）
+---@return { width: integer, height: integer, nodes: DbUiNode[] }
+function DbDevice:ui() end
+
+---找第一个匹配的界面元素
+---@param q string|table|fun(n: DbUiNode): boolean 字符串：等于 text / desc / 资源 id（可写短名）；表：各字段相等；函数：返回 true 的节点
+---@return DbUiNode|nil
+function DbDevice:find(q) end
+
+---等到界面上出现匹配的元素
+---@param q string|table|fun(n: DbUiNode): boolean
+---@param timeout? number 秒，默认 10
+---@return DbUiNode|nil 超时返回 nil
+function DbDevice:waitFor(q, timeout) end
+
+---列出设备共享存储里的文件夹（device.files）
+---@param path? string 默认 /sdcard
+---@return { path: string, parent: string|nil, items: { name: string, dir: boolean, size: integer, mtime: integer }[], space: { total: integer, free: integer }|nil }
+function DbDevice:list(path) end
+
+---@param path string 要创建的文件夹（共享存储内）
+---@return string 新路径
+function DbDevice:mkdir(path) end
+
+---@param path string
+---@param name string 新名字（不含 /）
+---@return string 新路径
+function DbDevice:rename(path, name) end
+
+---@param paths string|string[]
+function DbDevice:remove(paths) end
+
+---USB 设备切换为无线（device.connect，只支持本机设备）
+---@return string 新的设备标识（ip:5555）
+function DbDevice:tcpip() end
+
+---在发起操作的界面里打开投屏窗口
+function DbDevice:mirror() end
+
 ---@class DbTimer
 local DbTimer = {}
 
@@ -424,8 +496,8 @@ function DbJson.decode(s) end
 ---@field wait fun(sec: number) 等待（只能在协程里）
 ---@field every fun(sec: number, fn: fun()): DbTimer
 ---@field after fun(sec: number, fn: fun()): DbTimer
----@field on fun(event: string, fn: fun(...)) 事件：device.connected / device.disconnected / app.foreground / app.installed / settings.changed / plugin.unload
----@field menu fun(target: string, path: string, opts: table|nil, fn: fun(...)): DbMenuItem
+---@field on fun(event: string, fn: fun(...)) 事件：device.connected / device.disconnected / app.foreground / app.installed / app.uninstalled / media.saved / settings.changed / plugin.unload
+---@field menu fun(target: string, path: string, opts: table|nil, fn: fun(...)): DbMenuItem target: device | app | file | tools | toolbar | media | logcat
 ---@field panel fun(id: string, opts: { title: string, icon?: string, dock?: string, filter?: table, refresh?: number }, render: fun(ui: DbUi, dev: DbDevice|nil)): any
 ---@field webpanel fun(id: string, opts: { title: string, icon?: string, entry: string, dock?: string, filter?: table }): any
 ---@field status fun(id: string, text: string|nil, opts?: { kind?: string, tip?: string, onClick?: fun() }): any
@@ -435,9 +507,22 @@ function DbJson.decode(s) end
 ---@field repaint fun(panelId?: string): any
 ---@field exec fun(program: string, args?: string[], opts?: { cwd?: string, timeout?: number, env?: table<string, string>, input?: string }): { code: number, stdout: string, stderr: string }
 ---@field open fun(pathOrUrl: string): any
----@field media { save: fun(path: string, serial?: string): string }
+---@field media { save: fun(path: string, serial?: string): string, list: fun(): DbMediaItem[], remove: fun(name: string): boolean } list / remove 需要 media 权限
+---@field adb { connect: fun(addr: string): string, pair: fun(addr: string, code: string, connectAddr?: string): { serial: string|nil, host: string|nil }, disconnect: fun(addr: string): boolean, discover: fun(): { name: string, kind: string, addr: string }[] } 这台电脑的无线 adb（device.connect）
+---@field mirrors fun(): { serial: string, viewers: string[], controller: string|nil }[] 正在投屏的设备
+---@field computers fun(): { id: string, name: string, addr: string }[] 已添加的远程电脑
+---@field export fun(name: string, fn: fun(args: any, from: string): any) 提供给其他插件调用的函数
+---@field plugins { list: fun(): { id: string, name: string, version: string, state: string, exports: string[] }[], call: fun(id: string, name: string, args?: any): any } 调用其他插件 export 的函数
 ---@field shell fun(serial: string, cmd: string, opts?: { timeout?: number }): string, number
 db = {}
+
+---@class DbMediaItem 相册里的一个文件
+---@field name string
+---@field kind "shot"|"rec"
+---@field device string
+---@field size integer
+---@field time integer
+---@field path string 本机路径（读取内容需要 fs.read）
 
 ---@class DbProc
 ---@field id integer

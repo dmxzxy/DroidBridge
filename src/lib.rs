@@ -64,6 +64,7 @@ const ASSETS: &[(&str, &str, &str)] = &[
     ("js/contextmenu.js", "text/javascript; charset=utf-8", include_str!("../web/js/contextmenu.js")),
     ("js/access.js", "text/javascript; charset=utf-8", include_str!("../web/js/access.js")),
     ("js/plugins.js", "text/javascript; charset=utf-8", include_str!("../web/js/plugins.js")),
+    ("js/plugin-sources.js", "text/javascript; charset=utf-8", include_str!("../web/js/plugin-sources.js")),
 ];
 
 async fn asset_root(Path(file): Path<String>) -> Response {
@@ -354,6 +355,7 @@ pub async fn start(cfg: Config) -> Result<Started, StartError> {
     tokio::spawn(wireless::keeper(state.clone()));
     // 插件管理器：扫描、启动、热重载与事件轮询
     tokio::spawn(plugins::run(state.clone()));
+    tokio::spawn(plugins::sources_run(state.clone()));
     let cleanup_state = state.clone();
     tokio::spawn(async move { media::recover_parts_loop(cleanup_state).await; });
 
@@ -493,6 +495,7 @@ fn router(state: Shared) -> Router {
         .route("/api/apps/action", post(apps_action))
         .route("/api/plugins", get(plugins::plugins_get))
         .route("/api/plugins/manage", post(plugins::plugins_manage))
+        .route("/api/plugins/sources", get(plugins::sources_get).post(plugins::sources_post))
         .route("/api/plugins/contrib", get(plugins::plugins_contrib))
         .route("/api/plugins/invoke", post(plugins::plugins_invoke))
         .route("/api/plugins/panel", post(plugins::plugins_panel))

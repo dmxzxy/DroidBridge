@@ -150,6 +150,7 @@ pub async fn action(st: &AppState, r: ActionReq) -> Result<serde_json::Value, St
                     tr!("卸载失败：{o}", "Uninstall failed: {o}")
                 });
             }
+            crate::plugins::on_uninstalled(st, s, pkg);
             tr!("已卸载", "Uninstalled")
         }
         _ => return Err(tr!("未知操作", "Unknown action")),

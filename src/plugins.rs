@@ -10,6 +10,7 @@ mod devop;
 mod host;
 mod http;
 mod manifest;
+mod sources;
 
 pub use devop::plugins_devop;
 pub use http::{
@@ -17,6 +18,7 @@ pub use http::{
     plugins_mcp_list, plugins_metrics, plugins_panel, plugins_upload, plugins_web, plugins_ws,
 };
 pub use manifest::Manifest;
+pub use sources::{run as sources_run, sources_get, sources_post};
 
 use crate::{adb, agent, AppState};
 use serde_json::{json, Map, Value};
@@ -66,6 +68,8 @@ pub(crate) struct Contribs {
     loghl: Vec<Value>,
     mcps: Vec<Value>,
     events: BTreeSet<String>,
+    /// db.export 提供给其他插件调用的函数名
+    exports: BTreeSet<String>,
     badges: HashMap<String, Value>,
     overlays: HashMap<String, Value>,
 }
@@ -292,7 +296,10 @@ pub(crate) struct WatchHandle {
 /// 主进程事件（由其他模块触发）
 #[derive(Debug, Clone)]
 pub enum AppEvent {
-    Installed { serial: String, package: String },
+    /// app.installed / app.uninstalled
+    App { name: &'static str, serial: String, package: String },
+    /// media.saved
+    Media { name: String },
 }
 
 pub struct Plugins {
@@ -1041,7 +1048,17 @@ pub async fn run(st: Arc<AppState>) {
 
 /// 其他模块（文件管理器、拖放、插件 install）完成安装后调用
 pub fn on_installed(st: &AppState, serial: &str, package: &str) {
-    let _ = st.plugins.events.send(AppEvent::Installed { serial: serial.to_string(), package: package.to_string() });
+    let _ = st.plugins.events.send(AppEvent::App { name: "app.installed", serial: serial.to_string(), package: package.to_string() });
+}
+
+/// 应用管理或插件卸载应用后调用
+pub fn on_uninstalled(st: &AppState, serial: &str, package: &str) {
+    let _ = st.plugins.events.send(AppEvent::App { name: "app.uninstalled", serial: serial.to_string(), package: package.to_string() });
+}
+
+/// 截图或录屏存入图库后调用
+pub fn on_media_saved(st: &AppState, name: &str) {
+    let _ = st.plugins.events.send(AppEvent::Media { name: name.to_string() });
 }
 
 /// 远程电脑上的设备：`GET /api/devices`（单台 3 秒超时，失败时返回空）
@@ -1074,9 +1091,16 @@ pub fn new_packages(before: &str, after: &str) -> Vec<String> {
 }
 
 async fn on_event(st: &Arc<AppState>, ev: AppEvent) {
-    match ev {
-        AppEvent::Installed { serial, package } => {
-            let subs: Vec<Arc<Plugin>> = st.plugins.plugins().into_iter().filter(|p| p.host().is_some() && p.is_subscribed("app.installed")).collect();
+    let name = match &ev {
+        AppEvent::App { name, .. } => *name,
+        AppEvent::Media { .. } => "media.saved",
+    };
+    let subs: Vec<Arc<Plugin>> = st.plugins.plugins().into_iter().filter(|p| p.host().is_some() && p.is_subscribed(name)).collect();
+    if subs.is_empty() {
+        return;
+    }
+    let args = match ev {
+        AppEvent::App { serial, package, .. } => {
             // 事件里的 dev 也带上 computer / remote（SPEC 7.1）
             let dev = st
                 .plugins
@@ -1085,9 +1109,14 @@ async fn on_event(st: &Arc<AppState>, ev: AppEvent) {
                 .find(|d| d.id == serial || d.serial == serial)
                 .map(|d| d.json())
                 .unwrap_or_else(|| json!({"serial": serial}));
-            fire(st, &subs, "app.installed", vec![dev, json!(package)]).await;
+            vec![dev, json!(package)]
         }
-    }
+        AppEvent::Media { name } => {
+            let item = calls::media_items(st).await.unwrap_or_default().into_iter().find(|it| it["name"] == name.as_str());
+            vec![item.unwrap_or_else(|| json!({"name": name}))]
+        }
+    };
+    fire(st, &subs, name, args).await;
 }
 
 /// 缓存的设备目录指纹：目录 → (文件路径, 大小, mtime) 的哈希

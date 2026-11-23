@@ -121,6 +121,13 @@ impl Harness {
                     "devices" => devs.clone(),
                     "prop" => J::String("prop-value".into()),
                     "shell" => json!({"out": "shell-out", "code": 0}),
+                    "ui" => json!({"width": 1080, "height": 2400, "nodes": [
+                        {"text": "", "desc": "", "id": "", "class": "FrameLayout", "x": 540, "y": 1200},
+                        {"text": "登录", "desc": "", "id": "com.x:id/login", "class": "Button", "x": 540, "y": 1570, "clickable": true},
+                        {"text": "", "desc": "用户名", "id": "com.x:id/user", "class": "EditText", "x": 540, "y": 1250},
+                    ]}),
+                    "media.item" => json!({"name": c["p"]["name"], "path": "D:/media/x.png", "kind": "shot"}),
+                    "plugin.call" => json!({"echo": c["p"]}),
                     _ => J::Bool(true),
                 };
                 self.driver.on_line(&json!({"t": "ret", "id": id, "ok": ok}).to_string());
@@ -480,6 +487,97 @@ end)
         .find(|v| v["t"] == "call" && v["m"] == "badge")
         .expect("应有 badge call");
     assert_eq!(badge["p"]["text"], J::Null);
+}
+
+#[test]
+fn ui_find_helpers() {
+    let mut h = Harness::new(
+        "uifind",
+        r#"
+db.menu("device", "Find", function(dev)
+  local a = dev:find("登录")
+  local b = dev:find("user")
+  local c = dev:find({ id = "com.x:id/login", clickable = true })
+  local d = dev:find(function(n) return n.class == "EditText" end)
+  local e = dev:find("不存在")
+  local w = dev:waitFor("用户名", 1)
+  return table.concat({ a.y, b.desc, c.text, d.id, tostring(e), w.y }, "|")
+end)
+"#,
+        HostConfig::default(),
+    );
+    let res = h.req("menu", json!({"id": "device:Find", "ctx": {"serial": "S1"}}));
+    assert_eq!(res["ok"], json!("1570|用户名|登录|com.x:id/user|nil|1250"), "{res:?}");
+}
+
+#[test]
+fn device_helpers_send_calls() {
+    let mut h = Harness::new(
+        "devhelp",
+        r#"
+db.menu("device", "Do", function(dev)
+  dev:longpress(10, 20)
+  dev:remove({ "/sdcard/a", "/sdcard/b" })
+  dev:remove("/sdcard/c")
+  dev:setClipboard("hi")
+  dev:getClipboard()
+  dev:cmd("notif")
+  dev:mirror()
+end)
+"#,
+        HostConfig::default(),
+    );
+    h.req("menu", json!({"id": "device:Do", "ctx": {"serial": "S1"}, "client": "c1"}));
+    let out = h.out.borrow().clone();
+    let calls: Vec<&J> = out.iter().filter(|v| v["t"] == "call").collect();
+    let find = |m: &str| calls.iter().filter(|v| v["m"] == m).cloned().collect::<Vec<_>>();
+    let input = find("input");
+    assert_eq!(input[0]["p"]["kind"], "swipe");
+    assert_eq!((input[0]["p"]["x"].clone(), input[0]["p"]["x2"].clone(), input[0]["p"]["duration"].clone()), (json!(10), json!(10), json!(800)));
+    let rm = find("rm");
+    assert_eq!(rm[0]["p"]["paths"], json!(["/sdcard/a", "/sdcard/b"]));
+    assert_eq!(rm[1]["p"]["path"], "/sdcard/c");
+    let clip = find("clipboard");
+    assert_eq!(clip[0]["p"]["text"], "hi");
+    assert!(clip[1]["p"].get("text").is_none(), "读取时不带 text");
+    assert_eq!(find("cmd")[0]["p"]["name"], "notif");
+    assert_eq!(find("mirror")[0]["p"]["client"], "c1", "打开投屏发给发起操作的界面");
+}
+
+#[test]
+fn media_and_logcat_menus() {
+    let mut h = Harness::new(
+        "menus2",
+        r#"
+db.menu("media", "Up", function(item) return item.name .. "@" .. item.path end)
+db.menu("logcat", "Line", function(dev, line) return dev.serial .. ":" .. line end)
+"#,
+        HostConfig::default(),
+    );
+    let res = h.req("menu", json!({"id": "media:Up", "ctx": {"name": "a.png"}}));
+    assert_eq!(res["ok"], json!("a.png@D:/media/x.png"));
+    let res = h.req("menu", json!({"id": "logcat:Line", "ctx": {"serial": "S1", "line": "E boom"}}));
+    assert_eq!(res["ok"], json!("S1:E boom"));
+}
+
+#[test]
+fn exports_between_plugins() {
+    let mut h = Harness::new(
+        "export",
+        r#"
+db.export("sum", function(args, from) return args.a + args.b .. "/" .. from end)
+db.menu("tools", "Call", function() return db.plugins.call("other", "x", { n = 1 }) end)
+"#,
+        HostConfig::default(),
+    );
+    let all = h.take();
+    assert!(all.iter().any(|v| v["m"] == "register" && v["p"]["kind"] == "export" && v["p"]["def"]["name"] == "sum"), "{all:?}");
+    let res = h.req("export", json!({"name": "sum", "args": {"a": 1, "b": 2}, "from": "caller"}));
+    assert_eq!(res["ok"], json!("3/caller"));
+    let res = h.req("export", json!({"name": "nope", "args": {}}));
+    assert!(res["err"].is_string());
+    let res = h.req("menu", json!({"id": "tools:Call", "ctx": {}}));
+    assert_eq!(res["ok"]["echo"], json!({"plugin": "other", "name": "x", "args": {"n": 1}}));
 }
 
 #[test]

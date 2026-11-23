@@ -12,14 +12,15 @@ const PLUGIN_DOT = { info: '', ok: 'ok', warn: 'warn', error: 'bad', bad: 'bad' 
 // 权限的中文说明（启用时逐个列出让用户确认）
 const PLUGIN_PERMS = {
   'device.shell': '在设备上执行任意 shell 命令',
-  'device.files': '向设备推送文件、从设备下载文件',
+  'device.files': '管理设备共享存储里的文件，推送和下载文件',
   'device.install': '安装和卸载应用',
   'device.apps': '查看应用列表、启动/停止/清除应用、读取前台应用',
-  'device.input': '点击、滑动、按键和输入文字',
-  'device.screen': '截取屏幕、在画面上绘制覆盖层',
+  'device.input': '点击、滑动、按键、输入文字，读写设备剪贴板',
+  'device.screen': '截取屏幕、读取界面结构、在画面上绘制覆盖层',
   'device.forward': '建立端口转发',
   'device.logs': '读取设备日志',
   'device.perf': '读取设备性能数据',
+  'device.connect': '连接、配对和断开无线设备',
   'fs.read': '读取这台电脑上的任意文件',
   'fs': '读写这台电脑上的任意文件',
   'exec': '运行这台电脑上的程序和打开文件/网址',
@@ -272,6 +273,13 @@ function pluginMenuItems(hst, target, ctx = {}) {
   const entries = pluginMenuEntries(serial, target, c);
   if (!entries.length) return [];
   return [{ icon: 'puzzle', label: t('插件'), sub: pluginMenuTree(entries, c) }];
+}
+
+/** 相册条目的插件菜单（图库在插件所在的这台电脑上） */
+function pluginMediaItems(item) {
+  const ctx = { name: item.name };
+  const entries = pluginMenuEntries('', 'media', ctx, false);
+  return entries.length ? [{ icon: 'puzzle', label: t('插件'), sub: pluginMenuTree(entries, ctx) }] : [];
 }
 
 /** 执行插件的菜单/状态项。不打扰：只在执行超过 0.5 秒时显示进度；
@@ -722,7 +730,7 @@ class PluginWebView {
     this.ctx = { plugin: this.plugin, serial: this.serial, frame: this.frame, view: this };
     this.el.append(this.frame);
     this.frame.addEventListener('load', () => {
-      try { this.frame.contentWindow.postMessage({ __droidbridge: 1, t: 'init', device: { serial: this.serial || '' } }, '*'); } catch {}
+      try { this.frame.contentWindow.postMessage({ __droidbridge: 1, t: 'init', device: { serial: this.serial || '' }, lang: LANG }, '*'); } catch {}
     });
     pluginWebCtx.add(this.ctx);
     pluginViews.add(this);
@@ -848,6 +856,11 @@ addEventListener('message', (e) => {
   const d = e.data;
   if (!d || typeof d !== 'object' || d.__droidbridge !== 1) return;
   if (d.t === 'open') { pluginOpenUrl(ctx.plugin, d.url, { name: d.name, title: d.title, mode: d.mode }); return; }
+  if (d.t === 'notify') {
+    const kind = d.kind === 'error' ? 'bad' : d.kind === 'warn' ? 'warn' : d.kind === 'ok' ? 'ok' : undefined;
+    toast(pluginTxt(d.text), { kind, ms: 5000 });
+    return;
+  }
   if (d.t !== 'call') return;
   const rid = d.id;
   const reply = (ok, err) => pluginWebPost(ctx, { __droidbridge: 1, t: 'result', id: rid, ok, err });
@@ -866,7 +879,7 @@ addEventListener('message', (e) => {
 const PLUGIN_PERM_ICON = {
   'device.shell': 'terminal', 'device.files': 'folder', 'device.install': 'package', 'device.apps': 'grid',
   'device.input': 'target', 'device.screen': 'camera', 'device.forward': 'swap', 'device.logs': 'logs',
-  'device.perf': 'activity', 'fs.read': 'file', 'fs': 'drive', 'exec': 'play', 'net': 'globe', 'web.embed': 'globe',
+  'device.perf': 'activity', 'device.connect': 'wifi', 'fs.read': 'file', 'fs': 'drive', 'exec': 'play', 'net': 'globe', 'web.embed': 'globe',
   'clipboard': 'paste', 'media': 'images', 'mcp': 'bot',
 };
 
@@ -969,6 +982,13 @@ function pluginSettingsPane() {
       out.push(h('div', { class: 'set-c' }, items));
     }
     if (info && !info.manage) out.push(h('div', { class: 'plug-ro' }, svgEl('lock'), h('span', {}, t('只能在这台电脑上管理插件'))));
+    if (canManage) out.push(pluginSourcesSection({
+      manage: canManage,
+      reloadPlugins: reload,
+      plugin: (pid) => ((info && info.list) || []).find((x) => x.id === pid),
+      select: (pid) => { selected = pid; render(); },
+      changed: () => { if (!selected) render(); },
+    }));
     return h('div', { class: 'plugpane-list' }, out);
   }
 
@@ -986,7 +1006,8 @@ function pluginSettingsPane() {
       onclick: open, onkeydown: (e) => { if (e.key === 'Enter' && e.target === e.currentTarget) open(); } },
       pluginTile(p),
       h('div', { class: 'plug-row-m' },
-        h('div', { class: 'plug-row-n' }, h('span', { class: 'dot ' + pluginStateDot(st) }), h('b', {}, pluginTxt(p.name || p.id))),
+        h('div', { class: 'plug-row-n' }, h('span', { class: 'dot ' + pluginStateDot(st) }), h('b', {}, pluginTxt(p.name || p.id)),
+          pluginSrcUpdates.has(p.id) ? h('span', { class: 'plug-upd', title: t('有新版本'), html: svg('download') }) : null),
         err ? h('div', { class: 'plug-row-e' }, err) : null),
       grantBtn,
       info.manage ? toggle(p) : null,
@@ -1117,6 +1138,7 @@ function pluginSettingsPane() {
 const PLUGIN_WHERE = {
   device: ['phone', '设备右键菜单'], app: ['grid', '应用管理右键菜单'], file: ['folder', '文件管理右键菜单'],
   tools: ['puzzle', '顶栏的插件工具菜单'], toolbar: ['puzzle', '投屏窗口工具栏的插件按钮'],
+  media: ['camera', '相册右键菜单'], logcat: ['logs', '设备日志右键菜单'],
   'panel:device': ['phone', '投屏窗口侧栏（插件按钮）'], 'panel:window': ['monitor', '独立窗口（插件工具菜单）'],
   'panel:settings': ['gear', '这个设置页'], status: ['logs', '侧栏底部的状态'], metric: ['activity', '性能浮层'], loghl: ['logs', '设备日志高亮'],
 };
@@ -1140,7 +1162,7 @@ function pluginEntryList(p) {
     for (const m of (d.menus || []).filter(mine)) {
       const target = m.target;
       const run = target === 'tools' ? () => pluginInvoke({ plugin: p.id, kind: 'menu', id: m.id, ctx: {} }) : null;
-      add(target, String(m.path || '').split('/').pop(), m.icon, run, target !== 'tools');
+      add(target, String(m.path || '').split('/').pop(), m.icon, run, target !== 'tools' && target !== 'media');
     }
     for (const x of (d.panels || []).filter(mine)) {
       // 侧栏面板：优先用已经打开投屏的设备，否则第一台在线设备
@@ -1432,6 +1454,12 @@ function pluginOnEvent(m) {
       break;
     case 'open': {
       pluginOpenUrl(pluginTxt(m.plugin), m.url, { name: m.name, title: m.title, mode: m.mode });
+      break;
+    }
+    case 'mirror': {
+      const { hostId, serial } = pluginDevParse(m.serial);
+      const hit = pluginOnlineDevs().find(({ hst, dev }) => hst.id === hostId && dev.serial === serial);
+      if (hit) openViewer(hit.hst, hit.dev);
       break;
     }
     case 'toast': {

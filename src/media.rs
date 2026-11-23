@@ -235,6 +235,7 @@ pub async fn save_shot(st: &AppState, device: &str, data: &[u8]) -> Result<Media
     let dev = sanitize_device(device);
     let (name, path) = unique_path(&dir, &dev, "png").await;
     tokio::fs::write(&path, data).await.map_err(|e| e.to_string())?;
+    crate::plugins::on_media_saved(st, &name);
     Ok(item_for(&name, &path))
 }
 
@@ -299,6 +300,7 @@ pub async fn rec_finish(st: &AppState, id: &str) -> Result<MediaItem, String> {
     tokio::fs::rename(&part, &final_path).await.map_err(|e| e.to_string())?;
     let count_path = dir.join(format!("{id}.part.seq"));
     let _ = tokio::fs::remove_file(&count_path).await;
+    crate::plugins::on_media_saved(st, id);
     Ok(item_for(id, &final_path))
 }
 

@@ -318,28 +318,74 @@ pub(crate) async fn foreground(st: &AppState, s: &str) -> String {
     out.split_whitespace().find(|t| t.contains('/') && t.contains('.')).map(|t| t.trim_matches(|c| c == '{' || c == '}').to_string()).unwrap_or_default()
 }
 
-async fn read_screen(st: &AppState, s: &str) -> Result<Vec<Value>, String> {
-    st.agent.emit(s, json!({"action": "look", "label": tr!("读取界面", "Reading the screen")}));
+/// uiautomator dump 出的节点（失败时重试一次）
+async fn dump_ui(st: &AppState, s: &str) -> Result<Vec<HashMap<String, String>>, String> {
     let file = format!("{UI_XML}.{:08x}", util::random_scid());
     let cmd = format!("uiautomator dump --compressed {file} >/dev/null 2>&1; cat {file} 2>/dev/null; rm -f {file}");
-    let mut nodes = Vec::new();
     for attempt in 0..2 {
         let xml = adb::run_timeout(&st.cfg.adb, &["-s", s, "shell", &cmd], Duration::from_secs(25)).await.unwrap_or_default();
-        nodes = parse_nodes(&xml);
-        if !nodes.is_empty() || attempt == 1 {
-            break;
+        let nodes = parse_nodes(&xml);
+        if !nodes.is_empty() {
+            return Ok(nodes);
         }
-        // 上一个 uiautomator 刚退出时偶尔会失败，稍等再试一次
-        tokio::time::sleep(Duration::from_millis(600)).await;
+        if attempt == 0 {
+            // 上一个 uiautomator 刚退出时偶尔会失败，稍等再试一次
+            tokio::time::sleep(Duration::from_millis(600)).await;
+        }
     }
-    if nodes.is_empty() {
-        return Err(tr!(
-            "无法读取界面结构（画面一直在变化、游戏或安全界面时常见）。请改用 screenshot。",
-            "Cannot read the UI structure (common with animations, games or secure screens). Use screenshot instead."
-        ));
-    }
-    // 根节点的范围就是当前方向下的屏幕尺寸
-    let (w, h) = nodes.iter().filter_map(|n| n.get("bounds").and_then(|b| bounds(b))).map(|(_, _, x2, y2)| (x2.max(1) as u32, y2.max(1) as u32)).fold((1, 1), |a, b| (a.0.max(b.0), a.1.max(b.1)));
+    Err(tr!(
+        "无法读取界面结构（画面一直在变化、游戏或安全界面时常见）。请改用 screenshot。",
+        "Cannot read the UI structure (common with animations, games or secure screens). Use screenshot instead."
+    ))
+}
+
+/// 当前方向下的屏幕尺寸（根节点的范围）
+fn screen_of(nodes: &[HashMap<String, String>]) -> (u32, u32) {
+    nodes.iter().filter_map(|n| n.get("bounds").and_then(|b| bounds(b))).map(|(_, _, x2, y2)| (x2.max(1) as u32, y2.max(1) as u32)).fold((1, 1), |a, b| (a.0.max(b.0), a.1.max(b.1)))
+}
+
+/// 界面结构（插件 `dev:ui()`），坐标为设备像素：`{width, height, nodes:[...]}`
+pub(crate) async fn ui_tree(st: &AppState, s: &str) -> Result<Value, String> {
+    let lock = st.agent.lock_for(s);
+    let _guard = tokio::time::timeout(Duration::from_secs(90), lock.lock())
+        .await
+        .map_err(|_| tr!("这台设备上还有别的操作在执行，请稍后重试", "Another operation is still running on this device; try again shortly"))?;
+    let nodes = dump_ui(st, s).await?;
+    let (w, h) = screen_of(&nodes);
+    Ok(json!({"width": w, "height": h, "nodes": ui_nodes(&nodes)}))
+}
+
+fn ui_nodes(nodes: &[HashMap<String, String>]) -> Vec<Value> {
+    nodes
+        .iter()
+        .filter_map(|n| {
+            let g = |k: &str| n.get(k).map(String::as_str).unwrap_or("");
+            let on = |k: &str| g(k) == "true";
+            let (x1, y1, x2, y2) = bounds(g("bounds"))?;
+            Some(json!({
+                "text": g("text"),
+                "desc": g("content-desc"),
+                "id": g("resource-id"),
+                "class": g("class"),
+                "package": g("package"),
+                "bounds": [x1, y1, x2, y2],
+                "x": (x1 + x2) / 2,
+                "y": (y1 + y2) / 2,
+                "clickable": on("clickable") || on("long-clickable"),
+                "scrollable": on("scrollable"),
+                "checked": on("checked"),
+                "selected": on("selected"),
+                "focused": on("focused"),
+                "enabled": g("enabled") != "false",
+            }))
+        })
+        .collect()
+}
+
+async fn read_screen(st: &AppState, s: &str) -> Result<Vec<Value>, String> {
+    st.agent.emit(s, json!({"action": "look", "label": tr!("读取界面", "Reading the screen")}));
+    let nodes = dump_ui(st, s).await?;
+    let (w, h) = screen_of(&nodes);
     let k = scale_for(w, h);
     let (lines, elems) = describe(&nodes, k);
     st.agent.update(s, |d| {
@@ -476,6 +522,83 @@ async fn type_text(st: &AppState, s: &str, a: &Value) -> Result<Vec<Value>, Stri
 
 /// 通过一个只有控制通道的 scrcpy-server 会话，设置剪贴板并粘贴（支持中文等任意文字）
 pub(crate) async fn paste_text(st: &AppState, s: &str, t: &str) -> Result<(), String> {
+    set_clipboard(st, s, t, true).await
+}
+
+/// 设置设备剪贴板（paste 时同时粘贴到当前输入框）
+pub(crate) async fn set_clipboard(st: &AppState, s: &str, t: &str, paste: bool) -> Result<(), String> {
+    let t = t.to_string();
+    with_control(st, s, |mut ctl| async move {
+        send_ctl(&mut ctl, control::Ctl::Clipboard { text: t, paste, seq: 1 }).await?;
+        // 等设备确认（ACK_CLIPBOARD），确认后粘贴已完成
+        device_msg(&mut ctl, 1).await.map(|_| ()).ok_or_else(|| tr!("设备没有确认输入", "The device did not confirm the input"))
+    })
+    .await
+}
+
+/// 读取设备剪贴板
+pub(crate) async fn get_clipboard(st: &AppState, s: &str) -> Result<String, String> {
+    with_control(st, s, |mut ctl| async move {
+        send_ctl(&mut ctl, control::Ctl::GetClipboard).await?;
+        device_msg(&mut ctl, 0).await.ok_or_else(|| tr!("读取设备剪贴板失败", "Cannot read the device clipboard"))
+    })
+    .await
+}
+
+/// 展开通知栏 / 快捷设置、收起面板、旋转屏幕
+pub(crate) async fn device_cmd(st: &AppState, s: &str, name: &str) -> Result<(), String> {
+    if !matches!(name, "notif" | "settings" | "collapse" | "rotate") {
+        return Err(tr!("未知命令：{name}", "Unknown command: {name}"));
+    }
+    let name = name.to_string();
+    with_control(st, s, |mut ctl| async move {
+        send_ctl(&mut ctl, control::Ctl::Cmd { name }).await?;
+        // 这类指令没有回复：留一点时间让设备端执行完再结束会话
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        Ok(())
+    })
+    .await
+}
+
+async fn send_ctl(ctl: &mut TcpStream, c: control::Ctl) -> Result<(), String> {
+    for m in control::encode(&c)? {
+        ctl.write_all(&m).await.map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+/// 等设备发来某类消息（0 剪贴板内容，1 剪贴板确认），最多 5 秒
+async fn device_msg(ctl: &mut TcpStream, want: u8) -> Option<String> {
+    let read = async {
+        loop {
+            match ctl.read_u8().await.ok()? {
+                0 => {
+                    let n = ctl.read_u32().await.ok()?;
+                    let mut buf = vec![0u8; n as usize];
+                    ctl.read_exact(&mut buf).await.ok()?;
+                    if want == 0 {
+                        return Some(String::from_utf8_lossy(&buf).into_owned());
+                    }
+                }
+                1 => {
+                    ctl.read_u64().await.ok()?;
+                    if want == 1 {
+                        return Some(String::new());
+                    }
+                }
+                _ => return None,
+            }
+        }
+    };
+    tokio::time::timeout(Duration::from_secs(5), read).await.ok().flatten()
+}
+
+/// 开一个只有控制通道的 scrcpy-server 会话，用它执行 f 后结束
+async fn with_control<T, F, Fut>(st: &AppState, s: &str, f: F) -> Result<T, String>
+where
+    F: FnOnce(TcpStream) -> Fut,
+    Fut: std::future::Future<Output = Result<T, String>>,
+{
     let adb_path = &st.cfg.adb;
     let jar = st.cfg.server_jar.to_string_lossy().into_owned();
     adb::run_timeout(adb_path, &["-s", s, "push", &jar, AGENT_JAR], Duration::from_secs(30)).await?;
@@ -522,32 +645,10 @@ pub(crate) async fn paste_text(st: &AppState, s: &str, t: &str) -> Result<(), St
             }
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
-        let mut ctl = ctl.ok_or_else(|| tr!("无法启动输入通道（scrcpy-server）", "Cannot start the input channel (scrcpy-server)"))?;
-        for m in control::encode(&control::Ctl::Clipboard { text: t.to_string(), paste: true, seq: 1 })? {
-            ctl.write_all(&m).await.map_err(|e| e.to_string())?;
-        }
-        // 等设备确认（ACK_CLIPBOARD），确认后粘贴已完成
-        let ack = tokio::time::timeout(Duration::from_secs(5), async {
-            loop {
-                match ctl.read_u8().await {
-                    Ok(1) => return ctl.read_u64().await.is_ok(),
-                    Ok(0) => {
-                        let Ok(n) = ctl.read_u32().await else { return false };
-                        let mut buf = vec![0u8; n as usize];
-                        if ctl.read_exact(&mut buf).await.is_err() {
-                            return false;
-                        }
-                    }
-                    _ => return false,
-                }
-            }
-        })
-        .await;
+        let ctl = ctl.ok_or_else(|| tr!("无法启动输入通道（scrcpy-server）", "Cannot start the input channel (scrcpy-server)"))?;
+        let r = f(ctl).await;
         let _ = child.kill().await;
-        match ack {
-            Ok(true) => Ok(()),
-            _ => Err(tr!("设备没有确认输入", "The device did not confirm the input")),
-        }
+        r
     }
     .await;
     let _ = adb::run(adb_path, &["-s", s, "forward", "--remove", &format!("tcp:{port}")]).await;
@@ -687,6 +788,19 @@ mod tests {
         assert!(lines[0].ends_with("click"));
         assert!(lines[1].contains("desc=\"用户名\"") && lines[1].contains("edit") && lines[1].contains("focused"), "{}", lines[1]);
         assert_eq!(elems[0], (540, 1570, "登录 & 注册".to_string()));
+
+        // 插件用的结构：保留所有有范围的节点，坐标为设备像素
+        assert_eq!(screen_of(&nodes), (1080, 2400));
+        let ui = ui_nodes(&nodes);
+        assert_eq!(ui.len(), 4);
+        assert_eq!(ui[1]["text"], json!("登录 & 注册"));
+        assert_eq!(ui[1]["id"], json!("com.x:id/login"));
+        assert_eq!((ui[1]["x"].as_i64(), ui[1]["y"].as_i64()), (Some(540), Some(1570)));
+        assert_eq!(ui[1]["bounds"], json!([100, 1500, 980, 1640]));
+        assert_eq!(ui[1]["clickable"], json!(true));
+        assert_eq!(ui[2]["desc"], json!("用户名"));
+        assert_eq!(ui[2]["focused"], json!(true));
+        assert_eq!(ui[0]["enabled"], json!(true));
     }
 
     #[tokio::test]

@@ -1,7 +1,7 @@
 //! 宿主 → 主进程的 call 处理（SPEC 3.3）：权限检查、match 范围检查、审计与设备操作。
 
 use super::*;
-use crate::{adb, agent, apps, logcat, media, perf, util};
+use crate::{adb, agent, apps, files, logcat, media, perf, scrcpy, util, wireless};
 use futures_util::{SinkExt, StreamExt};
 use std::process::Stdio;
 use tokio::io::{AsyncBufReadExt, BufReader};
@@ -46,6 +46,15 @@ fn is_device_method(m: &str) -> bool {
             | "perf"
             | "overlay"
             | "badge"
+            | "ui"
+            | "files"
+            | "mkdir"
+            | "rename"
+            | "rm"
+            | "clipboard"
+            | "cmd"
+            | "tcpip"
+            | "mirror"
     )
 }
 
@@ -81,6 +90,8 @@ async fn handle(app: &Arc<AppState>, ph: &Arc<Plugin>, m: &str, p: &Value) -> Re
             let mut c = ph.contributions.lock().unwrap();
             if kind == "event" {
                 c.events.remove(id);
+            } else if kind == "export" {
+                c.exports.remove(id);
             } else if kind == "mcp" {
                 // mcp 的标识是 name（SPEC 3.3）
                 c.mcps.retain(|d| d.get("name").and_then(|v| v.as_str()) != Some(id));
@@ -159,6 +170,75 @@ async fn handle(app: &Arc<AppState>, ph: &Arc<Plugin>, m: &str, p: &Value) -> Re
             app.plugins.audit(&ph.id, "media.save", json!({"path": path, "name": item.name.clone()}));
             Ok(json!(item.name))
         }
+        "media.list" => {
+            need(ph, "media")?;
+            Ok(json!(media_items(app).await?))
+        }
+        "media.item" => {
+            let name = arg_str(p, "name").unwrap_or_default();
+            Ok(media_items(app).await?.into_iter().find(|it| it["name"] == name).unwrap_or(Value::Null))
+        }
+        "media.remove" => {
+            need(ph, "media")?;
+            let name = arg_str(p, "name").ok_or_else(|| tr!("缺少 name", "Missing name"))?;
+            media::delete(app, name).await?;
+            app.plugins.audit(&ph.id, "media.remove", json!({"name": name}));
+            Ok(json!(true))
+        }
+        "mirrors" => Ok(scrcpy::mirrors_json(app)["list"].clone()),
+        "computers" => {
+            let list: Vec<Value> = app.peers.list().await.into_iter().map(|p| json!({"id": p.id, "name": p.name, "addr": p.addr})).collect();
+            Ok(json!(list))
+        }
+        "plugins" => {
+            let list: Vec<Value> = app
+                .plugins
+                .plugins()
+                .iter()
+                .map(|x| {
+                    let man = x.manifest();
+                    let exports: Vec<String> = x.contributions.lock().unwrap().exports.iter().cloned().collect();
+                    json!({"id": x.id, "name": man.name, "version": man.version, "state": x.state().as_str(), "exports": exports})
+                })
+                .collect();
+            Ok(json!(list))
+        }
+        "plugin.call" => {
+            let target = arg_str(p, "plugin").unwrap_or_default();
+            let name = arg_str(p, "name").ok_or_else(|| tr!("缺少 name", "Missing name"))?;
+            let other = app.plugins.get(target).filter(|x| x.state() == PluginState::Running);
+            let Some((other, h)) = other.and_then(|x| x.host().map(|h| (x, h))) else {
+                return Err(tr!("插件 {target} 没有运行", "Plugin {target} is not running"));
+            };
+            if !other.contributions.lock().unwrap().exports.contains(name) {
+                return Err(tr!("插件 {target} 没有提供 {name}", "Plugin {target} does not export {name}"));
+            }
+            let q = json!({"name": name, "args": p.get("args").cloned().unwrap_or(Value::Null), "from": ph.id});
+            h.request("export", q, Duration::from_secs(120)).await
+        }
+        "adb.connect" | "adb.pair" | "adb.disconnect" | "adb.discover" => {
+            need(ph, "device.connect")?;
+            let addr = arg_str(p, "addr").unwrap_or_default().to_string();
+            let r = match m {
+                "adb.connect" => wireless::connect(app, wireless::ConnectReq { addr: addr.clone() }).await?["serial"].clone(),
+                "adb.pair" => {
+                    let code = arg_str(p, "code").unwrap_or_default().to_string();
+                    let connect = arg_str(p, "connect").unwrap_or_default().to_string();
+                    let v = wireless::pair(app, wireless::PairReq { addr: addr.clone(), code, connect }).await?;
+                    json!({"serial": v.get("serial").cloned().unwrap_or(Value::Null), "host": v.get("host").cloned().unwrap_or(Value::Null)})
+                }
+                "adb.disconnect" => {
+                    wireless::disconnect(app, wireless::SerialReq { serial: addr.clone() }).await?;
+                    json!(true)
+                }
+                _ => {
+                    let list: Vec<Value> = wireless::discover(&app.cfg.adb).await.into_iter().map(|s| json!({"name": s.name, "kind": s.kind, "addr": s.addr})).collect();
+                    return Ok(json!(list));
+                }
+            };
+            app.plugins.audit(&ph.id, m, json!({"addr": addr}));
+            Ok(r)
+        }
         other => Err(tr!("未知方法：{other}", "Unknown method: {other}")),
     }
 }
@@ -169,12 +249,18 @@ fn register(app: &Arc<AppState>, ph: &Arc<Plugin>, p: &Value) -> Result<Value, S
     if kind == "mcp" {
         need(ph, "mcp")?;
     }
-    if kind == "event" {
+    if kind == "event" || kind == "export" {
         let name = def.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
         if name.is_empty() {
-            return Err(tr!("event 缺少 name", "event requires a name"));
+            return Err(tr!("{kind} 缺少 name", "{kind} requires a name"));
         }
-        ph.contributions.lock().unwrap().events.insert(name);
+        let mut c = ph.contributions.lock().unwrap();
+        if kind == "event" {
+            c.events.insert(name);
+        } else {
+            c.exports.insert(name);
+        }
+        drop(c);
         app.plugins.emit_changed();
         return Ok(json!(true));
     }
@@ -243,27 +329,32 @@ pub(crate) enum DevOut {
 fn perm_for(m: &str) -> Option<&'static str> {
     Some(match m {
         "shell" => "device.shell",
-        "push" | "pull" => "device.files",
+        "push" | "pull" | "files" | "mkdir" | "rename" | "rm" => "device.files",
         "install" | "uninstall" => "device.install",
         "apps" | "launch" | "stop" | "clear" | "foreground" => "device.apps",
-        "input" => "device.input",
-        "screenshot" | "overlay" => "device.screen",
+        "input" | "clipboard" | "cmd" => "device.input",
+        "screenshot" | "overlay" | "ui" => "device.screen",
         "forward" | "unforward" => "device.forward",
         "logcat" | "logwatch" => "device.logs",
         "perf" => "device.perf",
+        "tcpip" => "device.connect",
         _ => return None,
     })
 }
 
-/// 只能在本机执行的设备操作（端口转发指向设备所在电脑）
+/// 只能在本机执行的设备操作（端口转发指向设备所在电脑；切换无线连到本机 adb）
 fn local_only(m: &str) -> bool {
-    matches!(m, "forward" | "unforward")
+    matches!(m, "forward" | "unforward" | "tcpip")
 }
 
-/// 路由前的检查：远程设备不支持端口转发（SPEC 7.2）
+/// 路由前的检查：远程设备不支持端口转发与切换无线（SPEC 7.2）
 fn check_route(m: &str, id: &str) -> Result<(), String> {
     if local_only(m) && split_dev(id).is_some() {
-        return Err(tr!("远程电脑上的设备暂不支持端口转发", "Port forwarding is not supported for devices on remote computers"));
+        return Err(if m == "tcpip" {
+            tr!("只能切换这台电脑上的设备", "Only devices on this computer can be switched")
+        } else {
+            tr!("远程电脑上的设备暂不支持端口转发", "Port forwarding is not supported for devices on remote computers")
+        });
     }
     Ok(())
 }
@@ -308,6 +399,10 @@ async fn device_op(app: &Arc<AppState>, ph: &Arc<Plugin>, m: &str, p: &Value, id
             return Ok(json!(true));
         }
         "logwatch" => return start_watch(app, ph, id, p),
+        "mirror" => {
+            app.plugins.emit(arg_str(p, "client"), json!({"type": "mirror", "plugin": ph.id, "serial": id}));
+            return Ok(json!(true));
+        }
         _ => {}
     }
 
@@ -374,6 +469,10 @@ async fn device_op(app: &Arc<AppState>, ph: &Arc<Plugin>, m: &str, p: &Value, id
                     on_installed(app, id, pkg);
                 }
             }
+            Ok(json!(true))
+        }
+        "uninstall" => {
+            on_uninstalled(app, id, &pkg_arg(p)?);
             Ok(json!(true))
         }
         "pull" => {
@@ -451,9 +550,21 @@ fn audit_json(m: &str, id: &str, q: &Value) -> Option<Value> {
         "uninstall" | "launch" | "stop" | "clear" => {
             d.insert("package".into(), s("package"));
         }
-        "input" => {
+        "input" | "cmd" => {
             d.insert("kind".into(), s("kind"));
+            d.insert("name".into(), s("name"));
         }
+        "clipboard" => {
+            d.insert("set".into(), json!(q.get("text").is_some_and(|t| t.is_string())));
+        }
+        "mkdir" | "rm" => {
+            d.insert("path".into(), q.get("path").or(q.get("paths")).cloned().unwrap_or(Value::Null));
+        }
+        "rename" => {
+            d.insert("path".into(), s("path"));
+            d.insert("name".into(), s("name"));
+        }
+        "tcpip" => {}
         "forward" => {
             d.insert("local".into(), json!(port_of(q.get("local"))));
             d.insert("remote".into(), s("remote"));
@@ -625,6 +736,46 @@ pub(crate) async fn exec_local(app: &AppState, m: &str, p: &Value, s: &str) -> R
             DevOut::Json(json!(text.join("\n")))
         }
         "perf" => DevOut::Json(perf::snapshot(app, s).await?),
+        "ui" => DevOut::Json(agent::ui_tree(app, s).await?),
+        "files" => {
+            let path = arg_str(p, "path").unwrap_or("").to_string();
+            DevOut::Json(files::list(app, files::ListReq { serial: s.to_string(), path }).await?)
+        }
+        "mkdir" => {
+            let path = arg_str(p, "path").ok_or_else(|| tr!("缺少 path", "Missing path"))?.trim_end_matches('/');
+            let (dir, name) = path.rsplit_once('/').ok_or_else(|| tr!("路径必须是以 / 开头的绝对路径", "Path must be absolute (start with /)"))?;
+            let r = files::mkdir(app, files::TwoReq { serial: s.to_string(), path: dir.to_string(), to: name.to_string() }).await?;
+            DevOut::Json(r["path"].clone())
+        }
+        "rename" => {
+            let path = arg_str(p, "path").ok_or_else(|| tr!("缺少 path", "Missing path"))?.to_string();
+            let to = arg_str(p, "name").ok_or_else(|| tr!("缺少 name", "Missing name"))?.to_string();
+            let r = files::rename(app, files::TwoReq { serial: s.to_string(), path, to }).await?;
+            DevOut::Json(r["path"].clone())
+        }
+        "rm" => {
+            let paths: Vec<String> = match p.get("paths") {
+                Some(Value::Array(a)) => a.iter().filter_map(|v| v.as_str()).map(String::from).collect(),
+                _ => arg_str(p, "path").map(|x| vec![x.to_string()]).unwrap_or_default(),
+            };
+            files::delete(app, files::DeleteReq { serial: s.to_string(), paths }).await?;
+            DevOut::Json(json!(true))
+        }
+        "clipboard" => match p.get("text").and_then(|v| v.as_str()) {
+            Some(text) => {
+                agent::set_clipboard(app, s, text, false).await?;
+                DevOut::Json(json!(true))
+            }
+            None => DevOut::Json(json!(agent::get_clipboard(app, s).await?)),
+        },
+        "cmd" => {
+            agent::device_cmd(app, s, arg_str(p, "name").unwrap_or("")).await?;
+            DevOut::Json(json!(true))
+        }
+        "tcpip" => {
+            let r = wireless::tcpip(app, wireless::SerialReq { serial: s.to_string() }).await?;
+            DevOut::Json(r["serial"].clone())
+        }
         other => return Err(tr!("未知方法：{other}", "Unknown method: {other}")),
     };
     Ok(out)
@@ -920,6 +1071,21 @@ pub(super) async fn remove_forward(adb_path: &std::path::Path, plugin: &str, f: 
 
 // ---------------------------------------------------------------- 小工具
 
+/// 图库里的文件（带本机路径）：`[{name, kind, device, size, time, path}]`
+pub(super) async fn media_items(app: &AppState) -> Result<Vec<Value>, String> {
+    let v = media::list(app).await?;
+    let dir = std::path::PathBuf::from(v["dir"].as_str().unwrap_or(""));
+    Ok(v["items"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|it| {
+            let name = it["name"].as_str().unwrap_or("");
+            json!({"name": name, "kind": it["kind"], "device": it["device"], "size": it["size"], "time": it["time"], "path": dir.join(name).to_string_lossy()})
+        })
+        .collect())
+}
+
 fn arg_str<'a>(p: &'a Value, k: &str) -> Option<&'a str> {
     p.get(k).and_then(|v| v.as_str()).map(str::trim).filter(|s| !s.is_empty())
 }
@@ -1021,7 +1187,9 @@ mod tests {
         assert!(check_route("logwatch", "p1/emulator-5554").is_ok());
         assert!(check_route("forward", "p1/emulator-5554").is_err());
         assert!(check_route("unforward", "p1/emulator-5554").is_err());
-        assert!(local_only("forward") && local_only("unforward") && !local_only("shell"));
+        assert!(check_route("tcpip", "p1/emulator-5554").is_err());
+        assert!(check_route("ui", "p1/emulator-5554").is_ok());
+        assert!(local_only("forward") && local_only("unforward") && local_only("tcpip") && !local_only("shell"));
     }
 
     #[test]
@@ -1036,6 +1204,16 @@ mod tests {
         assert_eq!(perm_for("logwatch"), Some("device.logs"));
         assert_eq!(perm_for("screenshot"), Some("device.screen"));
         assert_eq!(perm_for("forward"), Some("device.forward"));
+        assert_eq!(perm_for("ui"), Some("device.screen"));
+        assert_eq!(perm_for("files"), Some("device.files"));
+        assert_eq!(perm_for("rm"), Some("device.files"));
+        assert_eq!(perm_for("clipboard"), Some("device.input"));
+        assert_eq!(perm_for("cmd"), Some("device.input"));
+        assert_eq!(perm_for("tcpip"), Some("device.connect"));
+        assert_eq!(perm_for("mirror"), None);
+        for m in ["ui", "files", "mkdir", "rename", "rm", "clipboard", "cmd", "tcpip", "mirror"] {
+            assert!(is_device_method(m), "{m}");
+        }
     }
 
     #[test]
@@ -1052,6 +1230,13 @@ mod tests {
         assert_eq!(d["to"], json!("/a"));
         assert!(audit_json("prop", "dev", &q).is_none());
         assert!(audit_json("logcat", "dev", &q).is_none());
+        assert!(audit_json("ui", "dev", &q).is_none());
+        // 剪贴板只记是否写入，不记内容
+        let d = audit_json("clipboard", "dev", &json!({"text": "secret"})).unwrap();
+        assert_eq!(d["set"], json!(true));
+        assert!(!d.to_string().contains("secret"));
+        let d = audit_json("rm", "dev", &json!({"paths": ["/sdcard/a"]})).unwrap();
+        assert_eq!(d["path"], json!(["/sdcard/a"]));
     }
 
     #[test]

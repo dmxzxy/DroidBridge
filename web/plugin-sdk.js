@@ -3,6 +3,8 @@
 //   await droidbridge.call('hello', { a: 1 })   // 调用 db.web.handle 注册的处理函数
 //   droidbridge.on('tick', (data) => {})        // 接收 db.web.emit 发出的消息
 //   droidbridge.device.serial                  // 打开这个面板的设备（可能为空）
+//   droidbridge.lang                           // 界面语言 "zh" / "en"
+//   droidbridge.notify('完成', { kind: 'ok' })  // 在界面上弹提示
 // 与父页面通过 postMessage 通信：带请求 id，超时 5 分钟。
 (function () {
   'use strict';
@@ -12,6 +14,7 @@
   var seq = 0;
   var sdk = {
     device: { serial: '' },
+    lang: 'zh',
     /** 调用插件自己的 web 处理函数，返回 Promise */
     call: function (name, args) {
       return new Promise(function (resolve, reject) {
@@ -31,6 +34,10 @@
     open: function (url, opts) {
       opts = opts || {};
       post({ __droidbridge: 1, t: 'open', url: String(url), name: opts.name, title: opts.title, mode: opts.mode });
+    },
+    /** 在界面上弹提示。opts: {kind: 'info' | 'ok' | 'warn' | 'error'} */
+    notify: function (text, opts) {
+      post({ __droidbridge: 1, t: 'notify', text: String(text), kind: (opts || {}).kind });
     },
     /** 监听 db.web.emit 发来的消息 */
     on: function (name, fn) {
@@ -71,6 +78,7 @@
       }
     } else if (d.t === 'init') {
       if (d.device && typeof d.device === 'object') sdk.device.serial = String(d.device.serial || '');
+      if (d.lang) sdk.lang = String(d.lang);
       var ready = listeners.get('ready');
       if (ready) for (var j = 0; j < ready.slice().length; j++) { try { ready[j](sdk.device); } catch (err) { console.error(err); } }
     }

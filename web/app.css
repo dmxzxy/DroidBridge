@@ -728,6 +728,34 @@ dialog.settings .dlg-b{flex:1;min-height:0;max-height:none;overflow:hidden;paddi
 .plugd-n{display:flex;align-items:baseline;gap:8px;min-width:0}
 .plugd-n b{font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .plugd-n .ver{color:var(--faint);font-size:11px;font-family:Consolas,"SF Mono",monospace}
+.plug-upd{display:inline-grid;place-items:center;width:16px;height:16px;border-radius:50%;background:var(--accent);color:#fff;flex:none}
+.plug-upd svg{width:10px;height:10px;stroke-width:2.5}
+.plugsrc{display:flex;flex-direction:column;gap:10px;margin-top:10px}
+.plugsrc .plugpane-n svg{width:14px;height:14px}
+.plugsrc .plugpane-n.grow{flex:1;font-weight:600;color:var(--sub)}
+.plugsrc .plugpane-n:first-child{flex:none;display:inline-grid;color:var(--faint)}
+.plugsrc-h{display:flex;align-items:center;gap:8px;min-height:40px;padding:4px 6px 4px 12px;border-bottom:1px solid var(--line)}
+.plugsrc-h .si{color:var(--faint);display:inline-grid}
+.plugsrc-h .si svg{width:15px;height:15px}
+.plugsrc-h b{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.plugsrc-h .ver{color:var(--faint);font-size:11px;font-family:Consolas,"SF Mono",monospace;white-space:nowrap}
+.plugsrc-h .ib{width:28px;height:28px}
+.plugsrc-h .grow{flex:1}
+.plugsrc-err{display:inline-grid;color:var(--bad)}
+.plugsrc-err svg{width:15px;height:15px}
+.plugsrc-row.static{cursor:default}
+.plugsrc-acts{display:inline-flex;align-items:center;gap:2px}
+.plugsrc-acts .ib{width:28px;height:28px}
+.plugsrc-st{display:inline-grid;place-items:center;width:28px;height:28px;color:var(--faint)}
+.plugsrc-st svg{width:15px;height:15px}
+.plugsrc-st.ok{color:var(--ok)}
+.plugsrc-st.busy svg{animation:spin .9s linear infinite;color:var(--accent)}
+.plugsrc-add{display:flex;align-items:center;justify-content:center;gap:8px;height:52px;border:1.5px dashed var(--line2);border-radius:8px;background:none;color:var(--sub);cursor:pointer}
+.plugsrc-add:hover{border-color:var(--accent);color:var(--accent)}
+.plugsrc-add svg{width:16px;height:16px}
+.plugsrc-more{margin:2px 0 6px}
+.plugsrc-more summary{cursor:pointer;color:var(--sub);font-size:12px;margin-bottom:8px}
+.plugsrc-clear{display:flex;align-items:center;gap:6px;color:var(--sub);font-size:12px}
 .plugd-s{display:flex;align-items:center;gap:6px;color:var(--sub);font-size:11px}
 .plugd-d{color:var(--sub);font-size:12px;line-height:1.6;margin-top:-4px}
 .plug-picons{display:flex;flex-wrap:wrap;gap:6px}

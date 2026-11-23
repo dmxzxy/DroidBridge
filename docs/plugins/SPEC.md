@@ -36,20 +36,21 @@
 |---|---|
 | （无需声明） | 列出设备、读设备属性 `prop`、注册界面贡献、通知、对话框、插件自己的存储/设置、插件目录内只读文件、插件数据目录读写、定时器、日志 |
 | `device.shell` | `dev:shell` 任意 shell 命令 |
-| `device.files` | `dev:push` / `dev:pull` |
+| `device.files` | `dev:push` / `dev:pull`、`dev:list` `mkdir` `rename` `remove`（只限共享存储） |
 | `device.install` | `dev:install` / `dev:uninstall` |
 | `device.apps` | `dev:apps` `hasApp` `launch` `stop` `clear` `foreground`、`app.foreground` 事件 |
-| `device.input` | `dev:tap` `swipe` `key` `text` |
-| `device.screen` | `dev:screenshot`、`db.overlay` |
+| `device.input` | `dev:tap` `swipe` `longpress` `key` `text` `cmd`、`dev:getClipboard` / `setClipboard` |
+| `device.screen` | `dev:screenshot`、`dev:ui` `find` `waitFor`、`db.overlay` |
 | `device.forward` | `dev:forward` / `dev:reverse` / `dev:unforward` |
 | `device.logs` | `dev:logcat`、`db.logcat.watch` |
 | `device.perf` | `dev:perf` |
+| `device.connect` | `db.adb.connect` `pair` `disconnect` `discover`、`dev:tcpip` |
 | `fs.read` | 读本机任意路径 |
 | `fs` | 读写本机任意路径（含 `fs.read`） |
 | `exec` | `db.exec` 运行本机程序、`db.open` 打开文件/网址 |
 | `net` | `db.http.request` / `db.http.download` |
 | `clipboard` | `db.clipboard.get/set` |
-| `media` | `db.media.save` 存入图库 |
+| `media` | `db.media.save` 存入图库、`db.media.list` / `remove` |
 | `mcp` | `db.mcp.tool` 注册 AI 工具 |
 
 `hasApp` 例外：`match.apps` 过滤由主进程内部完成，不需要权限。
@@ -96,6 +97,7 @@
 | `panel` | `{id, serial, event}` | 即时模式渲染（见 3.5），返回 `{"title":..., "tree":[...]}` |
 | `metric` | `{id, serial}` | 调用指标函数 `fn(dev)`，返回数字或 null |
 | `web` | `{name, args, serial}` | 调用 `db.web.handle(name, fn)` 注册的 `fn(dev_or_nil, args)`，返回值 |
+| `export` | `{name, args, from}` | 调用 `db.export(name, fn)` 注册的 `fn(args, from)`（from 为调用方插件 id），返回值 |
 | `mcp` | `{name, args, serial}` | 调用 `db.mcp.tool` 注册的 `fn(dev, args)`；返回字符串或表（主进程转成文本） |
 | `event` | `{name, args:[...]}` | 依次调用 `db.on(name, fn)` 的所有监听者（各自独立协程，不等待完成），立即返回 `true`。`args` 中的设备以 `{"serial":..}` 形式给出，宿主转成 dev 对象 |
 | `settings` | `{values}` | 更新 `db.settings`，然后触发 `settings.changed` 事件，返回 `true` |
@@ -109,7 +111,7 @@
 
 界面贡献：
 - `register` `{kind, def}`；`unregister` `{kind, id}`。kind 与 def：
-  - `menu`: `{id, target, path, icon?, filter?}`；target ∈ `device | app | file | tools | toolbar`；path 用 `/` 分级，如 `"MyGame/安装测试包"`；filter：`{hasApp?, models?, serials?, packages?, ext?, dir?}`（packages/ext/dir 由前端判断；hasApp/models/serials 由主进程按设备判断）
+  - `menu`: `{id, target, path, icon?, filter?}`；target ∈ `device | app | file | tools | toolbar | media | logcat`；path 用 `/` 分级，如 `"MyGame/安装测试包"`；filter：`{hasApp?, models?, serials?, packages?, ext?, dir?}`（packages/ext/dir 由前端判断；hasApp/models/serials 由主进程按设备判断）
   - `panel`: `{id, title, icon?, dock, filter?, refresh?}`；dock ∈ `device | window | settings`；refresh 秒数（前端自动重绘间隔，可省略）
   - `webpanel`: `{id, title, icon?, entry, dock, filter?}`；entry 为插件目录下相对路径，如 `web/index.html`
   - `status`: `{id, text, kind?, tip?, clickable}`；kind ∈ `info | ok | warn | error`
@@ -117,6 +119,7 @@
   - `loghl`: `{id, text, tag?, kind?, label?}`（不区分大小写的子串匹配）
   - `mcp`: `{name, description, params}`；params = JSON Schema `properties`，`required` 单独字段 `{..., "required":[..]}`
   - `event`: `{name}`（订阅事件，主进程据此决定是否轮询前台应用等）
+  - `export`: `{name}`（提供给其他插件调用的函数）
 - `badge` `{serial, text|null, kind?, tip?}`
 - `notify` `{text, kind?}`
 - `dialog` `{kind, title, message?, fields?, default?, accept?, client?}` → 用户答案：confirm→bool；prompt→string|null；form→object|null；file→本机路径|null（kind=file 时浏览器上传文件到这台电脑的临时目录）
@@ -142,7 +145,18 @@
 - `logcat` `{serial, lines?, level?, grep?, package?}` → string
 - `logwatch` `{serial, level?, tag?, grep?, package?}` → sub id（数字）；`logunwatch` `{sub}`
 - `perf` `{serial}` → perf 快照对象
-- `media.save` `{path, serial?}` → 图库文件名
+- `ui` `{serial}` → `{width, height, nodes:[{text, desc, id, class, package, bounds:[x1,y1,x2,y2], x, y, clickable, scrollable, checked, selected, focused, enabled}]}`（设备像素；与 AI 工具共用设备锁）
+- `files` `{serial, path?}` → `{path, parent, items:[{name, dir, size, mtime}], space}`；`mkdir` `{serial, path}` → 新路径；`rename` `{serial, path, name}` → 新路径；`rm` `{serial, path | paths}`。只允许共享存储（`/sdcard`）
+- `clipboard` `{serial, text?}`：给了 text 时写入设备剪贴板，否则返回当前内容
+- `cmd` `{serial, name}`；name ∈ `notif | settings | collapse | rotate`
+- `tcpip` `{serial}` → 无线连接后的设备标识（只支持本机设备）
+- `mirror` `{serial, client?}`：在界面里打开投屏窗口（WS 事件 `mirror`）；宿主像 dialog 一样自动附上 `client`
+- `media.save` `{path, serial?}` → 图库文件名；`media.list` `{}` → `[{name, kind, device, size, time, path}]`；`media.remove` `{name}`；`media.item` `{name}` → 单个条目或 null（不需要权限，media 菜单用）
+
+这台电脑：
+- `adb.connect` `{addr}` → 设备标识；`adb.pair` `{addr, code, connect?}` → `{serial|null, host}`；`adb.disconnect` `{addr}`；`adb.discover` `{}` → `[{name, kind, addr}]`
+- `mirrors` `{}` → `[{serial, viewers, controller}]`；`computers` `{}` → `[{id, name, addr}]`
+- `plugins` `{}` → `[{id, name, version, state, exports}]`；`plugin.call` `{plugin, name, args}` → 目标插件 `export` 请求的返回值（目标未运行或未 export 该名字时报错，120 秒超时）
 
 主进程对每个 call：检查权限（表 1），检查设备在插件 match 范围内，记录审计（会改变设备或运行程序的操作），执行。
 
@@ -183,7 +197,7 @@
 - 状态：`stopped | starting | running | crashed | failed | needs_grant | disabled | invalid`（清单错误）。
 - 限流：每个插件同时进行的设备操作最多 4 个；每台设备同时最多 2 个插件操作（信号量）；每个插件每秒最多 50 次 call，超出则排队等待。
 - 控制台：每个插件保留最近 1000 条 `{time, level, msg, src}`；新条目通过 ws 广播 `console`。
-- 事件：维护设备列表（每 2 秒 `adb devices`），变化时向订阅了 `device.connected` / `device.disconnected` 的插件发 `event`。有插件订阅 `app.foreground` 时，每 2 秒查一次这些设备的前台应用，变化才发。DroidBridge 自身完成安装（文件管理器、拖放、插件 install）后发 `app.installed` `{dev, package}`（能拿到包名时）。插件启动完成（ready）后对每台在线设备补发一次 `device.connected`。
+- 事件：维护设备列表（每 2 秒 `adb devices`），变化时向订阅了 `device.connected` / `device.disconnected` 的插件发 `event`。有插件订阅 `app.foreground` 时，每 2 秒查一次这些设备的前台应用，变化才发。DroidBridge 自身完成安装（文件管理器、拖放、插件 install）后发 `app.installed` `{dev, package}`（能拿到包名时）；应用管理或插件卸载后发 `app.uninstalled` `{dev, package}`；截图、录屏存入图库后发 `media.saved` `{item}`。插件启动完成（ready）后对每台在线设备补发一次 `device.connected`。
 - MCP：`mcp.rs` 的工具列表追加本机所有运行中插件注册的工具，名字 `<pluginid>__<name>`（非法字符替换为 `_`，截断到 64）。调用时路由到对应插件 `mcp` 请求（120 秒超时）。远程电脑：`list_tools` 同时向各远程电脑 `GET /api/plugins/mcp` 合并（按名字去重）；调用远程设备时经 `/api/agent/exec` 转发，`agent::exec` 遇到含 `__` 的工具名交给 `plugins::mcp_call`。
 
 ### 4.1 HTTP 接口（全部经过现有 auth 中间件；带 `?peer=` 时转发给远程电脑）
@@ -193,7 +207,7 @@
 | GET `/api/plugins` | | `{manage: bool, dir: "插件目录", safeMode: bool, list:[{id,name,version,description,author,dir,state,error?,enabled,permissions,granted,settings:[schema],values:{}}]}` |
 | POST `/api/plugins/manage` | `{id?, action, ...}` action ∈ `enable`(同时授予当前 permissions) `disable` `reload` `settings`(values) `open_dir`(id 可省略，打开插件根目录或该插件目录) `create`(id,name：用模板新建并直接启用) `rescan` | `{ok:true}`。**仅本机请求可用**（与 auth 中“本机”判断一致：本机 IP 且非反向代理；或桌面窗口），否则 403 |
 | GET `/api/plugins/contrib?serial=` | | `{menus:[{plugin,id,target,path,icon,filter}], panels:[{plugin,id,title,icon,dock,refresh,web?:"/plugin-web/<id>/<entry>"}], status:[{plugin,id,text,kind,tip,clickable}], metrics:[{plugin,id,label,unit}], loghl:[{plugin,id,text,tag,kind,label}], badges:{serial:[{plugin,text,kind,tip}]}, overlays:{serial:[{plugin,shapes,size}]}}`。给了 serial 时，菜单/面板/指标按 hasApp/models/serials 和插件 match 过滤 |
-| POST `/api/plugins/invoke` | `{plugin, kind:"menu"\|"status", id, ctx:{serial?,package?,path?,isDir?}, client?}` | 处理函数返回值 `{ok:..}` 或 `{error}`（等待完成，最长 10 分钟） |
+| POST `/api/plugins/invoke` | `{plugin, kind:"menu"\|"status", id, ctx:{serial?,package?,path?,isDir?,name?,line?}, client?}` | 处理函数返回值 `{ok:..}` 或 `{error}`（等待完成，最长 10 分钟） |
 | POST `/api/plugins/panel` | `{plugin, panel, serial?, event?, client?}` | `{title, tree}`（5 秒超时） |
 | GET `/api/plugins/metrics?serial=` | | `[{plugin,id,label,unit,value}]`（每个 3 秒超时，失败 value=null） |
 | POST `/api/plugins/web` | `{plugin, name, args, serial?, client?}` | `{ok:..}` |
@@ -216,6 +230,7 @@ WS 事件（JSON 文本帧）：
 {"type":"dialog.close","id"}
 {"type":"progress","plugin","id","title","frac","text","done"}
 {"type":"open","plugin","url","name","title","mode"}
+{"type":"mirror","plugin","serial"}               // 打开该设备的投屏窗口
 {"type":"repaint","plugin","panel"}
 {"type":"overlay","plugin","serial","shapes","size"}
 {"type":"console","plugin","entry":{time,level,msg,src}}
@@ -227,9 +242,9 @@ WS 事件（JSON 文本帧）：
 
 - 每个页面生成随机 `client` id；对本机和每个已添加的远程电脑各开一个 `/ws/plugins`（远程用 `?peer=`），断线自动重连。
 - 设置里新增“插件”页：列表（状态、版本、权限）、启用（弹窗列出权限中文说明并确认）/停用/重新加载/打开目录/新建插件、设置表单（按 settings schema 生成）、控制台（实时日志，error 红色，可清空、可复制）。非本机（manage=false）时只读并提示“只能在这台电脑上管理插件”。远程电脑的插件在列表里按电脑分组。
-- 菜单贡献：设备卡片右键菜单、应用管理右键菜单、文件浏览器右键菜单、侧边栏“工具”菜单（有 tools 菜单时才出现按钮）、投屏工具栏“插件”按钮（toolbar 项）。path 多级 → 子菜单（不支持子菜单时用 “MyGame ▸ 安装测试包” 文本）。点击 → invoke，执行中 toast 显示进度，失败 toast error。
+- 菜单贡献：设备卡片右键菜单、应用管理右键菜单、文件浏览器右键菜单、相册右键菜单（media）、日志行右键菜单（logcat）、侧边栏“工具”菜单（有 tools 菜单时才出现按钮）、投屏工具栏“插件”按钮（toolbar 项）。path 多级 → 子菜单（不支持子菜单时用 “MyGame ▸ 安装测试包” 文本）。点击 → invoke，执行中 toast 显示进度，失败 toast error。
 - 面板：dock=device 的面板作为投屏窗口侧边的页签（与日志、文件同级）；dock=window 从工具菜单打开为对话框；dock=settings 显示在插件设置页。根据 tree 绘制控件；交互 → 发送 event 并用返回的 tree 重绘；收到 repaint 或 refresh 到期时重绘。
-- webpanel：sandbox iframe（`sandbox="allow-scripts allow-forms"`，不加 allow-same-origin），postMessage 桥接：只接受 `e.source === iframe.contentWindow` 的消息；iframe 只能调用自己插件的 `web` 处理函数；`webmsg` 转发给该插件的 iframe。iframe 发来的 `{t:"open", url, name, title, mode}`（SDK 的 `droidbridge.open`）按 `uiopen` 的规则直接在本界面打开，name 加上插件 id 前缀，避免不同插件互相复用窗口。
+- webpanel：sandbox iframe（`sandbox="allow-scripts allow-forms"`，不加 allow-same-origin），postMessage 桥接：只接受 `e.source === iframe.contentWindow` 的消息；iframe 只能调用自己插件的 `web` 处理函数；`webmsg` 转发给该插件的 iframe。iframe 加载后收到 `{t:"init", device:{serial}, lang}`。iframe 发来的 `{t:"open", url, name, title, mode}`（SDK 的 `droidbridge.open`）按 `uiopen` 的规则直接在本界面打开，name 加上插件 id 前缀，避免不同插件互相复用窗口；`{t:"notify", text, kind}`（`droidbridge.notify`）显示为 toast。
 - 徽标显示在设备卡片；状态栏项显示在侧边栏底部；指标在性能浮层追加行（每 2 秒拉 metrics）；日志高亮在 logcat 行上加样式与标签；覆盖层在投屏画面上绘制（canvas 叠加层，pointer-events:none，坐标按设备像素缩放）。
 - 对话框：confirm / prompt / form / file（选择文件后上传到 `/api/plugins/upload`，把返回 path 作为答案）；progress 显示为常驻 toast。
 - 所有插件提供的文字都用 textContent 插入，绝不用 innerHTML。
@@ -245,7 +260,7 @@ db.spawn(fn, ...)    -- 新协程，立即返回
 db.wait(sec)         -- 等待（仅协程内）
 db.every(sec, fn) -> timer   -- timer:cancel()
 db.after(sec, fn) -> timer
-db.on(event, fn)     -- device.connected(dev) device.disconnected(dev) app.foreground(dev, pkg) app.installed(dev, pkg) settings.changed(values) plugin.unload()
+db.on(event, fn)     -- device.connected(dev) device.disconnected(dev) app.foreground(dev, pkg) app.installed(dev, pkg) app.uninstalled(dev, pkg) media.saved(item) settings.changed(values) plugin.unload()
 
 db.devices() -> {dev...}
 db.device(serial) -> dev|nil
@@ -254,7 +269,12 @@ dev:prop(name) dev:shell(cmd, {timeout}) -> out, code
 dev:push(localPath, remotePath) dev:pull(remotePath, localPath)
 dev:install(apkPath, {replace=true, grant=false, downgrade=false}) dev:uninstall(pkg)
 dev:apps({system=false}) dev:hasApp(pkg) dev:launch(pkg, activity) dev:stop(pkg) dev:clear(pkg) dev:foreground()
-dev:tap(x, y) dev:swipe(x1, y1, x2, y2, ms) dev:key(name) dev:text(s)
+dev:tap(x, y) dev:swipe(x1, y1, x2, y2, ms) dev:longpress(x, y, ms=800) dev:key(name) dev:text(s)
+dev:getClipboard() -> string ; dev:setClipboard(text) ; dev:cmd("notif"|"settings"|"collapse"|"rotate")
+dev:ui() -> {width, height, nodes} ; dev:find(q) -> node|nil ; dev:waitFor(q, timeout=10) -> node|nil
+-- q：字符串（等于 text / desc / 资源 id，id 可写短名）、表（各字段相等）或函数 fn(node) -> bool
+dev:list(path) dev:mkdir(path) dev:rename(path, name) dev:remove(pathOrList)   -- 设备共享存储
+dev:tcpip() -> serial ; dev:mirror()
 dev:screenshot({save=false}) -> localPath
 dev:forward(localPort, "tcp:1234") -> localPort ; dev:reverse("tcp:1234", localPort) ; dev:unforward(localPort)
 dev:logcat({lines, level, grep, package}) -> string
@@ -297,10 +317,13 @@ db.http.download(url, path, {headers, timeout=1800}) -> {status, headers, size} 
 db.clipboard.get() db.clipboard.set(text)
 db.store.get(key) db.store.set(key, value)   -- JSON 持久化到 dataDir/store.json
 db.json.encode(v) db.json.decode(s)
-db.media.save(path)
+db.media.save(path) ; db.media.list() ; db.media.remove(name)
+db.adb.connect(addr) db.adb.pair(addr, code, connectAddr) db.adb.disconnect(addr) db.adb.discover()
+db.mirrors() db.computers()
+db.export(name, fn(args, from)) ; db.plugins.list() ; db.plugins.call(id, name, args)
 ```
 相对路径：`db.fs` 中相对路径相对于 `dataDir`；`plugin://x` 表示插件目录内的文件（只读）。
-菜单处理函数参数：device/toolbar → `fn(dev)`；app → `fn(dev, pkg)`；file → `fn(dev, path, isDir)`；tools → `fn()`。
+菜单处理函数参数：device/toolbar → `fn(dev)`；app → `fn(dev, pkg)`；file → `fn(dev, path, isDir)`；tools → `fn()`；media → `fn(item)`；logcat → `fn(dev, line)`。
 
 沙箱：只开放 `base`（去掉 `dofile` `loadfile`；`load` 仅允许文本块且环境默认为插件环境）、`string` `table` `math` `utf8` `coroutine`（重写过的）、`os.time` `os.clock` `os.date`。没有 `io` `debug` `package` `os.execute` 等。`require(name)` 只在插件目录内按 `name.lua`、`lua/name.lua` 查找（`.` 转 `/`），结果缓存。
 
@@ -319,13 +342,13 @@ db.media.save(path)
 
 | op | 参数 | 说明 |
 |---|---|---|
-| prop shell uninstall apps hasApp launch stop clear foreground input logcat perf | 同 SPEC 3.3 | 直接在 B 上执行 |
+| prop shell uninstall apps hasApp launch stop clear foreground input logcat perf ui files mkdir rename rm clipboard cmd | 同 SPEC 3.3 | 直接在 B 上执行 |
 | push | `remote`；body=文件内容 | B 存到临时目录后 `adb push`，完成后删除 |
 | install | `replace grant downgrade`；body=APK | 同上；返回 `{ok:true, package?}`（能拿到新包名时，A 据此发 `app.installed`） |
 | pull | `remote` | 返回文件字节，A 写到插件给的本机路径 |
 | screenshot | | 返回 PNG 字节，A 存到自己的 `.tmp`（save=true 时存入 A 的图库） |
 
-不支持远程的：`forward`/`unforward`（端口只能转发到设备所在电脑）→ A 直接返回错误“远程电脑上的设备暂不支持端口转发”。
+不支持远程的：`forward`/`unforward`（端口只能转发到设备所在电脑）→ A 直接返回错误“远程电脑上的设备暂不支持端口转发”；`tcpip`（连接建在 A 的 adb 上）同样只支持本机设备。
 `logwatch` 远程：A 作为 WebSocket 客户端连接 B 的 `/ws/logcat?serial=<原始serial>`（复用 peers 里连接远程 WS 的代码与令牌），按原有过滤规则转发给插件。
 
 ### 7.3 主进程（A）

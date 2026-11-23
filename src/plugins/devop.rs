@@ -20,6 +20,7 @@ use std::net::SocketAddr;
 /// 允许远程执行的设备操作（SPEC 7.2）
 const OPS: &[&str] = &[
     "prop", "shell", "push", "pull", "install", "uninstall", "apps", "hasApp", "launch", "stop", "clear", "foreground", "input", "logcat", "perf", "screenshot",
+    "ui", "files", "mkdir", "rename", "rm", "clipboard", "cmd",
 ];
 
 fn err(code: StatusCode, msg: impl Into<String>) -> Response {
@@ -103,6 +104,10 @@ fn audit_detail(op: &str, p: &Value) -> Value {
         "uninstall" | "launch" | "stop" | "clear" | "hasApp" => &["package"],
         "input" => &["kind"],
         "prop" => &["name"],
+        "cmd" => &["name"],
+        "mkdir" | "files" => &["path"],
+        "rename" => &["path", "name"],
+        "rm" => &["path", "paths"],
         _ => &[],
     };
     for k in keys {
@@ -195,7 +200,7 @@ mod tests {
     fn ops_list() {
         assert!(OPS.contains(&"shell") && OPS.contains(&"pull") && OPS.contains(&"screenshot"));
         // 端口转发只能在本机做（SPEC 7.2）
-        assert!(!OPS.contains(&"forward") && !OPS.contains(&"unforward"));
+        assert!(!OPS.contains(&"forward") && !OPS.contains(&"unforward") && !OPS.contains(&"tcpip"));
         assert!(!OPS.contains(&"badge") && !OPS.contains(&"logwatch"));
     }
 

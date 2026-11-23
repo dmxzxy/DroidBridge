@@ -106,6 +106,8 @@ class LogPanel {
       if (hl.kind) el.classList.add('pk-' + hl.kind);
       if (hl.label) el.append(' ', h('span', { class: 'plug-tag' }, hl.label));
     }
+    // 插件贡献的日志行右键菜单
+    if (typeof pluginMenuItems === 'function') ctxMenu(el, () => pluginMenuItems(this.v.host, 'logcat', { serial: this.v.dev.serial, line: e.raw }));
     return el;
   }
 

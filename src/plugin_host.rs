@@ -361,7 +361,7 @@ impl Driver {
                 let m: String = req.get("m").unwrap_or_default();
                 let p = req.get::<Option<Value>>("p").ok().flatten().map(|v| json::to_json(&v));
                 let mut p = p.unwrap_or_else(|| J::Object(Map::new()));
-                if m == "dialog" || m == "uiopen" {
+                if m == "dialog" || m == "uiopen" || m == "mirror" {
                     if let (Some(c), J::Object(o)) = (task.client.as_ref(), &mut p) {
                         o.insert("client".to_string(), J::String(c.clone()));
                     }

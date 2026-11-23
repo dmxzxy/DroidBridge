@@ -201,6 +201,7 @@ async function openGallery(locate) {
           canCopyMedia(it) ? { icon: 'copy', label: t('复制'), fn: () => copyMedia(it) } : null,
           { icon: 'download', label: t('下载'), fn: () => { const a = h('a', { href: withToken(it.url), download: it.name }); document.body.append(a); a.click(); a.remove(); } },
           isLocalHost() ? { icon: 'folder', label: t('打开所在文件夹'), fn: () => api('/api/media/reveal?name=' + encodeURIComponent(it.name), { method: 'POST', body: '{}' }).catch(e => toast(e.message, { kind: 'bad' })) } : null,
+          ...(typeof pluginMediaItems === 'function' ? pluginMediaItems(it) : []),
           '-',
           { icon: 'trash', label: t('删除…'), danger: true, fn: async () => {
             if (!await confirmDialog(t('删除'), t('确定要删除这个文件吗？'), t('删除'), true)) return;

@@ -10,6 +10,7 @@ const TYPE_BACK_OR_SCREEN_ON: u8 = 4;
 const TYPE_EXPAND_NOTIFICATION_PANEL: u8 = 5;
 const TYPE_EXPAND_SETTINGS_PANEL: u8 = 6;
 const TYPE_COLLAPSE_PANELS: u8 = 7;
+const TYPE_GET_CLIPBOARD: u8 = 8;
 const TYPE_SET_CLIPBOARD: u8 = 9;
 const TYPE_SET_DISPLAY_POWER: u8 = 10;
 const TYPE_ROTATE_DEVICE: u8 = 11;
@@ -71,6 +72,8 @@ pub enum Ctl {
         #[serde(default)]
         seq: u64,
     },
+    /// 读取设备剪贴板（设备用剪贴板消息回复）
+    GetClipboard,
     /// 关闭/打开屏幕显示（投屏继续）
     Power {
         on: bool,
@@ -173,6 +176,7 @@ pub fn encode(ctl: &Ctl) -> Result<Vec<Vec<u8>>, String> {
             b.extend_from_slice(bytes);
             msgs.push(b);
         }
+        Ctl::GetClipboard => msgs.push(vec![TYPE_GET_CLIPBOARD, 0]),
         Ctl::Power { on } => msgs.push(vec![TYPE_SET_DISPLAY_POWER, u8::from(*on)]),
         Ctl::StartApp { name } => {
             let name = split_utf8(name, 255).into_iter().next().unwrap_or("");

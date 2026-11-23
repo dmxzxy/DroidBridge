@@ -364,6 +364,10 @@ function DEV:swipe(x1, y1, x2, y2, ms)
   return true
 end
 
+function DEV:longpress(x, y, ms)
+  return self:swipe(x, y, x, y, ms or 800)
+end
+
 function DEV:key(name)
   call("input", { serial = self.serial, kind = "key", key = name })
   return true
@@ -406,6 +410,96 @@ function DEV:perf()
   return call("perf", { serial = self.serial })
 end
 
+function DEV:ui()
+  return call("ui", { serial = self.serial })
+end
+
+local function same_id(id, v)
+  return id == v or (type(id) == "string" and id:match(":id/(.+)$") == v)
+end
+
+-- 字符串：文字、说明或资源 id；表：各字段都相等；函数：返回 true 的节点
+local function node_matcher(q)
+  if type(q) == "function" then return q end
+  if type(q) == "string" then
+    return function(n) return n.text == q or n.desc == q or same_id(n.id, q) end
+  end
+  if type(q) ~= "table" then error("dev:find: 需要字符串、表或函数", 3) end
+  return function(n)
+    for k, v in pairs(q) do
+      if k == "id" then
+        if not same_id(n.id, v) then return false end
+      elseif n[k] ~= v then
+        return false
+      end
+    end
+    return true
+  end
+end
+
+function DEV:find(q)
+  local ok = node_matcher(q)
+  for _, n in ipairs(self:ui().nodes or {}) do
+    if ok(n) then return n end
+  end
+  return nil
+end
+
+function DEV:waitFor(q, timeout)
+  node_matcher(q)
+  local deadline = os.time() + (tonumber(timeout) or 10)
+  while true do
+    local n = self:find(q)
+    if n then return n end
+    if os.time() >= deadline then return nil end
+    db.wait(0.5)
+  end
+end
+
+function DEV:list(path)
+  return call("files", { serial = self.serial, path = path })
+end
+
+function DEV:mkdir(path)
+  return call("mkdir", { serial = self.serial, path = path })
+end
+
+function DEV:rename(path, name)
+  return call("rename", { serial = self.serial, path = path, name = name })
+end
+
+function DEV:remove(paths)
+  if type(paths) == "table" then
+    call("rm", { serial = self.serial, paths = paths })
+  else
+    call("rm", { serial = self.serial, path = paths })
+  end
+  return true
+end
+
+function DEV:getClipboard()
+  return call("clipboard", { serial = self.serial })
+end
+
+function DEV:setClipboard(text)
+  call("clipboard", { serial = self.serial, text = tostring(text or "") })
+  return true
+end
+
+function DEV:cmd(name)
+  call("cmd", { serial = self.serial, name = name })
+  return true
+end
+
+function DEV:tcpip()
+  return call("tcpip", { serial = self.serial })
+end
+
+function DEV:mirror()
+  call("mirror", { serial = self.serial })
+  return true
+end
+
 -- ---------------------------------------------------------------- 贡献注册
 
 local menus = {}
@@ -418,6 +512,7 @@ local highlights = {}
 local listeners = {}
 local web_handlers = {}
 local watches = {}
+local exports = {}
 
 local function reg(kind, def)
   call("register", { kind = kind, def = def })
@@ -660,6 +755,40 @@ end
 function db.web.emit(name, data)
   call("webemit", { name = name, data = data })
 end
+
+-- ---------------------------------------------------------------- 插件之间
+
+function db.export(name, fn)
+  if type(name) ~= "string" then error("db.export: name 必须是字符串", 2) end
+  if type(fn) ~= "function" then error("db.export: 需要函数", 2) end
+  exports[name] = fn
+  reg("export", { name = name })
+end
+
+db.plugins = {
+  list = function() return call("plugins", {}) end,
+  call = function(id, name, args) return call("plugin.call", { plugin = id, name = name, args = args }) end,
+}
+
+-- ---------------------------------------------------------------- 这台电脑
+
+function db.mirrors()
+  return call("mirrors", {}) or {}
+end
+
+function db.computers()
+  return call("computers", {}) or {}
+end
+
+db.adb = {
+  connect = function(addr) return call("adb.connect", { addr = addr }) end,
+  pair = function(addr, code, connectAddr) return call("adb.pair", { addr = addr, code = code, connect = connectAddr }) end,
+  disconnect = function(addr)
+    call("adb.disconnect", { addr = addr })
+    return true
+  end,
+  discover = function() return call("adb.discover", {}) or {} end,
+}
 
 local function add_listener(name, fn)
   local list = listeners[name]
@@ -1041,6 +1170,10 @@ local function dispatch(m, p)
       return item.fn(dev, ctx.path, ctx.isDir)
     elseif target == "tools" then
       return item.fn()
+    elseif target == "media" then
+      return item.fn(call("media.item", { name = ctx.name }) or { name = ctx.name })
+    elseif target == "logcat" then
+      return item.fn(dev, ctx.line)
     end
     return item.fn(dev)
   elseif m == "status" then
@@ -1065,6 +1198,10 @@ local function dispatch(m, p)
     local fn = web_handlers[p.name]
     if not fn then error("web 处理函数不存在: " .. tostring(p.name)) end
     return fn(dev_arg(p.serial), p.args or {})
+  elseif m == "export" then
+    local fn = exports[p.name]
+    if not fn then error("未提供的函数: " .. tostring(p.name)) end
+    return fn(p.args, p.from)
   elseif m == "mcp" then
     local item = mcps[p.name]
     if not item then error("MCP 工具不存在: " .. tostring(p.name)) end
@@ -1246,4 +1383,13 @@ db.media = {}
 function db.media.save(path)
   if not H.has_perm("media") then error("db.media.save 需要 media 权限", 2) end
   return call("media.save", { path = lpath(path, false) })
+end
+
+function db.media.list()
+  return call("media.list", {}) or {}
+end
+
+function db.media.remove(name)
+  call("media.remove", { name = name })
+  return true
 end
