@@ -22,6 +22,9 @@ pub struct Manifest {
     pub settings: Vec<Setting>,
     /// 网页面板可以嵌入的外部网站（origin，如 `http://host:5173`），需要 `web.embed` 权限
     pub embed: Vec<String>,
+    /// 需要的最低 DroidBridge 版本
+    #[serde(rename = "minHost")]
+    pub min_host: String,
 }
 
 impl Default for Manifest {
@@ -37,8 +40,26 @@ impl Default for Manifest {
             match_rules: MatchRules::default(),
             settings: Vec::new(),
             embed: Vec::new(),
+            min_host: String::new(),
         }
     }
+}
+
+/// 比较版本号：按 `.` 分段比数字，非数字部分忽略，缺少的分段当作 0
+pub fn version_cmp(a: &str, b: &str) -> std::cmp::Ordering {
+    let parts = |v: &str| -> Vec<u64> {
+        v.split('.')
+            .map(|s| s.chars().take_while(char::is_ascii_digit).collect::<String>().parse().unwrap_or(0))
+            .collect()
+    };
+    let (a, b) = (parts(a), parts(b));
+    for i in 0..a.len().max(b.len()) {
+        let (x, y) = (a.get(i).copied().unwrap_or(0), b.get(i).copied().unwrap_or(0));
+        if x != y {
+            return x.cmp(&y);
+        }
+    }
+    std::cmp::Ordering::Equal
 }
 
 /// 规整成 origin（`scheme://host[:port]`，小写）；不是 http(s) 地址返回 None
@@ -177,6 +198,10 @@ pub fn validate(m: &Manifest) -> Result<(), String> {
     if !safe_rel(&m.main) {
         return Err(tr!("main 必须是插件目录内的相对路径", "main must be a relative path inside the plugin folder"));
     }
+    let min_host = m.min_host.trim();
+    if !min_host.is_empty() && version_cmp(env!("CARGO_PKG_VERSION"), min_host).is_lt() {
+        return Err(tr!("需要 DroidBridge {min_host}", "Requires DroidBridge {min_host}"));
+    }
     let mut seen = std::collections::HashSet::new();
     for s in &m.settings {
         if s.name.trim().is_empty() {
@@ -255,6 +280,28 @@ mod tests {
         assert!(any_glob(&[], "x"));
         assert!(any_glob(&["a".into(), "x".into()], "x"));
         assert!(!any_glob(&["a".into()], "x"));
+    }
+
+    #[test]
+    fn version_order() {
+        assert!(version_cmp("0.9.6", "0.9.4").is_gt());
+        assert!(version_cmp("0.9.4", "0.9.5").is_lt());
+        assert!(version_cmp("0.9.5", "0.9.5").is_eq());
+        assert!(version_cmp("0.9", "0.9.0").is_eq());
+        assert!(version_cmp("0.10.0", "0.9.9").is_gt());
+        assert!(version_cmp("1.4.0+3fa2c1d9", "1.4.0").is_eq());
+        assert!(version_cmp("1.2.3-beta", "1.2.3").is_eq());
+        assert!(version_cmp("1.0", "").is_gt());
+        assert!(version_cmp("", "").is_eq());
+    }
+
+    #[test]
+    fn min_host_checked() {
+        // 不可能达到的版本：拒绝
+        assert!(validate(&man(r#"{"id":"x","name":"X","minHost":"999.0"}"#)).is_err());
+        assert!(validate(&man(r#"{"id":"x","name":"X","minHost":"0.0.1"}"#)).is_ok());
+        assert!(validate(&man(r#"{"id":"x","name":"X"}"#)).is_ok());
+        assert_eq!(man(r#"{"id":"x","name":"X","minHost":"0.9.4"}"#).min_host, "0.9.4");
     }
 
     #[test]

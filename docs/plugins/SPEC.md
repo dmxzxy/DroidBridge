@@ -182,7 +182,7 @@
 - 控件树节点：`{"w":"<类型>","id":"..", ...属性, "children":[...]}`。类型与属性：
   - `label {text, kind?}`、`heading {text}`、`text {text}`（多行）、`code {text}`、`separator {}`、`space {}`
   - `button {label, kind?:"primary"|"danger", disabled?}`
-  - `toggle {label, value}`、`slider {label, value, min, max, step}`、`input {label, value, placeholder?, multiline?}`、`select {label, value, options:[{value,label}]}`
+  - `toggle {label, value}`、`slider {label, value, min, max, step}`、`input {label, value, placeholder?, multiline?, password?}`、`select {label, value, options:[{value,label}]}`
   - `progress {value, text?}`（value 0–1 或 null）
   - `table {columns:[..], rows:[[..]]}`
   - `chart {label, values:[number], unit?}`（折线）

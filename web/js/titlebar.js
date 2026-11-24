@@ -19,7 +19,7 @@ function setupTitlebar() {
   const tools = h('div', { class: 'tb-tools' },
     ib('package', t('批量安装 APK'), () => batchInstallDialog()),
     ib('images', t('相册'), () => openGallery()),
-    ib('gear', t('设置'), settingsDialog));
+    Object.assign(ib('gear', t('设置'), settingsDialog), { id: 'tbGear' }));
   const win = [];
   if (CHROME !== 'mac') {
     tbMax = h('button', { class: 'tb-w', type: 'button', title: t('最大化'), 'aria-label': t('最大化'), html: svg('wmax'), onclick: () => winCmd('max') });

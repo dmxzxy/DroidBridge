@@ -26,6 +26,9 @@ pub(crate) struct Source {
     pub header: String,
     #[serde(default)]
     pub index: Option<Index>,
+    /// 自动更新这个插件源里的插件
+    #[serde(default)]
+    pub auto: bool,
     /// 上次检查的时间（秒）
     #[serde(default)]
     pub checked: u64,
@@ -56,6 +59,32 @@ pub(crate) struct Entry {
     pub path: String,
     #[serde(default)]
     pub permissions: Vec<String>,
+    /// 插件自己的版本；清单没给时用清单整体的版本
+    #[serde(default)]
+    pub version: String,
+    /// 这个插件单独的包；清单没给时用清单整体的包
+    #[serde(default)]
+    pub zip: String,
+    /// 更新说明
+    #[serde(default)]
+    pub notes: String,
+    /// 需要的最低 DroidBridge 版本
+    #[serde(default, rename = "minHost")]
+    pub min_host: String,
+}
+
+impl Entry {
+    /// 插件自己的版本，缺省时用清单整体的版本
+    fn version_in(&self, idx: &Index) -> String {
+        let v = self.version.trim();
+        if v.is_empty() { idx.version.trim().to_string() } else { v.to_string() }
+    }
+
+    /// 插件自己的包，缺省时用清单整体的包
+    fn zip_in<'a>(&'a self, idx: &'a Index) -> &'a str {
+        let z = self.zip.trim();
+        if z.is_empty() { idx.zip.trim() } else { z }
+    }
 }
 
 /// 插件目录里的 `.source.json`
@@ -225,6 +254,9 @@ pub(crate) fn fetch_index(src: &Source) -> Result<Index, String> {
         if safe_rel(&e.path).is_none() {
             return Err(tr!("清单里的路径不合法：{0}", "Invalid path in the index: {0}", e.path));
         }
+        if !e.zip.trim().is_empty() && safe_rel(&e.zip).is_none() {
+            return Err(tr!("清单里的插件包路径不合法：{0}", "Invalid package path in the index: {0}", e.zip));
+        }
         if e.name.trim().is_empty() {
             e.name = e.id.clone();
         }
@@ -233,15 +265,16 @@ pub(crate) fn fetch_index(src: &Source) -> Result<Index, String> {
 }
 
 /// 准备插件包，返回解压后的根目录（本机文件夹且没有 zip 时直接用清单所在目录）
-fn fetch_package(src: &Source, idx: &Index, tmp: &Path) -> Result<PathBuf, String> {
+fn fetch_package(src: &Source, idx: &Index, e: &Entry, tmp: &Path) -> Result<PathBuf, String> {
     let loc = index_location(&src.url);
-    if idx.zip.trim().is_empty() {
+    let zip = e.zip_in(idx);
+    if zip.is_empty() {
         if is_http(&loc) {
             return Err(tr!("清单没有写插件包（zip）地址", "The index has no package (zip) address"));
         }
         return Ok(Path::new(&loc).parent().map(Path::to_path_buf).unwrap_or_default());
     }
-    let zip_loc = resolve(&loc, idx.zip.trim());
+    let zip_loc = resolve(&loc, zip);
     std::fs::create_dir_all(tmp).map_err(|e| e.to_string())?;
     let zip_path = if is_http(&zip_loc) {
         let path = tmp.join("package.zip");
@@ -365,7 +398,7 @@ pub(crate) fn read_marker(dir: &Path) -> Option<Marker> {
 }
 
 /// 插件目录是不是链接（本地开发挂进来的）
-fn is_linked(root: &Path, dir: &Path) -> bool {
+pub(crate) fn is_linked(root: &Path, dir: &Path) -> bool {
     if std::fs::symlink_metadata(dir).map(|m| m.file_type().is_symlink()).unwrap_or(false) {
         return true;
     }
@@ -377,9 +410,9 @@ fn is_linked(root: &Path, dir: &Path) -> bool {
 
 // ---------------------------------------------------------------- 状态
 
-/// 插件在这个源里的状态：install | installed | update | local | other
-fn status(plugs: &Plugins, src: &Source, idx: &Index, id: &str) -> (&'static str, String) {
-    let dir = plugs.get(id).map(|p| p.dir.clone()).unwrap_or_else(|| plugs.root().join(id));
+/// 插件在这个源里的状态：install | installed | update | local | other（registered 为已添加的插件源地址）
+fn status(plugs: &Plugins, src: &Source, idx: &Index, e: &Entry, registered: &HashSet<String>) -> (&'static str, String) {
+    let dir = plugs.get(&e.id).map(|p| p.dir.clone()).unwrap_or_else(|| plugs.root().join(&e.id));
     if !dir.exists() {
         return ("install", String::new());
     }
@@ -388,43 +421,64 @@ fn status(plugs: &Plugins, src: &Source, idx: &Index, id: &str) -> (&'static str
     }
     match read_marker(&dir) {
         None => ("local", String::new()),
-        Some(m) if m.source != src.url => ("other", m.source),
-        Some(m) if m.version == idx.version => ("installed", m.version),
+        Some(m) if m.source != src.url && registered.contains(&m.source) => ("other", m.source),
+        Some(m) if m.source == src.url && m.version == e.version_in(idx) => ("installed", m.version),
         Some(m) => ("update", m.version),
     }
 }
 
-/// 给界面的插件源列表（不含令牌）
+/// 当前版本是否满足插件要求的最低版本
+pub(crate) fn host_ok(min_host: &str) -> bool {
+    let v = min_host.trim();
+    v.is_empty() || !manifest::version_cmp(env!("CARGO_PKG_VERSION"), v).is_lt()
+}
+
+/// 给界面的数据：插件源列表（不含令牌）和合并后的插件目录（同一 id 只出现一次）
 pub(crate) fn view(st: &AppState) -> Value {
     let plugs = &st.plugins;
+    let list = load(plugs.root());
+    let registered: HashSet<String> = list.iter().map(|s| s.url.clone()).collect();
     let mut updates = Vec::new();
-    let sources: Vec<Value> = load(plugs.root())
+    let mut catalog: Vec<Value> = Vec::new();
+    let mut seen = HashSet::new();
+    // 已安装的插件归它的来源；其余按插件源的顺序取第一个
+    let owner = |id: &str| -> Option<String> {
+        let dir = plugs.get(id).map(|p| p.dir.clone()).unwrap_or_else(|| plugs.root().join(id));
+        read_marker(&dir).map(|m| m.source).filter(|u| registered.contains(u))
+    };
+    let sources: Vec<Value> = list
         .iter()
         .map(|s| {
-            let plugins: Vec<Value> = s
-                .index
-                .as_ref()
-                .map(|idx| {
-                    idx.plugins
-                        .iter()
-                        .map(|e| {
-                            let (state, extra) = status(plugs, s, idx, &e.id);
-                            if state == "update" {
-                                updates.push(e.id.clone());
-                            }
-                            json!({"id": e.id, "name": e.name, "description": e.description, "permissions": e.permissions,
-                                   "status": state, "installed": if state == "other" { Value::Null } else { json!(extra) },
-                                   "from": if state == "other" { json!(extra) } else { Value::Null }})
-                        })
-                        .collect()
-                })
-                .unwrap_or_default();
             let idx = s.index.clone().unwrap_or_default();
+            let names: Vec<String> = idx.plugins.iter().map(|e| e.name.clone()).collect();
             json!({"url": s.url, "name": idx.name, "version": idx.version, "checked": s.checked, "error": s.error,
-                   "hasToken": !s.token.is_empty(), "header": s.header, "plugins": plugins})
+                   "hasToken": !s.token.is_empty(), "header": s.header, "auto": s.auto, "count": idx.plugins.len(),
+                   "plugins": names})
         })
         .collect();
-    json!({"sources": sources, "updates": updates})
+    for pass in 0..2 {
+        for s in &list {
+            let Some(idx) = s.index.as_ref() else { continue };
+            for e in &idx.plugins {
+                if seen.contains(&e.id) || (pass == 0 && owner(&e.id).as_deref() != Some(s.url.as_str())) {
+                    continue;
+                }
+                seen.insert(e.id.clone());
+                let (mut state, extra) = status(plugs, s, idx, e, &registered);
+                // 需要更高的 DroidBridge 版本：不显示安装/更新，只提示
+                if matches!(state, "install" | "update") && !host_ok(&e.min_host) {
+                    state = "incompatible";
+                }
+                if state == "update" {
+                    updates.push(e.id.clone());
+                }
+                catalog.push(json!({"id": e.id, "name": e.name, "description": e.description, "permissions": e.permissions,
+                                    "url": s.url, "source": idx.name, "version": e.version_in(idx), "notes": e.notes,
+                                    "minHost": e.min_host, "status": state, "installed": extra}));
+            }
+        }
+    }
+    json!({"sources": sources, "catalog": catalog, "updates": updates})
 }
 
 // ---------------------------------------------------------------- 操作
@@ -433,8 +487,8 @@ async fn blocking<T: Send + 'static>(f: impl FnOnce() -> Result<T, String> + Sen
     tokio::task::spawn_blocking(f).await.map_err(|e| e.to_string())?
 }
 
-/// 刷新一个或全部插件源的清单（only_stale 时只刷新超过 max_age 秒没检查的）
-pub(crate) async fn refresh(st: &Arc<AppState>, url: Option<&str>, max_age: u64) -> Result<(), String> {
+/// 刷新一个或全部插件源的清单（only_stale 时只刷新超过 max_age 秒没检查的）；返回是否真的刷新了
+pub(crate) async fn refresh(st: &Arc<AppState>, url: Option<&str>, max_age: u64) -> Result<bool, String> {
     let root = st.plugins.root().to_path_buf();
     let list = load(&root);
     let mut fresh = Vec::new();
@@ -444,7 +498,7 @@ pub(crate) async fn refresh(st: &Arc<AppState>, url: Option<&str>, max_age: u64)
         fresh.push((s.url.clone(), r));
     }
     if fresh.is_empty() {
-        return Ok(());
+        return Ok(false);
     }
     let _g = BUSY.lock().await;
     let mut list = load(&root);
@@ -460,7 +514,8 @@ pub(crate) async fn refresh(st: &Arc<AppState>, url: Option<&str>, max_age: u64)
             }
         }
     }
-    save(&root, &list)
+    save(&root, &list)?;
+    Ok(true)
 }
 
 /// 添加插件源：先取一次清单，取不到就不添加
@@ -483,23 +538,32 @@ pub(crate) async fn add(st: &Arc<AppState>, url: &str, token: &str, header: &str
     save(&root, &list)
 }
 
-/// 修改令牌或请求头；token 为 None 时保留原值
-pub(crate) async fn edit(st: &Arc<AppState>, url: &str, token: Option<&str>, header: Option<&str>) -> Result<(), String> {
+/// 修改令牌、请求头或自动更新；token 为 None 时保留原值
+pub(crate) async fn edit(st: &Arc<AppState>, url: &str, token: Option<&str>, header: Option<&str>, auto: Option<bool>) -> Result<(), String> {
     let root = st.plugins.root().to_path_buf();
-    {
+    let reread = {
         let _g = BUSY.lock().await;
         let mut list = load(&root);
         let s = list.iter_mut().find(|s| s.url == url).ok_or_else(|| tr!("插件源不存在", "Source not found"))?;
         if let Some(t) = token {
             s.token = t.trim().into();
+            s.checked = 0;
         }
         if let Some(h) = header {
             s.header = h.trim().into();
+            s.checked = 0;
         }
-        s.checked = 0;
+        if let Some(a) = auto {
+            s.auto = a;
+        }
+        let reread = s.checked == 0;
         save(&root, &list)?;
+        reread
+    };
+    if !reread {
+        return Ok(());
     }
-    refresh(st, Some(url), 0).await
+    refresh(st, Some(url), 0).await.map(|_| ())
 }
 
 pub(crate) async fn remove(st: &Arc<AppState>, url: &str) -> Result<(), String> {
@@ -526,7 +590,10 @@ pub(crate) async fn install(st: &Arc<AppState>, url: &str, id: &str) -> Result<S
     }
     save(&root, &list)?;
     let entry = idx.plugins.iter().find(|e| e.id == id).cloned().ok_or_else(|| tr!("插件源里没有 {id}", "The source has no plugin {id}"))?;
-    let (state, from) = status(plugs, &src, &idx, id);
+    if !host_ok(&entry.min_host) {
+        return Err(tr!("需要 DroidBridge {0}", "Requires DroidBridge {0}", entry.min_host.trim()));
+    }
+    let (state, from) = status(plugs, &src, &idx, &entry, &list.iter().map(|s| s.url.clone()).collect());
     match state {
         "local" => return Err(tr!("{id} 是本地插件，不能用插件源覆盖", "{id} is a local plugin and cannot be replaced from a source")),
         "other" => return Err(tr!("{id} 来自另一个插件源：{from}", "{id} comes from another source: {from}")),
@@ -536,15 +603,15 @@ pub(crate) async fn install(st: &Arc<AppState>, url: &str, id: &str) -> Result<S
     let dst = existing.as_ref().map(|p| p.dir.clone()).unwrap_or_else(|| root.join(id));
     let tmp = root.join(".tmp").join(format!("src-{:08x}", crate::util::random_scid()));
     let staged = tmp.join("plugin");
-    let marker = Marker { source: src.url.clone(), version: idx.version.clone(), path: entry.path.clone() };
-    let (src2, idx2, tmp2, staged2, eid) = (src.clone(), idx.clone(), tmp.clone(), staged.clone(), entry.id.clone());
+    let marker = Marker { source: src.url.clone(), version: entry.version_in(&idx), path: entry.path.clone() };
+    let (src2, idx2, entry2, tmp2, staged2) = (src.clone(), idx.clone(), entry.clone(), tmp.clone(), staged.clone());
     let prep = blocking(move || {
-        let pkg = fetch_package(&src2, &idx2, &tmp2)?;
-        let rel = safe_rel(&entry.path).unwrap_or_default();
-        let dir = plugin_dir_in(&pkg, &rel).ok_or_else(|| tr!("插件包里找不到 {0}/plugin.json", "{0}/plugin.json is missing in the package", entry.path))?;
+        let pkg = fetch_package(&src2, &idx2, &entry2, &tmp2)?;
+        let rel = safe_rel(&entry2.path).unwrap_or_default();
+        let dir = plugin_dir_in(&pkg, &rel).ok_or_else(|| tr!("插件包里找不到 {0}/plugin.json", "{0}/plugin.json is missing in the package", entry2.path))?;
         let man = manifest::load(&dir)?;
-        if man.id != eid {
-            return Err(tr!("插件包里的 id 是 {0}，清单写的是 {1}", "The package says id {0} but the index says {1}", man.id, eid));
+        if man.id != entry2.id {
+            return Err(tr!("插件包里的 id 是 {0}，清单写的是 {1}", "The package says id {0} but the index says {1}", man.id, entry2.id));
         }
         copy_dir(&dir, &staged2)?;
         let data = serde_json::to_vec_pretty(&marker).map_err(|e| e.to_string())?;
@@ -605,11 +672,42 @@ pub(crate) async fn uninstall(st: &Arc<AppState>, id: &str) -> Result<(), String
     if last.is_empty() { Ok(()) } else { Err(tr!("卸载失败：{last}", "Uninstall failed: {last}")) }
 }
 
-/// 后台每隔一段时间检查各插件源有没有新版本
+/// 自动更新：auto 打开的插件源里，新版本不需要新权限、宿主版本也够的插件直接安装
+async fn auto_update(st: &Arc<AppState>) {
+    let plugs = &st.plugins;
+    let list = load(plugs.root());
+    let registered: HashSet<String> = list.iter().map(|s| s.url.clone()).collect();
+    let mut todo = Vec::new();
+    for s in list.iter().filter(|s| s.auto) {
+        let Some(idx) = s.index.as_ref() else { continue };
+        for e in &idx.plugins {
+            if status(plugs, s, idx, e, &registered).0 != "update" || !host_ok(&e.min_host) {
+                continue;
+            }
+            let granted = plugs.get(&e.id).map(|p| p.granted()).unwrap_or_default();
+            if !manifest::needs_grant(&e.permissions, &granted) {
+                todo.push((s.url.clone(), e.id.clone()));
+            }
+        }
+    }
+    let mut done = false;
+    for (url, id) in todo {
+        if install(st, &url, &id).await.is_ok() {
+            done = true;
+        }
+    }
+    if done {
+        st.plugins.emit_changed();
+    }
+}
+
+/// 后台每隔一段时间检查各插件源有没有新版本；刷新到新清单后顺带自动更新
 pub async fn run(st: Arc<AppState>) {
     tokio::time::sleep(Duration::from_secs(20)).await;
     loop {
-        let _ = refresh(&st, None, CHECK_EVERY).await;
+        if refresh(&st, None, CHECK_EVERY).await.unwrap_or(false) {
+            auto_update(&st).await;
+        }
         tokio::time::sleep(Duration::from_secs(600)).await;
     }
 }
@@ -664,6 +762,51 @@ mod tests {
         assert_eq!(origin("https://Git.example.com:8443/api/x"), "https://git.example.com:8443");
         assert_ne!(origin("https://git.example.com/a"), origin("https://cdn.example.com/a"));
     }
+
+    #[test]
+    fn status_uses_plugin_version() {
+        let base = std::env::temp_dir().join(format!("db-src-{:08x}", crate::util::random_scid()));
+        let plugs = Plugins::new(&base);
+        let dir = plugs.root().join("demo");
+        std::fs::create_dir_all(&dir).unwrap();
+        let src = Source { url: "https://h.com/p/index.json".into(), ..Default::default() };
+        let idx = Index { version: "2026.11.23".into(), ..Default::default() };
+        let mut registered = HashSet::new();
+        registered.insert(src.url.clone());
+        let marker = |version: &str| {
+            let m = Marker { source: src.url.clone(), version: version.into(), path: "demo".into() };
+            std::fs::write(dir.join(MARKER), serde_json::to_vec(&m).unwrap()).unwrap();
+        };
+        let entry = |version: &str| Entry { id: "demo".into(), path: "demo".into(), version: version.into(), ..Default::default() };
+
+        // 没装
+        let missing = Entry { id: "demo2".into(), path: "demo2".into(), ..Default::default() };
+        assert_eq!(status(&plugs, &src, &idx, &missing, &registered).0, "install");
+
+        // 版本相同：已是最新
+        marker("1.4.0+3fa2c1d9");
+        assert_eq!(status(&plugs, &src, &idx, &entry("1.4.0+3fa2c1d9"), &registered).0, "installed");
+        // 版本号没变、内容变了（哈希不同）：有更新
+        assert_eq!(status(&plugs, &src, &idx, &entry("1.4.0+9b1e7a20"), &registered).0, "update");
+        // 插件自己升了版本
+        assert_eq!(status(&plugs, &src, &idx, &entry("1.5.0+9b1e7a20"), &registered).0, "update");
+        // 清单没写插件版本：退回清单整体的版本（旧格式）
+        assert_eq!(status(&plugs, &src, &idx, &entry(""), &registered).0, "update");
+        marker("2026.11.23");
+        assert_eq!(status(&plugs, &src, &idx, &entry(""), &registered).0, "installed");
+        // 来自另一个已添加的插件源
+        let other = Source { url: "https://h.com/other/index.json".into(), ..Default::default() };
+        assert_eq!(status(&plugs, &other, &idx, &entry("1.4.0"), &registered).0, "other");
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn host_version_gate() {
+        assert!(host_ok(""));
+        assert!(host_ok("0.0.1"));
+        assert!(!host_ok("999.0"));
+    }
 }
 
 // ---------------------------------------------------------------- HTTP
@@ -707,6 +850,7 @@ struct SourceReq {
     id: String,
     token: Option<String>,
     header: Option<String>,
+    auto: Option<bool>,
 }
 
 /// POST `/api/plugins/sources`：add | edit | remove | refresh | install | uninstall
@@ -725,7 +869,7 @@ pub async fn sources_post(
     };
     let r = match req.action.as_str() {
         "add" => add(&st, &req.url, req.token.as_deref().unwrap_or(""), req.header.as_deref().unwrap_or("")).await.map(|_| json!({"ok": true})),
-        "edit" => edit(&st, &req.url, req.token.as_deref(), req.header.as_deref()).await.map(|_| json!({"ok": true})),
+        "edit" => edit(&st, &req.url, req.token.as_deref(), req.header.as_deref(), req.auto).await.map(|_| json!({"ok": true})),
         "remove" => remove(&st, &req.url).await.map(|_| json!({"ok": true})),
         "refresh" => refresh(&st, (!req.url.is_empty()).then_some(req.url.as_str()), 0).await.map(|_| json!({"ok": true})),
         "install" => install(&st, &req.url, &req.id).await.map(|id| json!({"ok": true, "id": id})),

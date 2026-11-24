@@ -244,7 +244,7 @@ function DbUi.slider(label, value, min, max, step, opts) end
 
 ---@param label string
 ---@param value string
----@param opts? { id?: string, multiline?: boolean, placeholder?: string }
+---@param opts? { id?: string, multiline?: boolean, placeholder?: string, password?: boolean }
 ---@return string 新值
 function DbUi.input(label, value, opts) end
 

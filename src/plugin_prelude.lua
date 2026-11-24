@@ -1065,6 +1065,7 @@ local function make_ui(event)
     if o then
       if o.placeholder then n.placeholder = tostring(o.placeholder) end
       if o.multiline ~= nil then n.multiline = o.multiline and true or false end
+      if o.password then n.password = true end
     end
     if hit then return tostring(event.value or "") end
     return v

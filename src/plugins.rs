@@ -562,6 +562,9 @@ impl Plugins {
                     "description": man.description,
                     "author": man.author,
                     "dir": ph.dir.to_string_lossy(),
+                    "kind": if std::fs::symlink_metadata(&ph.dir).map(|m| m.file_type().is_symlink()).unwrap_or(false) { "link" }
+                        else if sources::is_linked(&self.root, &ph.dir) { "outside" }
+                        else if ph.dir.join(".source.json").exists() { "source" } else { "local" },
                     "state": ph.state().as_str(),
                     "enabled": ph.enabled(),
                     "permissions": man.permissions,

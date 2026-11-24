@@ -403,7 +403,7 @@ function pluginOpenSettings(id) {
 /** 工具菜单入口：标题栏里的拼图图标（桌面侧栏顶部 + 手机顶栏），有工具菜单时才出现 */
 function pluginSyncToolsBtn() {
   const has = pluginToolsItems().length > 0;
-  for (const anchor of [document.getElementById('gear'), document.getElementById('mGear')]) {
+  for (const anchor of [document.getElementById('gear'), document.getElementById('mGear'), document.getElementById('tbGear')]) {
     if (!anchor || !anchor.parentNode) continue;
     let btn = anchor.parentNode.querySelector(':scope > .plug-toolsbtn');
     if (!has) { if (btn) btn.remove(); continue; }
@@ -564,7 +564,7 @@ function pluginNode(view, n) {
       const multi = !!n.multiline;
       const el = multi
         ? h('textarea', { class: 'input pl-input', rows: '3', ...pid })
-        : h('input', { class: 'input pl-input', type: 'text', ...pid });
+        : h('input', { class: 'input pl-input', type: n.password ? 'password' : 'text', autocomplete: 'off', ...pid });
       el.value = pluginTxt(n.value);
       if (n.placeholder) el.placeholder = pluginTxt(n.placeholder);
       const send = () => view.event(id, el.value);
@@ -879,7 +879,7 @@ addEventListener('message', (e) => {
 const PLUGIN_PERM_ICON = {
   'device.shell': 'terminal', 'device.files': 'folder', 'device.install': 'package', 'device.apps': 'grid',
   'device.input': 'target', 'device.screen': 'camera', 'device.forward': 'swap', 'device.logs': 'logs',
-  'device.perf': 'activity', 'device.connect': 'wifi', 'fs.read': 'file', 'fs': 'drive', 'exec': 'play', 'net': 'globe', 'web.embed': 'globe',
+  'device.perf': 'activity', 'device.connect': 'wifi', 'fs.read': 'file', 'fs': 'drive', 'exec': 'play', 'net': 'globe', 'web.embed': 'monitor',
   'clipboard': 'paste', 'media': 'images', 'mcp': 'bot',
 };
 
@@ -930,12 +930,23 @@ function pluginSettingsPane() {
   let loadErr = '';
   let selected = pluginPendingSelect;    // 插件 id，null 为列表
   pluginPendingSelect = null;
+  let showSources = false;
   let views = [];         // 详情里的设置面板（dock=settings）
-  let con = null, conKey = '';
+  let con = null, conKey = '', conTools = null;
+  const srcCtx = {
+    reloadPlugins: () => reload(),
+    render: () => render(),
+    plugin: (pid) => ((info && info.list) || []).find((x) => x.id === pid),
+    back: () => { showSources = false; render(); },
+    get manage() { return !!(info && info.manage); },
+  };
 
   async function reload() {
     try { info = await api('/api/plugins'); pluginList = info; loadErr = ''; }
     catch (e) { loadErr = e.message; }
+    if (info && info.manage && (!pluginSrcView || pluginSrcStale())) {
+      pluginSrcLoad(pluginSrcStale()).then((changed) => { if (changed && !selected) render(); });
+    }
     // 详情页里正在输入设置时不重画，避免打断输入
     if (selected && root.contains(document.activeElement) && document.activeElement.matches('input, select')) return;
     render();
@@ -943,8 +954,8 @@ function pluginSettingsPane() {
 
   function render() {
     for (const v of views) v.destroy();
-    views = []; con = null; conKey = '';
-    root.replaceChildren(selected ? detail() : list());
+    views = []; con = null; conKey = ''; conTools = null;
+    root.replaceChildren(selected ? detail() : showSources ? pluginSourcesPane(srcCtx) : list());
   }
 
   async function manage(payload) {
@@ -965,15 +976,20 @@ function pluginSettingsPane() {
   // ---------- 列表 ----------
   function list() {
     const canManage = !!(info && info.manage);
+    const ups = canManage ? pluginSrcUpdateList() : [];
     const out = [h('div', { class: 'plugpane-bar' },
       h('span', { class: 'plugpane-n' }, countText()),
+      ups.length > 1 ? ib('download', t('全部更新'), updateAll) : null,
       canManage ? ib('plus', t('新建插件'), newPluginDialog) : null,
+      canManage ? ib('globe', t('插件源'), () => { showSources = true; render(); }) : null,
       canManage ? ib('folder', t('打开插件目录') + (info.dir ? '\n' + info.dir : ''), () => manage({ action: 'open_dir' })) : null,
       ib('refresh', t('重新扫描'), () => (canManage ? manage({ action: 'rescan' }) : reload())))];
     if (info && info.safeMode) out.push(h('div', { class: 'plug-note warn' }, svgEl('alert'), h('span', {}, t('安全模式：插件未加载'))));
     const items = [];
     if (loadErr) items.push(h('div', { class: 'plug-row muted', title: pluginTxt(loadErr) }, svgEl('wifiOff'), h('span', { class: 'plug-row-e' }, pluginTxt(loadErr))));
+    const installed = new Set(((info && info.list) || []).map((p) => p.id));
     for (const p of ((info && info.list) || [])) items.push(row(p));
+    if (canManage) for (const e of pluginSrcAvailable()) if (!installed.has(e.id)) items.push(availRow(e));
     if (!items.length) {
       out.push(h('div', { class: 'plug-empty' }, h('span', { class: 'plug-empty-i', html: svg('puzzle') }),
         h('div', {}, t('还没有插件')),
@@ -982,14 +998,38 @@ function pluginSettingsPane() {
       out.push(h('div', { class: 'set-c' }, items));
     }
     if (info && !info.manage) out.push(h('div', { class: 'plug-ro' }, svgEl('lock'), h('span', {}, t('只能在这台电脑上管理插件'))));
-    if (canManage) out.push(pluginSourcesSection({
-      manage: canManage,
-      reloadPlugins: reload,
-      plugin: (pid) => ((info && info.list) || []).find((x) => x.id === pid),
-      select: (pid) => { selected = pid; render(); },
-      changed: () => { if (!selected) render(); },
-    }));
     return h('div', { class: 'plugpane-list' }, out);
+  }
+
+  /** 插件源里还没安装的插件：点开看详情，右侧是安装按钮 */
+  function availRow(e) {
+    const tip = [pluginTxt(e.name || e.id) + (e.version ? '  ' + pluginSrcVer(e.version) : ''), pluginTxt(e.description || ''), e.id].filter(Boolean).join('\n');
+    const open = () => { selected = e.id; render(); };
+    return h('div', { class: 'plug-row static off', role: 'button', tabindex: '0', title: tip, onclick: open,
+        onkeydown: (ev) => { if (ev.key === 'Enter' && ev.target === ev.currentTarget) open(); } },
+      pluginTile(e),
+      h('div', { class: 'plug-row-m' }, h('div', { class: 'plug-row-n' }, h('b', {}, pluginTxt(e.name || e.id)))),
+      pluginSrcAction(srcCtx, e, true),
+      h('span', { class: 'plug-row-c', html: svg('chevRight') }));
+  }
+
+  /** 依次更新所有有新版的插件；需要新权限的照常确认 */
+  async function updateAll() {
+    const ups = pluginSrcUpdateList();
+    let n = 0;
+    for (const e of ups) {
+      pluginSrcBusy = e.id; render();
+      try { await pluginSrcCall({ action: 'install', url: e.url, id: e.id }); n++; }
+      catch (err) { toast(err.message, { kind: 'bad', ms: 6000 }); }
+    }
+    pluginSrcBusy = '';
+    pluginInvalidate();
+    await reload();
+    for (const e of ups) {
+      const ph = ((info && info.list) || []).find((x) => x.id === e.id);
+      if (ph && ph.enabled && ph.state === 'needs_grant') await pluginGrant(ph);
+    }
+    if (n) toast(t('已更新 {0} 个插件', n), { kind: 'ok' });
   }
 
   function row(p) {
@@ -1006,10 +1046,10 @@ function pluginSettingsPane() {
       onclick: open, onkeydown: (e) => { if (e.key === 'Enter' && e.target === e.currentTarget) open(); } },
       pluginTile(p),
       h('div', { class: 'plug-row-m' },
-        h('div', { class: 'plug-row-n' }, h('span', { class: 'dot ' + pluginStateDot(st) }), h('b', {}, pluginTxt(p.name || p.id)),
-          pluginSrcUpdates.has(p.id) ? h('span', { class: 'plug-upd', title: t('有新版本'), html: svg('download') }) : null),
+        h('div', { class: 'plug-row-n' }, h('span', { class: 'dot ' + pluginStateDot(st) }), h('b', {}, pluginTxt(p.name || p.id))),
         err ? h('div', { class: 'plug-row-e' }, err) : null),
       grantBtn,
+      info.manage ? pluginSrcAction(srcCtx, pluginSrcEntry(p.id), true) : null,
       info.manage ? toggle(p) : null,
       h('span', { class: 'plug-row-c', html: svg('chevRight') }));
   }
@@ -1021,21 +1061,43 @@ function pluginSettingsPane() {
   }
 
   // ---------- 详情 ----------
+  /** 还没安装的插件：标题、版本、来源、说明、权限，头部是安装按钮 */
+  function srcDetail(e) {
+    return h('div', { class: 'plugd' },
+      h('div', { class: 'plugd-h' },
+        ib('chevLeft', t('返回'), () => { selected = null; render(); }),
+        pluginTile(e, 'lg'),
+        h('div', { class: 'plugd-t' },
+          h('div', { class: 'plugd-n' }, h('b', {}, pluginTxt(e.name || e.id)), e.version ? h('span', { class: 'ver' }, pluginSrcVer(e.version)) : null),
+          h('div', { class: 'plugd-s' }, h('span', {}, t('来自 {0}', pluginSrcEntryName(e))))),
+        pluginSrcAction(srcCtx, e, !!(info && info.manage))),
+      e.description ? h('div', { class: 'plugd-d' }, pluginTxt(e.description)) : null,
+      (e.permissions || []).length ? pluginPermIcons(e.permissions, null) : null);
+  }
+
   function detail() {
     const id = selected;
     const p = info && (info.list || []).find((x) => x.id === id);
-    if (!p) { selected = null; return list(); }
+    const entry = pluginSrcEntry(id);
+    // 本地插件、链接目录没有来源
+    const e = entry && entry.status !== 'local' ? entry : null;
+    if (!p) { if (!entry) { selected = null; return list(); } return srcDetail(entry); }
     const can = !!info.manage;
     const st = p.state || (p.enabled ? 'stopped' : 'disabled');
+    const newer = !!(e && e.status === 'update');
+    const ver = newer ? pluginSrcVer(e.installed || p.version) + ' → ' + pluginSrcVer(e.version) : p.version ? pluginTxt(p.version) : '';
     const nodes = [];
     nodes.push(h('div', { class: 'plugd-h' },
       ib('chevLeft', t('返回'), () => { selected = null; render(); }),
       pluginTile(p, 'lg'),
       h('div', { class: 'plugd-t' },
-        h('div', { class: 'plugd-n' }, h('b', {}, pluginTxt(p.name || p.id)), p.version ? h('span', { class: 'ver' }, pluginTxt(p.version)) : null),
+        h('div', { class: 'plugd-n' }, h('b', {}, pluginTxt(p.name || p.id)), ver ? h('span', { class: 'ver' }, ver) : null,
+          e ? h('span', { class: 'ver' }, t('来自 {0}', pluginSrcEntryName(e))) : null),
         h('div', { class: 'plugd-s' }, h('span', { class: 'dot ' + pluginStateDot(st) }), h('span', {}, pluginStateText(st)))),
+      can ? pluginSrcAction(srcCtx, e, true) : null,
       can ? ib('refresh', t('重新加载'), () => manage({ id: p.id, action: 'reload' })) : null,
       can ? ib('folder', t('打开目录') + (p.dir ? '\n' + p.dir : ''), () => manage({ id: p.id, action: 'open_dir' })) : null,
+      can ? uninstallBtn(p) : null,
       can ? toggle(p) : null));
     if (p.description) nodes.push(h('div', { class: 'plugd-d' }, pluginTxt(p.description)));
     if (st === 'needs_grant' && p.enabled && can) {
@@ -1066,16 +1128,24 @@ function pluginSettingsPane() {
       nodes.push(h('div', { class: 'plug-setpanel' }, view.el));
     }
 
-    // 控制台
-    con = h('div', { class: 'plug-console' });
+    // 控制台：没有日志时只有一行标题
+    const hasLog = (pluginConsoles.get(p.id) || []).length > 0;
+    con = h('div', { class: 'plug-console', hidden: !hasLog });
     conKey = p.id;
+    conTools = h('span', { class: 'plugd-con-t', hidden: !hasLog },
+      ib('copy', t('复制日志'), () => copyText(pluginConsoleLines(p.id).join('\n'))),
+      ib('eraser', t('清空'), () => { pluginConsoles.set(conKey, []); paint(); }));
     nodes.push(h('div', { class: 'plugd-con' },
-      h('div', { class: 'plugd-con-h' }, h('span', { class: 'si', title: t('控制台'), html: svg('terminal') }),
-        ib('copy', t('复制日志'), () => copyText(pluginConsoleLines(p.id).join('\n'))),
-        ib('eraser', t('清空'), () => { pluginConsoles.set(conKey, []); paint(); })),
+      h('div', { class: 'plugd-con-h' }, h('span', { class: 'si', title: t('控制台'), html: svg('terminal') }), conTools),
       con));
     loadConsole(p.id);
     return h('div', { class: 'plugd' }, nodes);
+  }
+
+  /** 从插件源安装的插件可以卸载 */
+  function uninstallBtn(p) {
+    if (p.kind !== 'source') return null;
+    return ib('trash', t('卸载'), async () => { if (await pluginSrcUninstall(srcCtx, p)) { selected = null; render(); } });
   }
 
   async function loadConsole(pluginId) {
@@ -1089,7 +1159,10 @@ function pluginSettingsPane() {
   function paint() {
     if (!con) return;
     const l = pluginConsoles.get(conKey) || [];
-    if (!l.length) { con.replaceChildren(h('div', { class: 'plug-console-e' }, '—')); return; }
+    const has = l.length > 0;
+    con.hidden = !has;
+    if (conTools) conTools.hidden = !has;
+    if (!has) { con.replaceChildren(); return; }
     const stick = con.scrollHeight - con.scrollTop - con.clientHeight < 24;
     con.replaceChildren(...l.slice(-500).map((e) => h('div', { class: 'plug-cl' + (e.level === 'error' ? ' err' : e.level === 'warn' ? ' warn' : '') },
       h('span', { class: 't' }, pluginTime(e.time)), ' ',
@@ -1450,6 +1523,7 @@ function pluginOnEvent(m) {
       pluginContrib('').catch(() => {});
       if (pluginManager) pluginManager.reload();
       pluginSideChanged();
+      if (typeof pluginSrcChanged === 'function') pluginSrcChanged();
       for (const v of viewers.values()) pluginViewerUpdate(v);
       break;
     case 'open': {
@@ -1791,6 +1865,8 @@ function pluginViewerDestroy(v) {
 // ---------------- 初始化 ----------------
 function pluginsInit() {
   pluginsStart();
+  // 插件源：启动时读一次，有新版时设置按钮上显示圆点
+  if (typeof pluginSrcWatch === 'function') pluginSrcWatch();
   // 首次进入时把贡献拉一遍，保证右键菜单、徽标、状态栏很快出现
   setTimeout(() => { pluginTick(); }, 800);
 }

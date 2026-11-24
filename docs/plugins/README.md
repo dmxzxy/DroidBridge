@@ -23,7 +23,7 @@ DroidBridge 的插件用 **Lua 5.4** 编写：一个文件夹里放 `plugin.json
 
 ### 方式三：从插件源安装
 
-团队把插件发布成插件源（一个 `index.json` 清单 + 插件包）后，在 **设置 → 插件 → 插件源** 里点 **+** 填入清单地址（或本机文件夹），就能安装、更新里面的插件。发布方法和清单格式见 [SOURCES.md](SOURCES.md)。
+团队把插件发布成插件源（一个 `index.json` 清单 + 插件包）后，在 **设置 → 插件** 顶栏的地球按钮里添加清单地址（或本机文件夹），里面的插件就会出现在插件列表中，可以直接安装、更新。发布方法和清单格式见 [SOURCES.md](SOURCES.md)。
 
 ### 第一个插件
 
@@ -92,6 +92,7 @@ end })
 | `permissions` | 否 | 权限列表，见下一节。不写表示只需要“基础能力” |
 | `match` | 否 | 限定插件能看到的设备，见下 |
 | `settings` | 否 | 设置项 schema，界面会据此生成表单 |
+| `minHost` | 否 | 需要的最低 DroidBridge 版本（如 `0.9.4`）。本机版本更低时插件不启动，列表里显示「需要 DroidBridge 0.9.4」 |
 
 ### `match`：限制插件能看到哪些设备
 
@@ -547,7 +548,7 @@ end)
 | `ui.button(label, opts) -> bool` | 按钮，`kind` 可为 `primary` / `danger`，`disabled` 可禁用 |
 | `ui.toggle(label, value, opts) -> bool` | 开关 |
 | `ui.slider(label, value, min, max, step, opts) -> number` | 滑块 |
-| `ui.input(label, value, opts) -> string` | 输入框，`multiline = true` 为多行，`placeholder` 提示文字 |
+| `ui.input(label, value, opts) -> string` | 输入框，`multiline = true` 为多行，`password = true` 为密码框，`placeholder` 提示文字 |
 | `ui.select(label, value, options, opts) -> string` | 下拉框，`options` 可以是 `{ "a", "b" }` 或 `{{value="a", label="A"}}` |
 | `ui.progress(value, text)` | 进度条，`value` 为 0–1 或 `nil`（不确定进度） |
 | `ui.table(columns, rows)` | 表格 |

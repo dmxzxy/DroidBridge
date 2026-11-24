@@ -458,6 +458,7 @@ function settingsDialog(tab) {
   const ver = INFO ? h('span', { class: 'set-ver' }, `DroidBridge ${INFO.version} · scrcpy ${INFO.scrcpy}`) : null;
   const dlg = dialog({ title: t('设置'), body: [h('div', { class: 'set-wrap' }, tabs, content)], cls: 'settings', actions: [ver, h('button', { class: 'btn primary', type: 'button', onclick: () => dlg.close() }, t('完成'))] });
   show(cur);
+  if (typeof pluginSrcDot === 'function') pluginSrcDot();
   dlg.addEventListener('close', () => { if (typeof pluginSettingsPaneClosed === 'function') pluginSettingsPaneClosed(); });
   if (document.activeElement && dlg.contains(document.activeElement)) document.activeElement.blur();
 }
