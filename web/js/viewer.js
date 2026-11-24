@@ -17,6 +17,105 @@ function avcCodecString(data) {
 const KEYMAP = { Enter: 66, Backspace: 67, Delete: 112, Tab: 61, ArrowUp: 19, ArrowDown: 20, ArrowLeft: 21, ArrowRight: 22, Home: 122, End: 123, PageUp: 92, PageDown: 93, Insert: 124 };
 const AKEY = { BACK: 4, HOME: 3, APP_SWITCH: 187, POWER: 26, VOLUME_UP: 24, VOLUME_DOWN: 25 };
 
+// 主舞台布局与密度状态（fit: 标准高度自适应 | rows: 双排紧凑 | wall: 多机矩阵墙）
+const STAGE = {
+  mode: pref.get('stage_mode', 'fit'),
+  scale: Math.max(40, Math.min(100, parseInt(pref.get('stage_scale', '100'), 10) || 100)),
+  compact: pref.get('stage_compact', '0') === '1',
+};
+function fitAllViewers() {
+  const g = $('#grid');
+  if (g) g.classList.toggle('mode-wall', STAGE.mode === 'wall');
+  for (const v of viewers.values()) v.fit();
+}
+function allReadyDevices() {
+  const out = [];
+  for (const hst of hosts.values()) {
+    if (hst.error) continue;
+    for (const d of (hst.devices || [])) if (d.state === 'device') out.push({ hst, d });
+  }
+  return out;
+}
+function initStageBar() {
+  renderStageBar();
+  renderSyncBanner();
+}
+function renderStageBar() {
+  const bar = $('#stageBar');
+  if (!bar) return;
+  const ready = allReadyDevices();
+  const collapsed = document.body.classList.contains('side-collapsed') && !isMobile();
+  if (!ready.length && !viewers.size && !collapsed) { bar.hidden = true; return; }
+  bar.hidden = false;
+
+  const modeBtn = (m, label) => h('button', {
+    type: 'button', class: STAGE.mode === m ? 'on' : '',
+    onclick: () => { STAGE.mode = m; pref.set('stage_mode', m); renderStageBar(); fitAllViewers(); },
+  }, label);
+  const scaleTxt = h('span', {}, STAGE.scale + '%');
+  const scaleRng = h('input', {
+    type: 'range', min: '40', max: '100', step: '5', value: String(STAGE.scale),
+    oninput: () => {
+      STAGE.scale = +scaleRng.value;
+      scaleTxt.textContent = STAGE.scale + '%';
+      pref.set('stage_scale', String(STAGE.scale));
+      fitAllViewers();
+    },
+  });
+  const isCompact = STAGE.compact || STAGE.mode === 'wall';
+  const compactBtn = h('button', {
+    type: 'button', class: 'btn sm' + (isCompact ? ' primary' : ''),
+    title: t('紧凑模式：隐藏工具栏与导航栏，悬停卡片时显示'),
+    onclick: () => {
+      STAGE.compact = !isCompact;
+      if (STAGE.mode === 'wall' && !STAGE.compact) STAGE.mode = 'rows';
+      pref.set('stage_compact', STAGE.compact ? '1' : '0');
+      pref.set('stage_mode', STAGE.mode);
+      renderStageBar(); fitAllViewers();
+    },
+  }, t('紧凑边框'));
+
+  bar.replaceChildren(
+    collapsed ? ib('sidebar', t('展开侧栏 (Ctrl+B)'), () => toggleSidebar(false)) : null,
+    h('div', { class: 'seg' }, modeBtn('fit', t('标准')), modeBtn('rows', t('双排')), modeBtn('wall', t('矩阵墙'))),
+    STAGE.mode === 'fit' ? h('label', { class: 'stage-scale', title: t('画面缩放') }, t('画面缩放'), scaleRng, scaleTxt) : null,
+    compactBtn,
+    h('div', { class: 'stage-grow' }),
+    ready.length > viewers.size ? h('button', {
+      type: 'button', class: 'btn sm',
+      onclick: () => { for (const { hst, d } of ready) openViewer(hst, d); },
+    }, t('全部投屏') + ` (${ready.length})`) : null,
+    viewers.size > 1 ? h('button', {
+      type: 'button', class: 'btn sm',
+      onclick: () => { for (const v of [...viewers.values()]) v.close(); },
+    }, t('全部关闭')) : null,
+  );
+}
+
+function renderSyncBanner() {
+  const banner = $('#syncBanner');
+  if (!banner) return;
+  const synced = [...viewers.values()].filter(v => v.sync);
+  if (!synced.length || viewers.size < 2) { banner.hidden = true; return; }
+  banner.hidden = false;
+  const ratios = synced.filter(v => v.vw > 0 && v.vh > 0).map(v => v.vw / v.vh);
+  const ratioDiff = ratios.length >= 2 && (Math.max(...ratios) / Math.min(...ratios) > 1.08);
+  banner.replaceChildren(
+    h('span', { html: svg('link') }).firstChild,
+    h('b', {}, t('群控同步中 · 已选 {0}/{1} 台', synced.length, viewers.size)),
+    ratioDiff ? h('span', { class: 'sync-warn' }, '⚠ ' + t('设备屏幕比例不一致，边缘点击可能偏移')) : null,
+    h('div', { class: 'acts' },
+      synced.length < viewers.size ? h('button', {
+        type: 'button', class: 'btn sm',
+        onclick: () => { for (const v of viewers.values()) if (!v.sync) v.toggleSync(true); },
+      }, t('全选画面')) : null,
+      h('button', {
+        type: 'button', class: 'btn sm danger',
+        onclick: () => { for (const v of viewers.values()) if (v.sync) v.toggleSync(false); },
+      }, t('退出群控'))),
+  );
+}
+
 /** 观看者 id：随机 12 位 base36，同一 Viewer 重连时保持不变 */
 const viewerVid = () => Array.from({ length: 12 }, () => Math.floor(Math.random() * 36).toString(36)).join('');
 /** 观看者显示名称：本机用电脑名，其他浏览器用设置里的名称或“XX 上的浏览器” */
@@ -52,7 +151,7 @@ class Viewer {
     // 插件覆盖层：与画面同尺寸，按设备像素绘制；不接收鼠标事件
     this.pov = h('canvas', { class: 'pov', width: '1', height: '1' });
     this.dot = h('span', { class: 'dot warn' });
-    this.nameEl = h('span', { class: 'name' }, this.dev.model || this.dev.serial);
+    this.nameEl = h('span', { class: 'name' }, typeof devDisplayName === 'function' ? devDisplayName(this.dev) : (this.dev.model || this.dev.serial));
     this.statEl = h('span', { class: 'fps' });
     // 观看者标记：眼睛 + 人数（只有自己时隐藏），悬停列出所有名称
     this.eyeNum = h('span', {}, '');
@@ -87,7 +186,18 @@ class Viewer {
     this.aiBar = h('div', { class: 'aibar', hidden: true }, h('span', { class: 'ai-dot' }), h('b', {}, 'AI'), this.aiLabel, this.aiBtn);
     this.syncBtn = ib('link', t('群控：在这台设备上的操作同步到其他群控设备'), () => this.toggleSync());
     this.syncBtn.hidden = viewers.size < 1;
-    this.vlog = h('div', { class: 'vlog' });
+    // 可拖拽宽度多页签停靠坞（日志 / 文件 / 插件切换不销毁实例，保留上下文）
+    this.dockW = parseInt(pref.get('dock_w', '0'), 10) || 0;
+    this.activeDock = null;
+    this.dockHidden = false;
+    this.logWrap = h('div', { class: 'vdock-pane', hidden: true });
+    this.filesWrap = h('div', { class: 'vdock-pane', hidden: true });
+    this.plugWrap = h('div', { class: 'vdock-pane', hidden: true });
+    this.dockTabs = h('div', { class: 'vdock-tabs' });
+    this.dockBody = h('div', { class: 'vdock-body' }, this.logWrap, this.filesWrap, this.plugWrap);
+    this.dockResizer = h('div', { class: 'vlog-resizer', title: t('拖拽调整侧栏宽度（双击重置）') });
+    this.vlog = h('div', { class: 'vlog' }, this.dockResizer, this.dockTabs, this.dockBody);
+    this.bindDockResizer();
     this.root = h('div', { class: 'viewer' },
       ctxMenu(h('div', { class: 'vhead' }, this.dot, this.nameEl, this.recEl, h('span', { class: 'sub' }, this.host.remote ? this.host.name : ''), this.statEl, this.eyeEl,
         this.syncBtn, ib('max', t('全屏'), () => this.fullscreen()), ib('x', t('关闭'), () => this.close())), () => this.moreItems()),
@@ -95,7 +205,7 @@ class Viewer {
       h('div', { class: 'vbody' },
         h('div', { class: 'vcol' },
           h('div', { class: 'screen' }, this.canvas, this.pov, this.ime, this.overlay, this.perfEl, this.aiBar, this.ctlBar, h('div', { class: 'drop' }, t('松开以安装 APK 或传到手机'))),
-          h('div', { class: 'nav' }, ib('back', t('返回'), key(AKEY.BACK)), ib('home', t('主页'), key(AKEY.HOME)), ib('recent', t('最近任务'), key(AKEY.APP_SWITCH))),
+          h('div', { class: 'nav' }, ib('back', t('返回 (右键 / Esc)'), key(AKEY.BACK)), ib('home', t('主页 (中键)'), key(AKEY.HOME)), ib('recent', t('最近任务'), key(AKEY.APP_SWITCH))),
           this.typing),
         h('div', { class: 'vtools' },
           ib('power', t('电源键'), key(AKEY.POWER)), ib('volUp', t('音量 +'), key(AKEY.VOLUME_UP)), ib('volDown', t('音量 −'), key(AKEY.VOLUME_DOWN)),
@@ -121,7 +231,7 @@ class Viewer {
       { icon: 'moon', label: t('关闭手机屏幕（投屏继续）'), fn: () => this.send({ t: 'power', on: false }) },
       { icon: 'sun', label: t('打开手机屏幕'), fn: () => this.send({ t: 'power', on: true }) },
       '-',
-      { icon: 'paste', label: t('粘贴电脑剪贴板'), fn: () => this.paste() },
+      { icon: 'paste', label: t('粘贴电脑剪贴板 (Ctrl+V)'), fn: () => this.paste() },
       { icon: 'upload', label: t('安装 APK / 传文件…'), fn: () => this.fileInput.click() },
       '-',
       this.dev.wireless
@@ -133,7 +243,14 @@ class Viewer {
   }
 
   wsUrl() {
-    const p = new URLSearchParams({ serial: this.dev.serial, peer: this.host.id, lang: LANG, max_size: q('size'), bit_rate: q('rate'), max_fps: q('fps'), stay_awake: pref.get('awake', '1'),
+    let maxSize = +q('size'), bitRate = +q('rate'), maxFps = +q('fps');
+    // 矩阵缩略墙或高密度小尺寸同屏时自动降档流参数，减轻多路解码负载
+    if (!this.forceNext && (STAGE.mode === 'wall' || (viewers.size >= 4 && STAGE.scale <= 60))) {
+      maxSize = maxSize > 0 ? Math.min(maxSize, 640) : 640;
+      bitRate = Math.min(bitRate || 8000000, 1500000);
+      maxFps = Math.min(maxFps || 60, 20);
+    }
+    const p = new URLSearchParams({ serial: this.dev.serial, peer: this.host.id, lang: LANG, max_size: String(maxSize), bit_rate: String(bitRate), max_fps: String(maxFps), stay_awake: pref.get('awake', '1'),
       audio: this.audioOn ? '1' : '0', audio_codec: AUDIO_CODEC, audio_dup: pref.get('audiodup', '0'),
       vid: this.vid, who: viewerWho(), force: this.forceNext ? '1' : '0' });
     this.forceNext = false;   // 只用于这一次连接
@@ -228,46 +345,170 @@ class Viewer {
     this.overlay.classList.remove('hide');
   }
 
-  toggleLog(force) {
-    const open = force === undefined ? !this.log : force;
-    if (open && this.files) this.toggleFiles(false);   // 侧栏同一时间只放一个
-    if (open && this.plugDock) pluginDockClose(this);
-    if (open && !this.log) { this.log = new LogPanel(this); this.vlog.append(this.log.el); }
-    if (!open && this.log) { this.log.destroy(); this.log = null; this.vlog.replaceChildren(); }
-    this.root.classList.toggle('with-log', !!(this.log || this.files));
-    this.logBtn.classList.toggle('on', !!this.log);
-    this.fit();
+  bindDockResizer() {
+    const rz = this.dockResizer;
+    rz.addEventListener('dblclick', () => { this.dockW = 0; localStorage.removeItem('db_dock_w'); this.fit(); });
+    rz.addEventListener('pointerdown', e => {
+      if (e.button !== 0 || isMobile()) return;
+      e.preventDefault();
+      rz.setPointerCapture(e.pointerId);
+      this.root.classList.add('resizing-dock');
+      const startX = e.clientX;
+      const startW = this.vlog.getBoundingClientRect().width || 420;
+      const onMove = ev => {
+        const w = Math.max(280, Math.min(1000, Math.round(startW + (startX - ev.clientX))));
+        this.dockW = w;
+        pref.set('dock_w', String(w));
+        this.fit();
+      };
+      const onUp = () => {
+        this.root.classList.remove('resizing-dock');
+        rz.removeEventListener('pointermove', onMove);
+        rz.removeEventListener('pointerup', onUp);
+        rz.removeEventListener('pointercancel', onUp);
+      };
+      rz.addEventListener('pointermove', onMove);
+      rz.addEventListener('pointerup', onUp);
+      rz.addEventListener('pointercancel', onUp);
+    });
   }
-  toggleFiles(force) {
-    const open = force === undefined ? !this.files : force;
-    if (open && this.log) this.toggleLog(false);
-    if (open && this.plugDock) pluginDockClose(this);
-    if (open && !this.files) {
-      this.files = new FileBrowser(this.host, this.dev, { compact: true, onClose: () => this.toggleFiles(false) });
-      this.vlog.append(this.files.el);
-    }
-    if (!open && this.files) { this.files.destroy(); this.files = null; this.vlog.replaceChildren(); }
-    this.root.classList.toggle('with-log', !!(this.log || this.files));
-    this.filesBtn.classList.toggle('on', !!this.files);
+
+  hasOpenDock() {
+    return !this.dockHidden && !!this.activeDock && !!(
+      (this.activeDock === 'log' && this.log) ||
+      (this.activeDock === 'files' && this.files) ||
+      (this.activeDock === 'plug' && this.plugDock)
+    );
+  }
+
+  syncDockUI() {
+    const open = this.hasOpenDock();
+    this.root.classList.toggle('with-log', open);
+    this.logWrap.hidden = !(open && this.activeDock === 'log');
+    this.filesWrap.hidden = !(open && this.activeDock === 'files');
+    this.plugWrap.hidden = !(open && this.activeDock === 'plug');
+    this.logBtn.classList.toggle('on', open && this.activeDock === 'log');
+    this.filesBtn.classList.toggle('on', open && this.activeDock === 'files');
+    this.plugBtn.classList.toggle('on', open && this.activeDock === 'plug');
+
+    const tabs = [];
+    const mkTab = (k, icon, label) => h('button', {
+      type: 'button', class: 'vdock-tab' + (this.activeDock === k ? ' on' : ''),
+      onclick: () => this.activateDock(k),
+    }, h('span', { html: svg(icon) }).firstChild, label,
+      h('span', { class: 'x', title: t('关闭'), html: svg('x'), onclick: e => { e.stopPropagation(); this.closeDockTab(k); } }));
+
+    if (this.log) tabs.push(mkTab('log', 'logs', t('日志')));
+    if (this.files) tabs.push(mkTab('files', 'folder', t('文件')));
+    if (this.plugDock) tabs.push(mkTab('plug', 'puzzle', t('插件')));
+    tabs.push(ib('chevRight', t('收起侧边面板'), () => { this.dockHidden = true; this.syncDockUI(); this.fit(); }));
+    this.dockTabs.replaceChildren(...tabs);
+  }
+
+  activateDock(kind) {
+    this.activeDock = kind;
+    this.dockHidden = false;
+    this.syncDockUI();
     this.fit();
   }
 
-  // 桌面端布局：窗口宽度跟随画面比例；打开日志时，空间够就放右侧，横屏设备且空间不够时放到画面下方
+  closeDockTab(kind) {
+    if (kind === 'log' && this.log) { this.log.destroy(); this.log = null; this.logWrap.replaceChildren(); }
+    if (kind === 'files' && this.files) { this.files.destroy(); this.files = null; this.filesWrap.replaceChildren(); }
+    if (kind === 'plug' && this.plugDock) { pluginDockClose(this); return; }
+    if (this.activeDock === kind) {
+      this.activeDock = this.log ? 'log' : this.files ? 'files' : this.plugDock ? 'plug' : null;
+    }
+    this.syncDockUI();
+    this.fit();
+  }
+
+  onPlugDockClosed() {
+    this.plugWrap.replaceChildren();
+    if (this.activeDock === 'plug') {
+      this.activeDock = this.log ? 'log' : this.files ? 'files' : null;
+    }
+    this.syncDockUI();
+    this.fit();
+  }
+
+  toggleLog(force) {
+    if (force === false) { this.closeDockTab('log'); return; }
+    if (force === true || !this.log) {
+      if (!this.log) { this.log = new LogPanel(this); this.logWrap.replaceChildren(this.log.el); }
+      this.activateDock('log');
+      return;
+    }
+    if (this.activeDock === 'log' && !this.dockHidden) {
+      this.dockHidden = true; this.syncDockUI(); this.fit();
+    } else {
+      this.activateDock('log');
+    }
+  }
+  toggleFiles(force) {
+    if (force === false) { this.closeDockTab('files'); return; }
+    if (force === true || !this.files) {
+      if (!this.files) {
+        this.files = new FileBrowser(this.host, this.dev, { compact: true, onClose: () => this.closeDockTab('files') });
+        this.filesWrap.replaceChildren(this.files.el);
+      }
+      this.activateDock('files');
+      return;
+    }
+    if (this.activeDock === 'files' && !this.dockHidden) {
+      this.dockHidden = true; this.syncDockUI(); this.fit();
+    } else {
+      this.activateDock('files');
+    }
+  }
+
+  // 桌面端布局：支持标准比例 / 双排紧凑 / 多机矩阵墙 + 自由缩放 + 侧栏自定义拖拽宽度
   fit() {
     const r = this.root;
+    const compact = (STAGE.compact || STAGE.mode === 'wall') && !isMobile();
+    r.classList.toggle('compact-chrome', compact);
+    const chromeW = compact ? 2 : 46;
     if (this.pov) pluginOverlayFit(this);
-    if (!this.vw || !this.vh || isMobile()) { r.style.width = ''; this.vlog.style.width = ''; r.classList.remove('log-bottom'); return; }
-    const avail = $('main').clientWidth - 32;
+    if (!this.vw || !this.vh || isMobile()) {
+      r.style.width = ''; this.canvas.style.maxHeight = ''; this.vlog.style.width = '';
+      r.classList.remove('log-bottom'); return;
+    }
+    const avail = Math.max(240, $('main').clientWidth - 32);
     const sb = document.body.classList.contains('has-sb') ? 24 : 0;
-    const cw = Math.min(this.vw, (innerHeight - 150 - sb - (hasTitlebar() ? 36 : 0)) * this.vw / this.vh);
-    if (!this.log && !this.files && !this.plugDock) { r.classList.remove('log-bottom'); r.style.width = Math.round(Math.max(300, Math.min(cw + 46, avail))) + 'px'; return; }
-    const side = avail - (cw + 46);
+    const tb = hasTitlebar() ? 36 : 0;
+    const barH = ($('#stageBar') && !$('#stageBar').hidden ? 46 : 0) + ($('#syncBanner') && !$('#syncBanner').hidden ? 46 : 0);
+    const fullH = Math.max(180, innerHeight - 150 - sb - tb - barH);
+
+    let maxH = fullH;
+    let cw;
+    if (STAGE.mode === 'wall') {
+      const cols = avail >= 1560 ? 6 : avail >= 1240 ? 5 : avail >= 920 ? 4 : 3;
+      const cellW = Math.floor((avail - (cols - 1) * 10) / cols) - chromeW;
+      cw = Math.max(140, cellW);
+      maxH = Math.round(cw * this.vh / this.vw);
+    } else if (STAGE.mode === 'rows') {
+      maxH = Math.max(220, Math.floor((innerHeight - 130 - sb - tb - barH) / 2) - 48);
+      cw = Math.min(this.vw, maxH * this.vw / this.vh);
+    } else {
+      maxH = Math.round(fullH * (STAGE.scale / 100));
+      cw = Math.min(this.vw, maxH * this.vw / this.vh);
+    }
+    this.canvas.style.maxHeight = maxH + 'px';
+
+    if (!this.hasOpenDock()) {
+      r.classList.remove('log-bottom');
+      const minCardW = compact ? 150 : 240;
+      r.style.width = Math.round(Math.max(minCardW, Math.min(cw + chromeW, avail))) + 'px';
+      return;
+    }
+    const side = avail - (cw + chromeW);
     const portrait = this.vh >= this.vw;
-    if (side >= 360 || portrait || avail - 46 - 400 >= cw * 0.7) {
-      const lw = Math.round(Math.max(side >= 360 ? Math.min(side, 900) : 400, 360));
+    if (side >= 320 || portrait || avail - chromeW - 360 >= cw * 0.7) {
+      const autoW = Math.round(Math.max(side >= 320 ? Math.min(side, 900) : 380, 320));
+      const lw = this.dockW ? Math.min(Math.max(280, this.dockW), Math.max(280, avail - 200)) : autoW;
       r.classList.remove('log-bottom');
       this.vlog.style.width = lw + 'px';
-      r.style.width = Math.round(Math.min(avail, cw + 46 + lw)) + 'px';
+      r.style.width = Math.round(Math.min(avail, cw + chromeW + lw)) + 'px';
     } else {
       r.classList.add('log-bottom');
       this.vlog.style.width = '';
@@ -280,11 +521,12 @@ class Viewer {
       case 'status': if (!this.gotFrame) this.showOverlay(m.msg, { spin: true }); break;
       case 'viewers': this.onViewers(m); break;
       case 'busy': this.onBusy(m); break;
-      case 'meta': if (m.device_name) this.nameEl.textContent = m.device_name; this.showOverlay(t('等待画面…'), { spin: true }); break;
+      case 'meta': if (m.device_name && !(typeof devAlias === 'function' && devAlias(this.dev.serial))) this.nameEl.textContent = m.device_name; this.showOverlay(t('等待画面…'), { spin: true }); break;
       case 'session':
         this.vw = m.width; this.vh = m.height;
         if (this.canvas.width !== m.width || this.canvas.height !== m.height) { this.canvas.width = m.width; this.canvas.height = m.height; }
         this.fit();
+        if (this.sync) renderSyncBanner();
         break;
       case 'error': this.lastError = m.msg; break;
       case 'audio':
@@ -393,20 +635,37 @@ class Viewer {
     this.send({ t: 'clipboard', text, paste: true });
   }
   sendRaw(obj) { if (this.ws && this.ws.readyState === 1) this.ws.send(JSON.stringify(obj)); }
-  /** 发送控制消息；开启群控时同步给其他群控设备（坐标按各自分辨率等比换算） */
+  /** 发送控制消息；开启群控时同步给其他群控设备（坐标按各自分辨率等比换算，并在从机上显示同步落点波纹） */
   send(obj) {
     this.sendRaw(obj);
     if (!this.sync || !SYNC_TYPES.has(obj.t) || (obj.t === 'cmd' && obj.name === 'reset_video')) return;
     for (const v of viewers.values()) {
       if (v === this || !v.sync) continue;
-      if (obj.w) { if (v.vw) v.sendRaw({ ...obj, x: Math.round(obj.x / obj.w * v.vw), y: Math.round(obj.y / obj.h * v.vh), w: v.vw, h: v.vh }); }
-      else v.sendRaw(obj);
+      if (obj.w) {
+        if (v.vw) {
+          v.sendRaw({ ...obj, x: Math.round(obj.x / obj.w * v.vw), y: Math.round(obj.y / obj.h * v.vh), w: v.vw, h: v.vh });
+          if (obj.t === 'touch' && obj.action === 0) v.syncMark(obj.x / obj.w, obj.y / obj.h);
+        }
+      } else {
+        v.sendRaw(obj);
+      }
     }
+  }
+  syncMark(fx, fy) {
+    const sr = this.canvas.parentElement.getBoundingClientRect(), cr = this.canvas.getBoundingClientRect();
+    if (!cr.width) return;
+    const el = h('div', { class: 'aitap synctap' });
+    el.style.left = (cr.left - sr.left + fx * cr.width) + 'px';
+    el.style.top = (cr.top - sr.top + fy * cr.height) + 'px';
+    this.canvas.parentElement.append(el);
+    setTimeout(() => el.remove(), 600);
   }
   toggleSync(on = !this.sync) {
     this.sync = on;
     this.root.classList.toggle('synced', on);
     this.syncBtn.classList.toggle('on', on);
+    renderSyncBanner();
+    fitAllViewers();
     if (!on) return;
     const n = [...viewers.values()].filter(v => v.sync).length;
     toast(n < 2 ? t('再给至少一台设备打开群控') : t('群控：{0} 台设备同步操作', n));
@@ -782,6 +1041,9 @@ function afterViewersChange() {
   $('#placeholder').style.display = viewers.size ? 'none' : '';
   if (!viewers.size) { document.body.classList.remove('viewing'); history.replaceState(null, '', location.pathname + location.search); }
   renderSide();
+  renderStageBar();
+  renderSyncBanner();
+  fitAllViewers();
 }
 
 function showNotice() {

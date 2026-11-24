@@ -8,6 +8,115 @@ const hosts = new Map();
 const viewers = new Map();
 const STATE_TEXT = { unauthorized: t('未授权'), offline: t('离线'), recovery: 'Recovery', sideload: 'Sideload', bootloader: 'Bootloader' };
 const STATE_HINT = { unauthorized: t('请在手机上点击“允许 USB 调试”'), offline: t('设备离线，请重新插拔数据线') };
+let sideQuery = '';
+let sideFilter = 'all'; // 'all' | 'open' | 'wifi'
+
+function devAlias(serial) {
+  return (pref.get('alias_' + serial, '') || '').trim();
+}
+function setDevAlias(serial, val) {
+  const v = (val || '').trim();
+  if (v) pref.set('alias_' + serial, v);
+  else localStorage.removeItem('db_alias_' + serial);
+}
+function devDisplayName(d) {
+  return devAlias(d.serial) || d.model || d.serial;
+}
+async function editDevAlias(hst, dev) {
+  const cur = devAlias(dev.serial);
+  const next = await promptDialog(t('设置设备备注名'), (dev.model ? dev.model + ' · ' : '') + dev.serial + '（' + t('留空恢复默认型号显示') + '）', {
+    placeholder: t('例如：测试机 A · 安卓 14'), value: cur, okText: t('保存'),
+  });
+  if (next === null) return;
+  setDevAlias(dev.serial, next);
+  for (const v of viewers.values()) {
+    if (v.dev.serial === dev.serial && v.nameEl) v.nameEl.textContent = devDisplayName(v.dev);
+  }
+  renderSide();
+}
+
+function toggleSidebar(force) {
+  const collapsed = force === undefined ? !document.body.classList.contains('side-collapsed') : !!force;
+  document.body.classList.toggle('side-collapsed', collapsed);
+  pref.set('side_collapsed', collapsed ? '1' : '0');
+  if (typeof renderStageBar === 'function') renderStageBar();
+  if (typeof fitAllViewers === 'function') setTimeout(fitAllViewers, 180);
+}
+
+function initSidebarLayout() {
+  const savedW = parseInt(pref.get('side_w', '252'), 10);
+  if (savedW >= 190 && savedW <= 440) document.documentElement.style.setProperty('--side-w', savedW + 'px');
+  if (pref.get('side_collapsed', '0') === '1' && !isMobile()) document.body.classList.add('side-collapsed');
+
+  const colBtn = $('#sideCollapse');
+  if (colBtn) colBtn.replaceWith(Object.assign(ib('sidebar', t('收起侧栏 (Ctrl+B)'), () => toggleSidebar(true)), { id: 'sideCollapse' }));
+
+  // Ctrl+B / Cmd+B 快捷切换侧栏
+  document.addEventListener('keydown', e => {
+    if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'b') {
+      if (document.querySelector('dialog[open]') || isMobile()) return;
+      e.preventDefault();
+      toggleSidebar();
+    }
+  });
+
+  // 侧栏边缘拖拽调宽
+  const resizer = $('#sideResizer');
+  if (resizer) {
+    resizer.title = t('拖拽调整侧栏宽度（双击重置）');
+    resizer.addEventListener('dblclick', () => {
+      document.documentElement.style.setProperty('--side-w', '252px');
+      pref.set('side_w', '252');
+      if (typeof fitAllViewers === 'function') fitAllViewers();
+    });
+    resizer.addEventListener('pointerdown', e => {
+      if (e.button !== 0 || isMobile()) return;
+      e.preventDefault();
+      resizer.setPointerCapture(e.pointerId);
+      document.body.classList.add('resizing-side');
+      const onMove = ev => {
+        const w = Math.max(190, Math.min(440, Math.round(ev.clientX)));
+        document.documentElement.style.setProperty('--side-w', w + 'px');
+        pref.set('side_w', String(w));
+        if (typeof fitAllViewers === 'function') fitAllViewers();
+      };
+      const onUp = () => {
+        document.body.classList.remove('resizing-side');
+        resizer.removeEventListener('pointermove', onMove);
+        resizer.removeEventListener('pointerup', onUp);
+        resizer.removeEventListener('pointercancel', onUp);
+      };
+      resizer.addEventListener('pointermove', onMove);
+      resizer.addEventListener('pointerup', onUp);
+      resizer.addEventListener('pointercancel', onUp);
+    });
+  }
+
+  // 侧栏搜索与状态筛选胶囊
+  const box = $('#sideSearch');
+  if (box) {
+    const clearBtn = ib('x', t('清空'), () => { inp.value = ''; sideQuery = ''; clearBtn.hidden = true; renderSide(); });
+    clearBtn.hidden = true;
+    const inp = h('input', {
+      class: 'input', type: 'text', placeholder: t('搜索型号、备注或序列号'), spellcheck: 'false',
+      oninput: () => { sideQuery = inp.value.trim().toLowerCase(); clearBtn.hidden = !sideQuery; renderSide(); },
+    });
+    const chip = (k, label) => h('button', {
+      type: 'button', class: 'side-chip' + (sideFilter === k ? ' on' : ''), 'data-k': k,
+      onclick: () => {
+        sideFilter = k;
+        for (const c of chips.children) c.classList.toggle('on', c.dataset.k === k);
+        renderSide();
+      },
+    }, label);
+    const chips = h('div', { class: 'side-chips' },
+      chip('all', t('全部')), chip('open', t('投屏中')), chip('wifi', t('无线')));
+    box.className = 'side-search';
+    box.replaceChildren(
+      h('div', { class: 'side-search-box' }, h('span', { html: svg('search') }).firstChild, inp, clearBtn),
+      chips);
+  }
+}
 
 async function loadPeers() {
   const peers = await api('/api/peers');
@@ -42,10 +151,10 @@ async function refreshHost(hst) {
 function presenceOthers(hst) {
   return (hst.presence || []).filter(p => !p.you);
 }
-/** 设备序列号 → 型号（显示用） */
+/** 设备序列号 → 备注或型号（显示用） */
 function devLabel(hst, serial) {
   const d = (hst.devices || []).find(x => x.serial === serial);
-  return (d && d.model) || serial;
+  return devAlias(serial) || (d && d.model) || serial;
 }
 /** 悬停提示里的一行：名字 · 在看的设备 */
 function presenceLine(hst, p) {
@@ -131,11 +240,28 @@ function findViewer(hst, dev) {
 /** 远程电脑的错误是否表示“未授权本机 / 令牌错误” */
 const needsAuth = (msg) => /授权|令牌|token|authoriz/i.test(msg || '');
 
-/** 设备行悬停提示：连接方式 + 序列号（列表里不显示，大多数人用不到） */
+/** 设备行悬停提示：备注 + 型号 + 连接方式 + 序列号 */
 function devTip(d) {
-  const lines = [d.model || d.serial, (d.wireless ? t('无线') : 'USB') + ' · ' + d.serial];
+  const alias = devAlias(d.serial);
+  const head = alias ? `${alias} (${d.model || d.serial})` : (d.model || d.serial);
+  const lines = [head, (d.wireless ? t('无线') : 'USB') + ' · ' + d.serial];
   if (d.state !== 'device') lines.push(STATE_HINT[d.state] || (t('设备状态：') + d.state));
   return lines.join('\n');
+}
+
+function shortSerial(s) {
+  if (!s) return '';
+  if (s.includes(':')) return s.split(':')[0].split('.').slice(-2).join('.');
+  return s.length > 6 ? '…' + s.slice(-5) : s;
+}
+
+function devMatchesFilter(hst, d) {
+  const isOpen = [...viewers.values()].some(v => v.host.id === hst.id && v.dev.serial === d.serial);
+  if (sideFilter === 'open' && !isOpen) return false;
+  if (sideFilter === 'wifi' && !d.wireless) return false;
+  if (!sideQuery) return true;
+  const hay = [devAlias(d.serial), d.model, d.serial, hst.name].filter(Boolean).join(' ').toLowerCase();
+  return hay.includes(sideQuery);
 }
 
 function devRows(hst, emptyEl) {
@@ -148,16 +274,28 @@ function devRows(hst, emptyEl) {
     h('button', { class: 'linkbtn', type: 'button', onclick: async () => { await refreshHost(hst); renderSide(); if (hst.error) toast(hst.error, { kind: 'bad', ms: 5000 }); } }, t('重试')),
     hst.remote ? [' · ', h('button', { class: 'linkbtn', type: 'button', onclick: () => peerDialog(hst) }, t('编辑'))] : null)];
   if (!hst.devices.length) return [emptyEl];
+  // 统计同型号数量，自动为多台同名测试机追加短序列号区分
+  const modelCnt = new Map();
+  for (const d of hst.devices) if (d.model) modelCnt.set(d.model, (modelCnt.get(d.model) || 0) + 1);
   // 可用的设备排在前面，未授权 / 离线的放后面
-  const list = [...hst.devices].sort((a, b) => (a.state !== 'device') - (b.state !== 'device'));
+  const list = [...hst.devices]
+    .filter(d => devMatchesFilter(hst, d))
+    .sort((a, b) => (a.state !== 'device') - (b.state !== 'device'));
+  if (!list.length) return [h('div', { class: 'empty' }, t('没有匹配的设备'))];
   return list.map(d => {
     const ready = d.state === 'device';
     const open = [...viewers.values()].some(v => v.host.id === hst.id && v.dev.serial === d.serial);
+    const alias = devAlias(d.serial);
+    const dupModel = d.model && (modelCnt.get(d.model) || 0) > 1;
+    const subText = alias ? ((d.model ? d.model + ' · ' : '') + shortSerial(d.serial)) : null;
+    const tagText = !alias && dupModel ? shortSerial(d.serial) : null;
     return ctxMenu(h('div', {
       class: 'dev' + (open ? ' open' : '') + (ready ? '' : ' na'), title: devTip(d), 'data-serial': d.serial,
       onclick: () => ready ? openViewer(hst, d) : toast(STATE_HINT[d.state] || (t('设备状态：') + d.state)),
     }, h('span', { class: 'dot ' + (ready ? 'ok' : 'warn') }),
-      h('div', { class: 't' }, h('b', {}, d.model || d.serial)),
+      h('div', { class: 't' }, h('b', {}, alias || d.model || d.serial), subText ? h('small', {}, subText) : null),
+      d.wireless ? h('span', { class: 'wl', title: t('无线') + ' · ' + d.serial, html: svg('wifi') }) : null,
+      tagText ? h('span', { class: 'meta-tag' }, tagText) : null,
       ...pluginBadges(hst, d),
       ready ? null : h('span', { class: 'st' }, STATE_TEXT[d.state] || d.state),
       ready ? ib('more', t('更多'), e => { e.stopPropagation(); deviceMenu(e.currentTarget, hst, d); }) : null), () => deviceItems(hst, d));
@@ -177,6 +315,7 @@ function deviceItems(hst, dev) {
     ready ? { icon: 'folder', label: t('文件管理…'), fn: () => open ? open.toggleFiles(true) : filesDialog(hst, dev) } : null,
     ready ? '-' : null,
     ...pluginMenuItems(hst, 'device', { serial: dev.serial }),
+    { icon: 'edit', label: t('设置备注名…'), fn: () => editDevAlias(hst, dev) },
     { icon: 'copy', label: t('复制序列号'), fn: () => copyText(dev.serial) },
   ];
 }
@@ -185,6 +324,8 @@ function deviceMenu(anchor, hst, dev) {
   menu(anchor, [
     { icon: 'grid', label: t('应用管理…'), fn: () => appsDialog(hst, dev) },
     { icon: 'folder', label: t('文件管理…'), fn: () => filesDialog(hst, dev) },
+    '-',
+    { icon: 'edit', label: t('设置备注名…'), fn: () => editDevAlias(hst, dev) },
   ]);
 }
 
@@ -199,6 +340,7 @@ function renderSide() {
   for (const r of remotes) out.push(hostGroup(r, h('div', { class: 'empty' }, t('没有设备'))));
   $('#lists').replaceChildren(...out);
   renderSideFoot();
+  if (typeof renderStageBar === 'function') renderStageBar();
 }
 
 /** 一台电脑一组：标题行（名称 + 设备数角标，可折叠）+ 设备列表 */

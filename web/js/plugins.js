@@ -1835,16 +1835,18 @@ function pluginDockShow(v, key) {
 }
 
 function pluginDockOpen(v, p) {
-  // 侧栏同一时间只放一个：先关掉日志 / 文件面板
-  if (v.log) v.toggleLog(false);
-  if (v.files) v.toggleFiles(false);
   pluginDockInit(v);
   pluginDockSync(v);
   pluginDockShow(v, p.plugin + '|' + p.id);
-  v.vlog.append(v.plugDock.el);
-  v.root.classList.add('with-log');
-  v.plugBtn.classList.add('on');
-  v.fit();
+  if (v.plugWrap) {
+    if (!v.plugWrap.contains(v.plugDock.el)) v.plugWrap.replaceChildren(v.plugDock.el);
+    v.activateDock('plug');
+  } else {
+    v.vlog.append(v.plugDock.el);
+    v.root.classList.add('with-log');
+    v.plugBtn.classList.add('on');
+    v.fit();
+  }
 }
 
 function pluginDockClose(v) {
@@ -1852,9 +1854,12 @@ function pluginDockClose(v) {
   for (const view of v.plugDock.views.values()) view.destroy();
   v.plugDock.el.remove();
   v.plugDock = null;
-  if (v.plugBtn) v.plugBtn.classList.remove('on');
-  if (v.root) v.root.classList.toggle('with-log', !!(v.log || v.files));
-  if (v.fit) v.fit();
+  if (typeof v.onPlugDockClosed === 'function') v.onPlugDockClosed();
+  else {
+    if (v.plugBtn) v.plugBtn.classList.remove('on');
+    if (v.root) v.root.classList.toggle('with-log', !!(v.log || v.files));
+    if (v.fit) v.fit();
+  }
 }
 
 function pluginViewerDestroy(v) {

@@ -29,6 +29,7 @@ function setupTitlebar() {
       h('button', { class: 'tb-w close', type: 'button', title: t('关闭'), 'aria-label': t('关闭'), html: svg('wclose'), onclick: () => winCmd('close') })));
   }
   bar.replaceChildren(
+    ib('sidebar', t('收起侧栏 (Ctrl+B)'), () => toggleSidebar()),
     h('div', { class: 'tb-brand' }, h('span', { class: 'logo app', html: LOGO_SVG }), 'DroidBridge'),
     tbVer, tbUpd,
     h('div', { class: 'tb-fill' }),
