@@ -28,6 +28,7 @@ const SOURCES: &[(&str, &[u8])] = &[
     src!("src/adb.rs"),
     src!("src/agent.rs"),
     src!("src/mcp.rs"),
+    src!("src/mdns.rs"),
     src!("src/apps.rs"),
     src!("src/perf.rs"),
     src!("src/access.rs"),
@@ -37,10 +38,12 @@ const SOURCES: &[(&str, &[u8])] = &[
     src!("src/plugins/host.rs"),
     src!("src/plugins/http.rs"),
     src!("src/plugins/manifest.rs"),
+    src!("src/plugins/sources.rs"),
     src!("src/plugin_host.rs"),
     src!("src/plugin_host/api.rs"),
     src!("src/plugin_host/json.rs"),
     src!("src/plugin_host/local.rs"),
+    src!("src/plugin_host/proc.rs"),
     src!("src/plugin_host/state.rs"),
     src!("src/plugin_host/tests.rs"),
     src!("src/plugin_prelude.lua"),
@@ -1029,5 +1032,24 @@ mod tests {
         assert_eq!(split_host_port("10.0.0.2:8730"), ("10.0.0.2".to_string(), 8730));
         assert_eq!(split_host_port("[fe80::1]:9000"), ("fe80::1".to_string(), 9000));
         assert!(!valid_host("-oProxyCommand=x"));
+    }
+
+    #[test]
+    fn sources_cover_all_project_files() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let listed: std::collections::HashSet<&str> = SOURCES.iter().map(|(p, _)| *p).collect();
+        fn check_dir(root: &std::path::Path, dir: &std::path::Path, listed: &std::collections::HashSet<&str>) {
+            for ent in std::fs::read_dir(dir).unwrap().flatten() {
+                let p = ent.path();
+                if p.is_dir() {
+                    check_dir(root, &p, listed);
+                } else {
+                    let rel = p.strip_prefix(root).unwrap().to_string_lossy().replace('\\', "/");
+                    assert!(listed.contains(rel.as_str()), "missing {rel} in remote::SOURCES");
+                }
+            }
+        }
+        check_dir(root, &root.join("src"), &listed);
+        check_dir(root, &root.join("web"), &listed);
     }
 }

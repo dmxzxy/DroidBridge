@@ -694,7 +694,18 @@ async fn index() -> impl IntoResponse {
     (h, Html(INDEX_HTML))
 }
 
-async fn info(State(st): State<Shared>) -> Json<serde_json::Value> {
+async fn info(State(st): State<Shared>, req: Request) -> Json<serde_json::Value> {
+    let q = util::parse_query(req.uri().query());
+    info_json(&st, &req, &q)
+}
+
+fn info_json(st: &AppState, req: &Request, q: &HashMap<String, String>) -> Json<serde_json::Value> {
+    let headers = req.headers();
+    let peer_ip = req.extensions().get::<ConnectInfo<SocketAddr>>().map(|c| c.0.ip());
+    let has_valid_token = access::token_from(headers, q).is_some_and(|given| {
+        st.cfg.token.as_deref().is_some_and(|t| access::token_matches(&given, t)) || st.access.verify(&given).is_some()
+    });
+    let show_ips = is_local_request(st, headers, peer_ip, q) || is_open(st) || has_valid_token;
     Json(json!({
         "app": "droidbridge",
         "name": st.cfg.name,
@@ -704,9 +715,9 @@ async fn info(State(st): State<Shared>) -> Json<serde_json::Value> {
         "os": std::env::consts::OS,
         "lang": i18n::code(),
         "scrcpy": scrcpy_version(),
-        "auth": !is_open(&st) || st.cfg.token.is_some(),
+        "auth": !is_open(st) || st.cfg.token.is_some(),
         "pairing": true,
-        "ips": util::local_ips(),
+        "ips": if show_ips { util::local_ips() } else { Vec::<String>::new() },
         "port": st.cfg.port,
         "https_port": st.cfg.https_port,
     }))
@@ -893,9 +904,9 @@ async fn clients_list(State(st): State<Shared>, Query(q): Query<HashMap<String, 
     local_or_peer(&st, &q, "GET", "/api/clients", b"", || async move { Ok(json!({"list": st2.access.list()})) }).await
 }
 
-/// 手动生成访问令牌（给旧版本、脚本、AI 客户端用）；令牌只返回这一次。只能在本机生成
-async fn clients_issue(State(st): State<Shared>, ConnectInfo(addr): ConnectInfo<SocketAddr>, Json(r): Json<PairReq>) -> Response {
-    if !st.access.is_local_ip(addr.ip()) {
+/// 手动生成访问令牌（给旧版本、脚本、AI 客户端用）；令牌只返回这一次。只能在本机直连（不含反向代理）生成
+async fn clients_issue(State(st): State<Shared>, ConnectInfo(addr): ConnectInfo<SocketAddr>, headers: HeaderMap, Json(r): Json<PairReq>) -> Response {
+    if !is_local_request(&st, &headers, Some(addr.ip()), &HashMap::new()) {
         return err(StatusCode::FORBIDDEN, tr!("只能在本机生成访问令牌", "Access tokens can only be created on the computer itself"));
     }
     let name = if r.name.trim().is_empty() { tr!("访问令牌", "Access token") } else { r.name };
@@ -1069,9 +1080,9 @@ async fn peer_update(State(st): State<Shared>, Path(id): Path<String>) -> Respon
 }
 
 /// 节点信息（版本、构建、系统）：本机或 ?peer= 指定的远程电脑
-async fn node_info(State(st): State<Shared>, Query(q): Query<HashMap<String, String>>) -> Response {
+async fn node_info(State(st): State<Shared>, Query(q): Query<HashMap<String, String>>, req: Request) -> Response {
     match remote_id(&q) {
-        None => info(State(st)).await.into_response(),
+        None => info_json(&st, &req, &q).into_response(),
         Some(id) => {
             let Some(peer) = st.peers.get(id).await else {
                 return err(StatusCode::NOT_FOUND, tr!("远程电脑不存在", "Remote computer not found"));
@@ -1104,9 +1115,9 @@ async fn remove_peer(State(st): State<Shared>, Path(id): Path<String>) -> Respon
     }
 }
 
-/// 上传文件到设备：.apk 安装，其它文件推送到 /sdcard/Download/
-async fn push_file(State(st): State<Shared>, Query(q): Query<HashMap<String, String>>, body: Bytes) -> Response {
-    let Some(serial) = q.get("serial").filter(|s| !s.is_empty()) else {
+/// 上传文件到设备：.apk 安装，其它文件推送到 /sdcard/Download/（流式接收与级联转发，大文件不占内存）
+async fn push_file(State(st): State<Shared>, headers: HeaderMap, Query(q): Query<HashMap<String, String>>, body: axum::body::Body) -> Response {
+    let Some(serial) = q.get("serial").filter(|s| !s.is_empty()).cloned() else {
         return err(StatusCode::BAD_REQUEST, tr!("缺少 serial 参数", "Missing serial parameter"));
     };
     let raw_name = q.get("name").map(String::as_str).unwrap_or("file");
@@ -1118,16 +1129,14 @@ async fn push_file(State(st): State<Shared>, Query(q): Query<HashMap<String, Str
         .map(|c| if c.is_control() || "\"'`$;&|<>*?".contains(c) { '_' } else { c })
         .collect();
     let name = if name.trim().is_empty() { "file".to_string() } else { name };
-    if body.is_empty() {
-        return err(StatusCode::BAD_REQUEST, tr!("文件为空", "File is empty"));
-    }
 
     if let Some(id) = remote_id(&q) {
         let Some(peer) = st.peers.get(id).await else {
             return err(StatusCode::NOT_FOUND, tr!("远程电脑不存在", "Remote computer not found"));
         };
-        let query = format!("serial={}&name={}", util::url_encode(serial), util::url_encode(&name));
-        return match peers::post_file(&peer, "/api/push", &query, &body).await {
+        let path = format!("/api/push?serial={}&name={}", util::url_encode(&serial), util::url_encode(&name));
+        let clen = headers.get(header::CONTENT_LENGTH).and_then(|v| v.to_str().ok()).and_then(|s| s.parse::<u64>().ok());
+        return match peers::post_body_stream(&peer, &path, &[], clen, body, std::time::Duration::from_secs(600)).await {
             Ok(v) => Json(v).into_response(),
             Err(e) => err(StatusCode::BAD_GATEWAY, e),
         };
@@ -1137,24 +1146,26 @@ async fn push_file(State(st): State<Shared>, Query(q): Query<HashMap<String, Str
     let dir = st.cfg.data_dir.join("uploads");
     let _ = tokio::fs::create_dir_all(&dir).await;
     let tmp = dir.join(format!("{:08x}{}", util::random_scid(), if is_apk { ".apk" } else { ".bin" }));
-    if let Err(e) = tokio::fs::write(&tmp, &body).await {
-        return err(StatusCode::INTERNAL_SERVER_ERROR, tr!("保存文件失败：{e}", "Failed to save file: {e}"));
+    match peers::save_body_to_file(body, &tmp).await {
+        Ok(0) => return err(StatusCode::BAD_REQUEST, tr!("文件为空", "File is empty")),
+        Ok(_) => {}
+        Err(e) => return err(StatusCode::INTERNAL_SERVER_ERROR, e),
     }
     let tmp_s = tmp.to_string_lossy().into_owned();
     let result = if is_apk {
         // 安装前后对比包名，拿到包名时通知插件 app.installed
-        let before = adb::run(&st.cfg.adb, &["-s", serial, "shell", "pm list packages -3"]).await.unwrap_or_default();
-        let r = adb::run(&st.cfg.adb, &["-s", serial, "install", "-r", "-t", &tmp_s]).await;
+        let before = adb::run(&st.cfg.adb, &["-s", &serial, "shell", "pm list packages -3"]).await.unwrap_or_default();
+        let r = adb::run(&st.cfg.adb, &["-s", &serial, "install", "-r", "-t", &tmp_s]).await;
         if r.is_ok() {
-            let after = adb::run(&st.cfg.adb, &["-s", serial, "shell", "pm list packages -3"]).await.unwrap_or_default();
+            let after = adb::run(&st.cfg.adb, &["-s", &serial, "shell", "pm list packages -3"]).await.unwrap_or_default();
             for pkg in plugins::new_packages(&before, &after).iter().take(1) {
-                plugins::on_installed(&st, serial, pkg);
+                plugins::on_installed(&st, &serial, pkg);
             }
         }
         r.map(|_| tr!("已安装 {name}", "Installed {name}"))
     } else {
         let dest = format!("/sdcard/Download/{name}");
-        adb::run(&st.cfg.adb, &["-s", serial, "push", &tmp_s, &dest])
+        adb::run(&st.cfg.adb, &["-s", &serial, "push", &tmp_s, &dest])
             .await
             .map(|_| tr!("已传到手机 Download/{name}", "Copied to Download/{name} on the device"))
     };
@@ -1209,7 +1220,9 @@ async fn ws_stream(State(st): State<Shared>, ident: Option<axum::Extension<acces
         let Some(peer) = st.peers.get(id).await else {
             return err(StatusCode::NOT_FOUND, tr!("远程电脑不存在", "Remote computer not found"));
         };
-        return ws.on_upgrade(move |socket| peers::proxy_ws(socket, peer, "/ws/stream", raw_query));
+        let dev_id = format!("{id}/{serial}");
+        let tap = Some((st.clone(), dev_id));
+        return ws.on_upgrade(move |socket| peers::proxy_ws_with_ctl(socket, peer, "/ws/stream", raw_query, tap));
     }
 
     let num = |k: &str, d: u32| q.get(k).and_then(|v| v.parse::<u32>().ok()).unwrap_or(d);
@@ -1315,30 +1328,36 @@ adb_post!(files_rename, files::TwoReq, "/api/files/rename", files::rename);
 adb_post!(files_delete, files::DeleteReq, "/api/files/delete", files::delete);
 adb_post!(files_install, files::TwoReq, "/api/files/install", files::install);
 
-/// 上传文件到设备：?path=目录&name=文件名，body 为文件内容
-async fn files_upload(State(st): State<Shared>, Query(q): Query<HashMap<String, String>>, body: Bytes) -> Response {
-    let Some(serial) = q.get("serial").filter(|s| !s.is_empty()) else {
+/// 上传文件到设备：?path=目录&name=文件名，body 为文件内容（流式接收与转发）
+async fn files_upload(State(st): State<Shared>, headers: HeaderMap, Query(q): Query<HashMap<String, String>>, body: axum::body::Body) -> Response {
+    let Some(serial) = q.get("serial").filter(|s| !s.is_empty()).cloned() else {
         return err(StatusCode::BAD_REQUEST, tr!("缺少 serial 参数", "Missing serial parameter"));
     };
-    let name = q.get("name").map(String::as_str).unwrap_or("file");
+    let name = q.get("name").map(String::as_str).unwrap_or("file").to_string();
     if let Some(id) = remote_id(&q) {
         let Some(peer) = st.peers.get(id).await else {
             return err(StatusCode::NOT_FOUND, tr!("远程电脑不存在", "Remote computer not found"));
         };
-        let query = format!("serial={}&path={}&name={}", util::url_encode(serial), util::url_encode(q.get("path").map(String::as_str).unwrap_or("")), util::url_encode(name));
-        return match peers::post_file(&peer, "/api/files/upload", &query, &body).await {
+        let path = format!(
+            "/api/files/upload?serial={}&path={}&name={}",
+            util::url_encode(&serial),
+            util::url_encode(q.get("path").map(String::as_str).unwrap_or("")),
+            util::url_encode(&name)
+        );
+        let clen = headers.get(header::CONTENT_LENGTH).and_then(|v| v.to_str().ok()).and_then(|s| s.parse::<u64>().ok());
+        return match peers::post_body_stream(&peer, &path, &[], clen, body, std::time::Duration::from_secs(600)).await {
             Ok(v) => Json(v).into_response(),
             Err(e) => err(StatusCode::BAD_GATEWAY, e),
         };
     }
-    let dir = q.get("path").map(String::as_str).unwrap_or("/sdcard");
-    match files::upload(&st, serial, dir, name, &body).await {
+    let dir = q.get("path").map(String::as_str).unwrap_or("/sdcard").to_string();
+    match files::upload_body(&st, &serial, &dir, &name, body).await {
         Ok(v) => Json(v).into_response(),
         Err(e) => err(StatusCode::BAD_REQUEST, e),
     }
 }
 
-/// 从设备下载文件：?path=完整路径。远程电脑先转发到这里，再由本机 pull
+/// 从设备下载文件：?path=完整路径。远程电脑流式代理下载，本机设备直接 pull 流式返回
 async fn files_download(State(st): State<Shared>, Query(q): Query<HashMap<String, String>>) -> Response {
     let Some(serial) = q.get("serial").filter(|s| !s.is_empty()) else {
         return err(StatusCode::BAD_REQUEST, tr!("缺少 serial 参数", "Missing serial parameter"));
@@ -1346,6 +1365,16 @@ async fn files_download(State(st): State<Shared>, Query(q): Query<HashMap<String
     let Some(path) = q.get("path").filter(|p| !p.is_empty()) else {
         return err(StatusCode::BAD_REQUEST, tr!("缺少 path 参数", "Missing path parameter"));
     };
+    if let Some(id) = remote_id(&q) {
+        let Some(peer) = st.peers.get(id).await else {
+            return err(StatusCode::NOT_FOUND, tr!("远程电脑不存在", "Remote computer not found"));
+        };
+        let target = format!("/api/files/download?serial={}&path={}", util::url_encode(serial), util::url_encode(path));
+        return match peers::forward_download_stream(&peer, &target, std::time::Duration::from_secs(900)).await {
+            Ok(resp) => resp,
+            Err(e) => err(StatusCode::BAD_GATEWAY, e),
+        };
+    }
     match files::download(&st, serial, path).await {
         Ok(r) => r,
         Err(e) => err(StatusCode::BAD_REQUEST, e),
@@ -1461,6 +1490,10 @@ mod tests {
     }
 
     fn test_state_in(data_dir: PathBuf, name: &str) -> Shared {
+        test_state_with_adb(data_dir, name, PathBuf::from("adb-not-installed"))
+    }
+
+    fn test_state_with_adb(data_dir: PathBuf, name: &str, adb: PathBuf) -> Shared {
         let _ = std::fs::create_dir_all(&data_dir);
         let cfg = Config {
             bind: "127.0.0.1".into(),
@@ -1468,7 +1501,7 @@ mod tests {
             https_port: 0,
             token: None,
             name: name.into(),
-            adb: PathBuf::from("adb-not-installed"),
+            adb,
             data_dir,
             server_jar: PathBuf::new(),
             discovery: false,
@@ -1645,6 +1678,137 @@ mod tests {
         let (code, v) = call_json(&a_app, "GET", &format!("/api/clients?peer={pid}"), json!({})).await;
         assert_eq!(code, 502, "{v}");
         assert!(v.get("pair").is_none(), "{v}");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// 1.2.4 验证：未授权外部请求访问 /api/info 不泄露网卡 IP 列表，且经反向代理或非回环 IP 禁止签发访问令牌
+    #[tokio::test]
+    async fn info_redacts_ips_for_unauthenticated_callers_and_guards_clients_issue() {
+        use tower::Service;
+        let dir = std::env::temp_dir().join(format!("droidbridge-infosec-{:08x}", util::random_scid()));
+        let st = test_state_in(dir.clone(), "HostSec");
+        let app = router(st.clone());
+
+        // 1) 局域网未授权请求 /api/info：能拿到基本信息供配对使用，但 ips 为空数组
+        let mut req = axum::http::Request::builder().uri("/api/info").header("host", "192.0.2.1:8730").body(axum::body::Body::empty()).unwrap();
+        req.extensions_mut().insert(ConnectInfo("192.0.2.55:50000".parse::<SocketAddr>().unwrap()));
+        let res = app.clone().call(req).await.unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+        let v: serde_json::Value = serde_json::from_slice(&axum::body::to_bytes(res.into_body(), 65536).await.unwrap()).unwrap();
+        assert_eq!(v["ips"], json!([]));
+
+        // 2) 授权令牌访问 /api/info：允许读取 ips
+        let tok = st.access.issue("Trusted", "192.0.2.55");
+        let mut req2 = axum::http::Request::builder()
+            .uri(format!("/api/info?token={tok}"))
+            .header("host", "192.0.2.1:8730")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        req2.extensions_mut().insert(ConnectInfo("192.0.2.55:50000".parse::<SocketAddr>().unwrap()));
+        let res2 = app.clone().call(req2).await.unwrap();
+        let v2: serde_json::Value = serde_json::from_slice(&axum::body::to_bytes(res2.into_body(), 65536).await.unwrap()).unwrap();
+        assert_eq!(v2["ips"], json!(util::local_ips()));
+
+        // 3) 即使源 IP 是 127.0.0.1，只要带 X-Forwarded-For 反向代理头（即使附带客户端 token），也绝不允许调用 POST /api/clients 签发新令牌
+        let mut req3 = axum::http::Request::builder()
+            .method("POST")
+            .uri("/api/clients")
+            .header("host", "127.0.0.1:8730")
+            .header("content-type", "application/json")
+            .header("authorization", format!("Bearer {tok}"))
+            .header("x-forwarded-for", "192.0.2.99")
+            .body(axum::body::Body::from(r#"{"name":"evil"}"#))
+            .unwrap();
+        req3.extensions_mut().insert(ConnectInfo("127.0.0.1:5000".parse::<SocketAddr>().unwrap()));
+        let res3 = app.clone().call(req3).await.unwrap();
+        assert_eq!(res3.status(), StatusCode::FORBIDDEN);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 1.2.1 & 1.2.3 端到端测试：流式分块上传转发（A → B）与远程节点设备文件流式下载（含 Content-Disposition 保留）
+    #[tokio::test]
+    async fn streaming_upload_and_remote_files_download_end_to_end() {
+        use tower::Service;
+        let base = std::env::temp_dir().join(format!("droidbridge-stream-{:08x}", util::random_scid()));
+        let _ = std::fs::create_dir_all(&base);
+
+        // 在 B 上放置一个模拟 adb 脚本：pull 时生成 192 KB 测试文件，满足 files::download 真实执行路径
+        let sample_src = base.join("sample_device_file.bin");
+        let expected_dl: Vec<u8> = (0..(192 * 1024)).map(|i| ((i * 31 + 7) & 0xff) as u8).collect();
+        std::fs::write(&sample_src, &expected_dl).unwrap();
+
+        let fake_adb = if cfg!(windows) {
+            let p = base.join("fake-adb.cmd");
+            // 参数: -s S1 pull /sdcard/Download/demo.mp4 <local_dest>
+            let script = format!("@echo off\r\nif \"%~3\"==\"pull\" (\r\n  copy /y \"{}\" \"%~5\" >nul\r\n  exit /b 0\r\n)\r\nexit /b 0\r\n", sample_src.display());
+            std::fs::write(&p, script).unwrap();
+            p
+        } else {
+            let p = base.join("fake-adb.sh");
+            let script = format!("#!/bin/sh\nif [ \"$3\" = \"pull\" ]; then cp \"{}\" \"$5\"; exit 0; fi\nexit 0\n", sample_src.display());
+            std::fs::write(&p, script).unwrap();
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let _ = std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755));
+            }
+            p
+        };
+
+        let a = test_state_in(base.join("a"), "NodeA");
+        let b = test_state_with_adb(base.join("b"), "NodeB", fake_adb);
+
+        let b_token = b.access.issue("NodeA", "127.0.0.1");
+        let b_app = router(b.clone()).layer(axum::middleware::map_request(|mut req: Request| async move {
+            req.extensions_mut().insert(ConnectInfo("192.0.2.88:41000".parse::<SocketAddr>().unwrap()));
+            req
+        }));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let b_addr = listener.local_addr().unwrap().to_string();
+        tokio::spawn(async move { axum::serve(listener, b_app.into_make_service()).await.unwrap() });
+
+        let peer_res = save_peer(&a, None, &b_addr, "NodeB", Some(b_token)).await.expect("save_peer");
+        let pid = peer_res["id"].as_str().unwrap().to_string();
+        let a_app = router(a.clone());
+
+        // 1) 测试未知 Content-Length 的多分块流式上传经 A 转发到 B（Transfer-Encoding: chunked → B 流式落盘）
+        let upload_chunks: Vec<Vec<u8>> = (0..8).map(|c| vec![b'A' + c; 32 * 1024]).collect();
+        let expected_up: Vec<u8> = upload_chunks.iter().flatten().copied().collect();
+        let body_stream = futures_util::stream::iter(upload_chunks.into_iter().map(Ok::<Vec<u8>, std::io::Error>));
+        let mut up_req = axum::http::Request::builder()
+            .method("POST")
+            .uri(format!("/api/plugins/upload?peer={pid}&name=test_bundle.apk"))
+            .header("host", "127.0.0.1:8730")
+            .body(axum::body::Body::from_stream(body_stream))
+            .unwrap();
+        up_req.extensions_mut().insert(ConnectInfo("127.0.0.1:5000".parse::<SocketAddr>().unwrap()));
+        let up_res = a_app.clone().call(up_req).await.unwrap();
+        assert_eq!(up_res.status(), StatusCode::OK);
+        let up_json: serde_json::Value = serde_json::from_slice(&axum::body::to_bytes(up_res.into_body(), 65536).await.unwrap()).unwrap();
+        let saved_on_b = PathBuf::from(up_json["path"].as_str().expect("returned path on B"));
+        assert_eq!(std::fs::read(&saved_on_b).unwrap(), expected_up, "流式级联上传后的文件内容应字节级一致");
+
+        // 2) 测试远程节点设备文件流式下载 `/api/files/download?peer=<pid>&serial=S1&path=/sdcard/Download/demo.mp4`
+        let mut dl_req = axum::http::Request::builder()
+            .method("GET")
+            .uri(format!("/api/files/download?peer={pid}&serial=S1&path=/sdcard/Download/demo.mp4"))
+            .header("host", "127.0.0.1:8730")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        dl_req.extensions_mut().insert(ConnectInfo("127.0.0.1:5000".parse::<SocketAddr>().unwrap()));
+        let dl_res = a_app.clone().call(dl_req).await.unwrap();
+        assert_eq!(dl_res.status(), StatusCode::OK);
+        let disp = dl_res
+            .headers()
+            .get(header::CONTENT_DISPOSITION)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("")
+            .to_string();
+        assert!(disp.contains("demo.mp4"), "应保留远程文件下载的 Content-Disposition 文件名: {disp}");
+        let dl_bytes = axum::body::to_bytes(dl_res.into_body(), 1 << 20).await.unwrap();
+        assert_eq!(dl_bytes.as_ref(), expected_dl.as_slice(), "流式代理下载的文件内容应完整无损");
+
         let _ = std::fs::remove_dir_all(&base);
     }
 }

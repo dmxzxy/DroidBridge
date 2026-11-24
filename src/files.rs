@@ -201,17 +201,17 @@ pub async fn delete(st: &AppState, r: DeleteReq) -> Result<serde_json::Value, St
     Ok(json!({"ok": true}))
 }
 
-/// 上传：写到本机临时文件，再 adb push 到设备（先推送到临时名，成功后再改名，避免半截文件）
-pub async fn upload(st: &AppState, serial: &str, dir: &str, name: &str, body: &[u8]) -> Result<serde_json::Value, String> {
+/// 上传：流式写到本机临时文件，再 adb push 到设备（先推送到临时名，成功后再改名，避免半截文件且不占用大块内存）
+pub async fn upload_body(st: &AppState, serial: &str, dir: &str, name: &str, body: Body) -> Result<serde_json::Value, String> {
     let dir = check_path(dir, true)?;
     let name = check_name(name)?;
-    if body.is_empty() {
-        return Err(tr!("文件为空", "File is empty"));
-    }
     let tmp = st.cfg.data_dir.join("uploads");
     let _ = tokio::fs::create_dir_all(&tmp).await;
     let local = tmp.join(format!("up-{:08x}.bin", crate::util::random_scid()));
-    tokio::fs::write(&local, body).await.map_err(|e| tr!("写入临时文件失败：{e}", "Cannot write the temporary file: {e}"))?;
+    let written = crate::peers::save_body_to_file(body, &local).await?;
+    if written == 0 {
+        return Err(tr!("文件为空", "File is empty"));
+    }
     let local_s = local.to_string_lossy().into_owned();
     let part = format!("{dir}/.{name}.droidbridge-part");
     let dest = format!("{dir}/{name}");
@@ -224,6 +224,10 @@ pub async fn upload(st: &AppState, serial: &str, dir: &str, name: &str, body: &[
         return Err(tr!("无法写入 {dest}（可能没有权限）", "Cannot write {dest} (maybe no permission)"));
     }
     Ok(json!({"ok": true, "path": dest}))
+}
+
+pub async fn upload(st: &AppState, serial: &str, dir: &str, name: &str, body: &[u8]) -> Result<serde_json::Value, String> {
+    upload_body(st, serial, dir, name, Body::from(body.to_vec())).await
 }
 
 /// 安装设备上的 APK（pm install 直接读设备上的文件，不用先下载）

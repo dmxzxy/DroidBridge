@@ -39,7 +39,7 @@
 | `device.files` | `dev:push` / `dev:pull`、`dev:list` `mkdir` `rename` `remove`（只限共享存储） |
 | `device.install` | `dev:install` / `dev:uninstall` |
 | `device.apps` | `dev:apps` `hasApp` `launch` `stop` `clear` `foreground`、`app.foreground` 事件 |
-| `device.input` | `dev:tap` `swipe` `longpress` `key` `text` `cmd`、`dev:getClipboard` / `setClipboard` |
+| `device.input` | `dev:tap` `swipe` `longpress` `touch` `scroll` `send` `key` `text` `cmd`、`db.broadcast`、`dev:getClipboard` / `setClipboard`、`device.action` / `device.input` 事件 |
 | `device.screen` | `dev:screenshot`、`dev:ui` `find` `waitFor`、`db.overlay` |
 | `device.forward` | `dev:forward` / `dev:reverse` / `dev:unforward` |
 | `device.logs` | `dev:logcat`、`db.logcat.watch` |
@@ -62,7 +62,7 @@
 ```
 - 新出现的插件默认 `enabled:false`。
 - 启用 = 用户确认权限；`granted` = 确认时的 `permissions` 副本。若清单里出现 `granted` 中没有的权限，状态变为 `needs_grant`，不启动，直到用户再次确认。
-- 插件数据目录：`<data_dir>/plugins/.data/<id>/`（自动创建）。临时上传目录：`<data_dir>/plugins/.tmp/`。审计日志：`<data_dir>/plugins/.audit.log`。
+- 插件数据目录：`<data_dir>/plugins/.data/<id>/`（自动创建）。临时目录：`<data_dir>/plugins/.tmp/<id>/`（截图等按插件隔离）与 `<data_dir>/plugins/.tmp/uploads/`（仅单文件只读，禁止列目录）。审计日志：`<data_dir>/plugins/.audit.log`。
 
 ## 3. 宿主进程（`src/plugin_host.rs`）
 
@@ -139,7 +139,8 @@
 - `hasApp` `{serial, package}` → bool
 - `launch` `{serial, package, activity?}`；`stop` `{serial, package}`；`clear` `{serial, package}`
 - `foreground` `{serial}` → package 字符串或 null
-- `input` `{serial, kind:"tap"|"swipe"|"key"|"text", x?,y?,x2?,y2?,duration?,key?,text?}`
+- `input` `{serial, kind:"tap"|"longpress"|"swipe"|"touch"|"scroll"|"key"|"back"|"text"|"power"|"cmd", x?,y?,x2?,y2?,w?,h?,duration?,action?,id?,p?,hs?,vs?,key?,code?,meta?,text?,on?,name?}`（目标设备已开启共享投屏时直通 scrcpy 控制通道并自动按会话尺寸换算 `(w,h)`；未开启投屏时退回 `adb shell input` 并按 `wm size` 换算 `(w,h)`）
+- `broadcast` `{serials:[...], ev:{...}}` → `{ok, failed}`（检查 `device.input` 权限与各设备的 `match` 范围，并发向多台本机/远程设备派发 `input`）
 - `screenshot` `{serial, save?}` → 本机 PNG 路径（save=true 时同时存入图库）
 - `forward` `{serial, local, remote, reverse?}` → 实际本机端口（local=0 自动分配）；`unforward` `{serial, local?, remote?, reverse?}`。插件停止时主进程自动移除它建立的所有转发
 - `logcat` `{serial, lines?, level?, grep?, package?}` → string
@@ -195,9 +196,9 @@
 - `pub struct Plugins`，放在 `AppState.plugins`。`start` 之后 `tokio::spawn(plugins::run(state))`：扫描、启动已启用插件、每秒检查文件变化（插件目录下所有文件的 mtime/大小指纹，忽略 `.` 开头的目录），变化 → 重启该插件并广播 `toast`「已重新加载」。
 - 进程管理：`tokio::process::Command`，`kill_on_drop(true)`，Windows 加 `CREATE_NO_WINDOW`。意外退出 → 状态 `crashed`，按 1s/2s/4s 重启；60 秒内崩溃 3 次 → 状态 `failed`，不再自动重启，广播 `toast` kind=error。每 3 秒 `ping`，15 秒没有任何输出（启动完成前为 60 秒）→ 杀掉重启。
 - 状态：`stopped | starting | running | crashed | failed | needs_grant | disabled | invalid`（清单错误）。
-- 限流：每个插件同时进行的设备操作最多 4 个；每台设备同时最多 2 个插件操作（信号量）；每个插件每秒最多 50 次 call，超出则排队等待。
+- 限流：重型设备 I/O（`install`/`uninstall`/`push`/`pull`/`ui`/`screenshot`）每个插件同时最多 4 个，其余轻量设备操作最多 64 个；每台设备同时最多 4 个慢速插件操作（本机投屏直通 `input`/`cmd`/`setClipboard` 免占信号量）；每个插件每秒最多 500 次 call，超出则排队等待。
 - 控制台：每个插件保留最近 1000 条 `{time, level, msg, src}`；新条目通过 ws 广播 `console`。
-- 事件：维护设备列表（每 2 秒 `adb devices`），变化时向订阅了 `device.connected` / `device.disconnected` 的插件发 `event`。有插件订阅 `app.foreground` 时，每 2 秒查一次这些设备的前台应用，变化才发。DroidBridge 自身完成安装（文件管理器、拖放、插件 install）后发 `app.installed` `{dev, package}`（能拿到包名时）；应用管理或插件卸载后发 `app.uninstalled` `{dev, package}`；截图、录屏存入图库后发 `media.saved` `{item}`。插件启动完成（ready）后对每台在线设备补发一次 `device.connected`。
+- 事件：维护设备列表（每 2 秒 `adb devices`），变化时向订阅了 `device.connected` / `device.disconnected` 的插件发 `event`。有插件订阅 `app.foreground` 时，每 2 秒查一次这些设备的前台应用，变化才发。有拥有 `device.input` 权限的插件订阅 `device.action` 或 `device.input` 时，旁路捕获人工在投屏窗口（含本机 `Mirror::handle_text` 与远程 `peers::proxy_ws_with_ctl`）发送的控制帧，合成为语义动作 `device.action` 与 60Hz 节流控制流 `device.input`（插件注入的控制帧不经过此入口，杜绝回环）。DroidBridge 自身完成安装（文件管理器、拖放、插件 install）后发 `app.installed` `{dev, package}`（能拿到包名时）；应用管理或插件卸载后发 `app.uninstalled` `{dev, package}`；截图、录屏存入图库后发 `media.saved` `{item}`。插件启动完成（ready）后对每台在线设备补发一次 `device.connected`。
 - MCP：`mcp.rs` 的工具列表追加本机所有运行中插件注册的工具，名字 `<pluginid>__<name>`（非法字符替换为 `_`，截断到 64）。调用时路由到对应插件 `mcp` 请求（120 秒超时）。远程电脑：`list_tools` 同时向各远程电脑 `GET /api/plugins/mcp` 合并（按名字去重）；调用远程设备时经 `/api/agent/exec` 转发，`agent::exec` 遇到含 `__` 的工具名交给 `plugins::mcp_call`。
 
 ### 4.1 HTTP 接口（全部经过现有 auth 中间件；带 `?peer=` 时转发给远程电脑）
@@ -257,19 +258,21 @@ db.lang, db.node     -- "zh"/"en"，电脑名
 db.settings          -- 只读表，当前设置值
 db.log(...), db.warn(...), db.error(...)   -- print 等同 db.log
 db.spawn(fn, ...)    -- 新协程，立即返回
+db.parallel(items, fn) -> results, errs   -- 为每项启动协程并发执行 fn(item, idx)，等待全部完成
+db.broadcast(devs, ev) -> {ok, failed}    -- 并发广播输入事件到多台设备
 db.wait(sec)         -- 等待（仅协程内）
 db.every(sec, fn) -> timer   -- timer:cancel()
 db.after(sec, fn) -> timer
-db.on(event, fn)     -- device.connected(dev) device.disconnected(dev) app.foreground(dev, pkg) app.installed(dev, pkg) app.uninstalled(dev, pkg) media.saved(item) settings.changed(values) plugin.unload()
+db.on(event, fn)     -- device.connected(dev) device.disconnected(dev) app.foreground(dev, pkg) device.action(dev, act) device.input(dev, raw) app.installed(dev, pkg) app.uninstalled(dev, pkg) media.saved(item) settings.changed(values) plugin.unload()
 
 db.devices() -> {dev...}
 db.device(serial) -> dev|nil
-dev.serial, dev.model, dev.name, dev.state
+dev.serial, dev.model, dev.name, dev.state, dev.computer, dev.remote
 dev:prop(name) dev:shell(cmd, {timeout}) -> out, code
 dev:push(localPath, remotePath) dev:pull(remotePath, localPath)
 dev:install(apkPath, {replace=true, grant=false, downgrade=false}) dev:uninstall(pkg)
 dev:apps({system=false}) dev:hasApp(pkg) dev:launch(pkg, activity) dev:stop(pkg) dev:clear(pkg) dev:foreground()
-dev:tap(x, y) dev:swipe(x1, y1, x2, y2, ms) dev:longpress(x, y, ms=800) dev:key(name) dev:text(s)
+dev:tap(x, y, {w,h}) dev:swipe(x1, y1, x2, y2, ms, {w,h}) dev:longpress(x, y, ms=800, {w,h}) dev:touch(action, x, y, {id,w,h,p}) dev:scroll(x, y, hs, vs, {w,h}) dev:send(ev) dev:key(name) dev:text(s)
 dev:getClipboard() -> string ; dev:setClipboard(text) ; dev:cmd("notif"|"settings"|"collapse"|"rotate")
 dev:ui() -> {width, height, nodes} ; dev:find(q) -> node|nil ; dev:waitFor(q, timeout=10) -> node|nil
 -- q：字符串（等于 text / desc / 资源 id，id 可写短名）、表（各字段相等）或函数 fn(node) -> bool

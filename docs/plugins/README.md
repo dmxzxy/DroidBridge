@@ -131,7 +131,7 @@ end)
 | `device.files` | `dev:push` / `dev:pull`，`dev:list` `mkdir` `rename` `remove`（共享存储 `/sdcard`） |
 | `device.install` | `dev:install` / `dev:uninstall` |
 | `device.apps` | `dev:apps` `hasApp` `launch` `stop` `clear` `foreground`，`app.foreground` 事件 |
-| `device.input` | `dev:tap` `swipe` `longpress` `key` `text` `cmd`，`dev:getClipboard` / `setClipboard` |
+| `device.input` | `dev:tap` `swipe` `longpress` `touch` `scroll` `send` `key` `text` `cmd`、`db.broadcast`、`dev:getClipboard` / `setClipboard`、`device.action` 与 `device.input` 事件 |
 | `device.screen` | `dev:screenshot`、`dev:ui` `find` `waitFor`、`db.overlay` |
 | `device.forward` | `dev:forward` / `dev:reverse` / `dev:unforward` |
 | `device.logs` | `dev:logcat`、`db.logcat.watch` |
@@ -179,6 +179,9 @@ db.error("错误，控制台显示为红色")
 ```lua
 db.spawn(function(a) db.log("在后台跑") end, 1)   -- 新建协程，立即返回
 db.wait(0.5)                                     -- 等待 0.5 秒（只能在协程里）
+local results, errs = db.parallel(devs, function(d, i)
+  return d:prop("ro.product.model")              -- 多台设备并发执行，全部完成后返回
+end)
 local t = db.every(2, function() db.log("每 2 秒一次") end)
 local t2 = db.after(5, function() db.log("5 秒后执行一次") end)
 t:cancel()
@@ -246,14 +249,22 @@ dev:rename("/sdcard/a.txt", "b.txt")     -- 返回新路径
 dev:remove("/sdcard/b.txt")              -- 或 dev:remove({ "/sdcard/x", "/sdcard/y" })
 ```
 
-输入与系统操作（`device.input`）：
+输入、群控同步与系统操作（`device.input`）：
 
 ```lua
-dev:longpress(540, 1200, 800)        -- 长按，毫秒可省略
-dev:setClipboard("文字")             -- 写设备剪贴板（不粘贴）
+dev:tap(540, 1200, { w = 1080, h = 2400 })               -- 可选 {w, h}：按比例自动换算到目标设备分辨率
+dev:longpress(540, 1200, 800, { w = 1080, h = 2400 })    -- 长按，毫秒可省略
+dev:swipe(100, 1600, 100, 400, 300, { w = 1080, h = 2400 })
+dev:touch("down", 540, 1200, { id = 1, w = 1080, h = 2400, p = 1.0 })  -- down / move / up / cancel（已开投屏时毫秒级跟手）
+dev:scroll(540, 1200, 0, -2, { w = 1080, h = 2400 })     -- 滚轮滚动
+dev:send(ev)                                             -- 直接转发 device.action 或 device.input 事件表
+db.broadcast({ dev2, dev3 }, ev)                         -- 并发广播输入事件到多台本机/远程设备 -> {ok, failed}
+dev:setClipboard("文字")                                 -- 写设备剪贴板（不粘贴）
 local s = dev:getClipboard()
-dev:cmd("notif")                     -- notif 展开通知栏 / settings 展开快捷设置 / collapse 收起 / rotate 旋转屏幕
+dev:cmd("notif")                                         -- notif 展开通知栏 / settings 展开快捷设置 / collapse 收起 / rotate 旋转屏幕
 ```
+
+> 当目标设备已打开投屏窗口时，`tap` / `swipe` / `longpress` / `touch` / `scroll` / `key` / `text` / `setClipboard` / `cmd` 会直接走已建立的 `scrcpy` 控制通道（毫秒级延迟，不重复启动 `adb`，也不占用重型 `Semaphore(4)` 槽位）；未打开投屏时自动降级为 `adb shell input`，并在提供 `{ w, h }` 时按目标设备物理屏幕尺寸自动换算坐标。`dev:touch` 同时支持 `dev:touch(action, x, y, { id, w, h, p })` 与位置参数 `dev:touch(action, id, x, y, w, h, p)`。
 
 无线连接（`device.connect`，只作用于这台电脑的 adb）：
 
@@ -470,12 +481,16 @@ end)
 db.on("device.connected", function(dev) db.log("接入 " .. dev.serial) end)
 db.on("device.disconnected", function(dev) end)
 db.on("app.foreground", function(dev, pkg) end)   -- 需要 device.apps
+db.on("device.action", function(dev, act) end)    -- 需要 device.input：投屏人工操作的语义动作（tap/longpress/swipe/scroll/key/text/cmd/power），适合群控同步与脚本录制
+db.on("device.input", function(dev, raw) end)     -- 需要 device.input：投屏人工操作的 60Hz 原始控制流（touch/scroll/key/back/text/clipboard/power/cmd），适合毫秒级实时跟手
 db.on("app.installed", function(dev, pkg) end)
 db.on("app.uninstalled", function(dev, pkg) end)   -- 应用管理或插件卸载后
 db.on("media.saved", function(item) end)           -- 截图、录屏存入相册后；item 同 db.media.list
 db.on("settings.changed", function(values) end)
 db.on("plugin.unload", function() end)            -- 停止前收尾
 ```
+
+- `device.action` 与 `device.input` 只捕获**人工在投屏窗口里执行的操作**（含本机与远程设备投屏），插件自己通过 `dev:tap` / `dev:send` / `db.broadcast` 注入的指令**不会**再次触发这两个事件，天然不会产生死循环。
 
 - 监听者各自在独立协程里执行，互不阻塞；单个监听出错只记录日志
 - 只要没有插件订阅 `app.foreground`，主程序就不会去轮询前台应用
@@ -624,7 +639,7 @@ db.web.emit("tick", { n = 42 })     -- 广播给所有打开的网页面板
 | CPU | 每次唤醒最多连续执行 **3 秒**，超出在该协程里抛 `script timeout` |
 | 内存 | 每个插件最多 **256 MB** |
 | 隔离 | 每个插件一个子进程，崩溃不影响 DroidBridge 主程序和其他插件 |
-| 并发 | 每个插件同时最多 4 个设备操作；每台设备同时最多 2 个插件操作；每个插件每秒最多 50 次调用，超出排队 |
+| 并发 | 重型 I/O（`install`/`uninstall`/`push`/`pull`/`ui`/`screenshot`）单插件最多 4 并发；轻量控制单插件最多 64 并发（本机投屏直通免占信号量）；每个插件每秒最多 500 次调用，超出排队 |
 | 面板渲染 | 5 秒超时；渲染期间禁止等待类 API |
 | 指标 | 每个指标函数 3 秒超时，失败显示 `–` |
 | 对话框 | 只在发起操作的那个界面弹出；没有界面时广播给所有连接 |

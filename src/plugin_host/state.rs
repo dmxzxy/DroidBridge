@@ -6,7 +6,7 @@ use mlua::Thread;
 use serde_json::{Value as J, json};
 use std::cell::{Cell, RefCell};
 use std::collections::HashSet;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::mpsc::Sender;
 
@@ -49,6 +49,8 @@ pub struct Ctl {
     pub client: RefCell<Option<String>>,
     /// `__host.spawn` 提交的协程，驱动线程在下一个循环取走
     pub spawn_queue: RefCell<Vec<(Thread, Option<String>)>>,
+    /// `__host.unpark` 提交的等待键（供 `db.parallel` 唤醒父协程）
+    pub unpark_queue: RefCell<Vec<u64>>,
     /// 后台任务编号
     pub bg_seq: Cell<u64>,
     /// 宿主生成 id（progress 等）
@@ -89,11 +91,6 @@ impl Ctl {
     /// 权限检查（`fs` 隐含 `fs.read`）
     pub fn has_perm(&self, p: &str) -> bool {
         self.granted.contains(p) || (p == "fs.read" && self.granted.contains("fs"))
-    }
-
-    /// 该路径是否落在插件目录或数据目录里（这两个目录无需 fs 权限）
-    pub fn is_own_path(&self, path: &Path) -> bool {
-        path.starts_with(&self.info.data_dir) || path.starts_with(&self.info.dir)
     }
 
     /// 下一个宿主内的唯一编号

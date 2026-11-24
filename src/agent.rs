@@ -90,9 +90,9 @@ fn arg_f64(a: &Value, k: &str) -> Option<f64> {
     a.get(k).and_then(|v| v.as_f64().or_else(|| v.as_str().and_then(|s| s.trim().parse().ok())))
 }
 
-/// 读取类工具（暂停时仍允许）
+/// 读取类工具（暂停时仍允许；shell 可能被组合滥用，暂停时一并禁止）
 fn read_only(tool: &str) -> bool {
-    matches!(tool, "screenshot" | "read_screen" | "list_apps" | "logcat" | "perf" | "shell" | "wait")
+    matches!(tool, "screenshot" | "read_screen" | "list_apps" | "logcat" | "perf" | "wait")
 }
 
 /// 在设备所在节点执行一个工具，返回 MCP content 数组
@@ -481,6 +481,11 @@ pub(crate) fn key_code(name: &str) -> Option<u32> {
     KEYS.iter().find(|(n, _)| *n == name).map(|(_, c)| *c).or_else(|| name.parse().ok())
 }
 
+/// Android keycode → 名字（供插件输入事件还原按键名）
+pub(crate) fn key_name(code: u32) -> Option<&'static str> {
+    KEYS.iter().find(|(_, c)| *c == code && *c != 0).map(|(n, _)| *n)
+}
+
 const KEYS: &[(&str, u32)] = &[
     ("back", 4), ("home", 3), ("recents", 187), ("enter", 66), ("delete", 67), ("backspace", 67), ("forward_delete", 112), ("tab", 61), ("escape", 111),
     ("menu", 82), ("search", 84), ("power", 26), ("wakeup", 224), ("sleep", 223), ("volume_up", 24), ("volume_down", 25), ("volume_mute", 164),
@@ -720,20 +725,43 @@ fn format_perf(m: &Value) -> String {
     )
 }
 
-/// 只读 shell：只允许查询类命令，不允许管道以外的组合与重定向
+/// 只读 shell：只允许纯查询类命令，不允许管道以外的组合、转义与重定向，并剔除可执行子命令或写文件的工具
 fn shell_allowed(cmd: &str) -> bool {
-    if cmd.contains([';', '&', '>', '<', '`', '\n', '\r']) || cmd.contains("$(") {
+    if cmd.chars().any(|c| (c.is_control() && c != '\t') || [';', '&', '>', '<', '`', '$', '\\'].contains(&c)) {
         return false;
     }
     cmd.split('|').all(|part| {
         let w: Vec<&str> = part.split_whitespace().collect();
         match w.as_slice() {
             [] => false,
-            ["dumpsys", ..] | ["getprop", ..] | ["ls", ..] | ["cat", ..] | ["ps", ..] | ["top", ..] | ["df", ..] | ["uptime"] | ["date", ..] | ["id"] | ["whoami"]
-            | ["ip", ..] | ["ifconfig", ..] | ["pidof", ..] | ["grep", ..] | ["head", ..] | ["tail", ..] | ["wc", ..] | ["sort", ..] | ["uniq", ..] | ["cut", ..] | ["awk", ..] | ["sed", "-n", ..]
-            | ["logcat", "-d", ..] | ["uname", ..] | ["free", ..] | ["stat", ..] | ["find", ..] | ["du", ..] | ["nproc"] => {
-                !part.contains(" -delete") && !part.contains(" -exec")
-            }
+            ["dumpsys", rest @ ..] => !rest.iter().any(|a| {
+                matches!(
+                    a.to_ascii_lowercase().as_str(),
+                    "set" | "reset" | "enable" | "disable" | "unplug" | "force-idle" | "step" | "clear" | "write"
+                )
+            }),
+            ["getprop", ..]
+            | ["ls", ..]
+            | ["cat", ..]
+            | ["ps", ..]
+            | ["top", ..]
+            | ["df", ..]
+            | ["uptime"]
+            | ["id"]
+            | ["whoami"]
+            | ["pidof", ..]
+            | ["grep", ..]
+            | ["head", ..]
+            | ["tail", ..]
+            | ["wc", ..]
+            | ["uniq", ..]
+            | ["cut", ..]
+            | ["logcat", "-d", ..]
+            | ["uname", ..]
+            | ["free", ..]
+            | ["stat", ..]
+            | ["du", ..]
+            | ["nproc"] => true,
             ["pm", sub, ..] => matches!(*sub, "list" | "path" | "dump"),
             ["cmd", "package", sub, ..] => matches!(*sub, "list" | "resolve-activity" | "query-activities"),
             ["wm", sub] => matches!(*sub, "size" | "density"),
@@ -834,7 +862,14 @@ mod tests {
         assert!(!shell_allowed("cat /a > /b"));
         assert!(!shell_allowed("ls; reboot"));
         assert!(!shell_allowed("find /sdcard -delete"));
+        assert!(!shell_allowed("find /sdcard\t-delete"));
+        assert!(!shell_allowed("awk 'BEGIN{system(\"reboot\")}'"));
+        assert!(!shell_allowed("sed -n '1e reboot'"));
+        assert!(!shell_allowed("sort -o /sdcard/x /etc/hosts"));
+        assert!(!shell_allowed("ifconfig wlan0 down"));
+        assert!(!shell_allowed("dumpsys battery set level 1"));
         assert!(!shell_allowed("settings put global x 1"));
         assert!(!shell_allowed("echo $(reboot)"));
+        assert!(!read_only("shell"));
     }
 }

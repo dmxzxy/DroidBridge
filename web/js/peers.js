@@ -318,7 +318,9 @@ function wirelessDialog(hst) {
     qrBox.replaceChildren(h('div', { class: 'spin sm' })); qrState.textContent = '';
     try {
       const r = await api('/api/adb/qr?' + peerQ, { method: 'POST', body: '{}' });
-      job = r.job; qrBox.innerHTML = r.svg; polling = true; poll();
+      job = r.job;
+      qrBox.replaceChildren(h('img', { src: 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(r.svg || ''), alt: 'QR' }));
+      polling = true; poll();
     } catch (e) { qrBox.replaceChildren(); qrState.textContent = e.message; qrState.className = 'qrstate err'; }
   }
   async function poll() {

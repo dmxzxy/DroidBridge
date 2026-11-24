@@ -218,6 +218,16 @@ pub fn install(
             }
         })?,
     )?;
+    h.set(
+        "unpark",
+        lua.create_function({
+            let ctl = ctl.clone();
+            move |_lua, key: u64| {
+                ctl.unpark_queue.borrow_mut().push(key);
+                Ok(())
+            }
+        })?,
+    )?;
 
     // ---- 常驻子进程（db.proc；exec 权限在 Lua 层检查，这里再查一次）
     h.set(

@@ -354,18 +354,96 @@ function DEV:foreground()
   return call("foreground", { serial = self.serial })
 end
 
-function DEV:tap(x, y)
-  call("input", { serial = self.serial, kind = "tap", x = x, y = y })
+function DEV:tap(x, y, opts)
+  opts = opts or {}
+  call("input", { serial = self.serial, kind = "tap", x = x, y = y, w = opts.w, h = opts.h })
   return true
 end
 
-function DEV:swipe(x1, y1, x2, y2, ms)
-  call("input", { serial = self.serial, kind = "swipe", x = x1, y = y1, x2 = x2, y2 = y2, duration = ms })
+function DEV:swipe(x1, y1, x2, y2, ms, opts)
+  opts = opts or {}
+  call("input", { serial = self.serial, kind = "swipe", x = x1, y = y1, x2 = x2, y2 = y2, duration = ms, w = opts.w, h = opts.h })
   return true
 end
 
-function DEV:longpress(x, y, ms)
-  return self:swipe(x, y, x, y, ms or 800)
+function DEV:longpress(x, y, ms, opts)
+  return self:swipe(x, y, x, y, ms or 800, opts)
+end
+
+-- 同时兼容两种调用签名：
+-- 1) dev:touch(action, x, y, opts)        opts = { id, w, h, p }
+-- 2) dev:touch(action, id, x, y, w, h, p) 位置参数写法
+function DEV:touch(action, a1, a2, a3, a4, a5, a6)
+  local act = action
+  if type(action) == "string" then
+    local map = { down = 0, up = 1, move = 2, cancel = 3 }
+    act = map[action] or 0
+  end
+  local id, x, y, w, h, p
+  if type(a3) == "number" then
+    id, x, y, w, h, p = a1, a2, a3, a4, a5, a6
+  else
+    local opts = a3 or {}
+    x, y = a1, a2
+    id, w, h, p = opts.id, opts.w, opts.h, opts.p
+  end
+  call("input", {
+    serial = self.serial,
+    kind = "touch",
+    action = act,
+    id = id or -3,
+    x = x,
+    y = y,
+    w = w,
+    h = h,
+    p = p,
+  })
+  return true
+end
+
+function DEV:scroll(x, y, hs, vs, opts)
+  opts = opts or {}
+  call("input", {
+    serial = self.serial,
+    kind = "scroll",
+    x = x,
+    y = y,
+    hs = hs or 0,
+    vs = vs or 0,
+    w = opts.w,
+    h = opts.h,
+  })
+  return true
+end
+
+-- 将 device.action（{kind=...}）或 device.input（{t=...}）事件统一转为 input 调用参数
+local function normalize_input_ev(ev)
+  if type(ev) ~= "table" then error("需要输入事件表", 3) end
+  local out = {}
+  for k, v in pairs(ev) do
+    if k ~= "serial" and k ~= "t" then out[k] = v end
+  end
+  if out.kind == nil then
+    if ev.t == "clipboard" then
+      if ev.paste and type(ev.text) == "string" and ev.text ~= "" then
+        return { kind = "text", text = ev.text }
+      end
+      return nil
+    elseif type(ev.t) == "string" and ev.t ~= "" then
+      out.kind = ev.t
+    else
+      error("输入事件缺少 kind 或 t", 3)
+    end
+  end
+  return out
+end
+
+function DEV:send(ev)
+  local q = normalize_input_ev(ev)
+  if not q then return false end
+  q.serial = self.serial
+  call("input", q)
+  return true
 end
 
 function DEV:key(name)
@@ -862,6 +940,51 @@ function db.spawn(fn, ...)
   if type(fn) ~= "function" then error("db.spawn: 需要函数", 2) end
   local args = pack(...)
   H.spawn(H.task(fn, unpack(args, 1, args.n)))
+end
+
+--- 向多台设备（dev 对象或 serial 字符串列表）并发广播同一个输入事件（device.action 或 device.input）
+function db.broadcast(devs, ev)
+  if type(devs) ~= "table" then error("db.broadcast: 需要设备列表", 2) end
+  local q = normalize_input_ev(ev)
+  if not q then return { ok = 0, failed = {} } end
+  local serials = {}
+  for _, d in ipairs(devs) do
+    local s = type(d) == "table" and d.serial or (type(d) == "string" and d or nil)
+    if s and s ~= "" then serials[#serials + 1] = s end
+  end
+  if #serials == 0 then return { ok = 0, failed = {} } end
+  return call("broadcast", { serials = serials, ev = q }) or { ok = 0, failed = {} }
+end
+
+--- 对列表中的每一项各自启动协程并发执行 `fn(item, idx)`，等待全部完成后返回 `results, errs`
+function db.parallel(items, fn)
+  if type(items) ~= "table" then error("db.parallel: 需要列表", 2) end
+  if type(fn) ~= "function" then error("db.parallel: 需要函数", 2) end
+  local n = #items
+  if n == 0 then return {}, nil end
+  local rem = n
+  local results = {}
+  local errs = {}
+  local has_err = false
+  local key = H.uid()
+  for i = 1, n do
+    local item = items[i]
+    H.spawn(function()
+      local ok, res = raw_xpcall(fn, H.tb, item, i)
+      if ok then
+        results[i] = res
+      else
+        has_err = true
+        errs[i] = host_err(res)
+      end
+      rem = rem - 1
+      if rem == 0 then
+        H.unpark(key)
+      end
+    end)
+  end
+  sched({ k = "park", key = key })
+  return results, (has_err and errs or nil)
 end
 
 -- ---------------------------------------------------------------- 常驻子进程

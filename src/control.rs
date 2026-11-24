@@ -1,6 +1,6 @@
 //! 浏览器 JSON 控制指令 -> scrcpy 二进制控制协议（对应 scrcpy v5 ControlMessageReader）。
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 const TYPE_INJECT_KEYCODE: u8 = 0;
 const TYPE_INJECT_TEXT: u8 = 1;
@@ -24,7 +24,7 @@ fn default_pressure() -> f32 {
     1.0
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "t", rename_all = "snake_case")]
 pub enum Ctl {
     /// action: 0=down 1=up
@@ -117,6 +117,46 @@ fn split_utf8(s: &str, max: usize) -> Vec<&str> {
         rest = &rest[end..];
     }
     parts
+}
+
+fn map_coord(v: i32, src: u16, dst: u32) -> i32 {
+    if src == 0 || dst == 0 || src as u32 == dst {
+        return v.clamp(0, (dst as i32).saturating_sub(1).max(0));
+    }
+    let scaled = ((v as f64) * (dst as f64) / (src as f64)).round() as i32;
+    scaled.clamp(0, (dst as i32).saturating_sub(1).max(0))
+}
+
+impl Ctl {
+    /// 将带坐标的控制指令从源画布 `(w, h)` 按比例换算到目标画布 `(tw, th)`。
+    pub fn scale(&self, tw: u32, th: u32) -> Self {
+        if tw == 0 || th == 0 {
+            return self.clone();
+        }
+        let nw = tw.min(u16::MAX as u32) as u16;
+        let nh = th.min(u16::MAX as u32) as u16;
+        match self {
+            Self::Touch { action, id, x, y, w, h, p, buttons } => Self::Touch {
+                action: *action,
+                id: *id,
+                x: if *w > 0 { map_coord(*x, *w, nw as u32) } else { *x },
+                y: if *h > 0 { map_coord(*y, *h, nh as u32) } else { *y },
+                w: nw,
+                h: nh,
+                p: *p,
+                buttons: *buttons,
+            },
+            Self::Scroll { x, y, w, h, hs, vs } => Self::Scroll {
+                x: if *w > 0 { map_coord(*x, *w, nw as u32) } else { *x },
+                y: if *h > 0 { map_coord(*y, *h, nh as u32) } else { *y },
+                w: nw,
+                h: nh,
+                hs: *hs,
+                vs: *vs,
+            },
+            other => other.clone(),
+        }
+    }
 }
 
 /// 编码为一个或多个控制消息（文本可能被拆成多条）。

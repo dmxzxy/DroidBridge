@@ -469,6 +469,38 @@ impl Mirror {
         json!({"serial": self.serial, "viewers": viewers, "controller": st.controller_name()})
     }
 
+    /// 当前投屏视频帧尺寸 `(width, height)`；会话尚未出画时为 `None`
+    pub fn session_size(&self) -> Option<(u32, u32)> {
+        self.st.lock().unwrap().session
+    }
+
+    /// 插件侧直接向已运行的 scrcpy 控制通道注入指令（自动按当前视频尺寸缩放坐标，不抢占人工仲裁锁）
+    pub fn inject_ctl(&self, ctl: &control::Ctl) -> bool {
+        let (tx, session) = {
+            let st = self.st.lock().unwrap();
+            if !st.running {
+                return false;
+            }
+            let Some(tx) = st.ctl.clone() else { return false };
+            (tx, st.session)
+        };
+        let scaled = match session {
+            Some((tw, th)) if tw > 0 && th > 0 => ctl.scale(tw, th),
+            _ => match ctl {
+                control::Ctl::Touch { w, h, .. } | control::Ctl::Scroll { w, h, .. } if *w == 0 || *h == 0 => return false,
+                _ => ctl.clone(),
+            },
+        };
+        let Ok(parts) = control::encode(&scaled) else { return false };
+        let mut ok = false;
+        for p in parts {
+            if tx.send(p).is_ok() {
+                ok = true;
+            }
+        }
+        ok
+    }
+
     /// 广播一条消息（队列满时丢弃）
     fn broadcast(&self, m: &Message) {
         let st = self.st.lock().unwrap();
@@ -638,26 +670,26 @@ impl Mirror {
         let _ = v.tx.try_send(text(json!({"type":"busy","by": by})));
     }
 
-    /// 观看者发来的文本消息（控制指令）
-    fn handle_text(&self, vid: &str, s: &str) {
+    /// 观看者发来的文本消息（控制指令）；成功送入控制通道时返回解析后的指令供插件监听
+    fn handle_text(&self, vid: &str, s: &str) -> Option<control::Ctl> {
         let ctl: control::Ctl = match serde_json::from_str(s) {
             Ok(c) => c,
             Err(e) => {
                 self.send_log(vid, &tr!("无效控制指令：{e}", "Invalid control message: {e}"));
-                return;
+                return None;
             }
         };
         // reset_video 不需要控制权（任何观看者都可以发，按会话限速）
         let needs_control = !matches!(&ctl, control::Ctl::Cmd { name } if name == "reset_video");
         if !needs_control {
             self.request_reset();
-            return;
+            return None;
         }
         let parts = match control::encode(&ctl) {
             Ok(p) => p,
             Err(e) => {
                 self.send_log(vid, &e);
-                return;
+                return None;
             }
         };
         match self.send_control(vid, &ctl, parts, Instant::now()) {
@@ -665,10 +697,17 @@ impl Mirror {
                 if changed {
                     self.broadcast_viewers();
                 }
+                Some(ctl)
             }
-            SendResult::Busy => self.notify_busy(vid),
-            SendResult::Dropped => {}
-            SendResult::NoSession => self.send_log(vid, &tr!("共享会话尚未就绪，请稍候", "The shared session is not ready yet")),
+            SendResult::Busy => {
+                self.notify_busy(vid);
+                None
+            }
+            SendResult::Dropped => None,
+            SendResult::NoSession => {
+                self.send_log(vid, &tr!("共享会话尚未就绪，请稍候", "The shared session is not ready yet"));
+                None
+            }
         }
     }
 
@@ -1459,7 +1498,11 @@ pub async fn run_session(state: Arc<AppState>, serial: String, opts: StreamOpts,
     loop {
         tokio::select! {
             r = ws_rx.next() => match r {
-                Some(Ok(Message::Text(t))) => mirror.handle_text(&vid, t.as_str()),
+                Some(Ok(Message::Text(t))) => {
+                    if let Some(ctl) = mirror.handle_text(&vid, t.as_str()) {
+                        state.plugins.on_user_ctl(&state, &serial, &ctl, mirror.session_size());
+                    }
+                }
                 Some(Ok(Message::Close(_))) | None => break,
                 Some(Err(_)) => break,
                 _ => {}

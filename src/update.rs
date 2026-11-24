@@ -142,6 +142,40 @@ fn writable(dir: &std::path::Path) -> bool {
     }
 }
 
+/// 从 SHA256SUMS.txt 文本里找出对应文件名的 64 位十六进制 SHA-256 摘要
+fn parse_sha256_for(sums: &str, asset: &str) -> Option<String> {
+    for line in sums.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let mut it = line.split_whitespace();
+        let hash = it.next()?;
+        let rest = line[hash.len()..].trim_start();
+        let name = rest.strip_prefix('*').unwrap_or(rest).trim();
+        if name == asset && hash.len() == 64 && hash.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return Some(hash.to_ascii_lowercase());
+        }
+    }
+    None
+}
+
+/// 流式计算本地文件的 SHA-256（十六进制小写）
+fn sha256_file(path: &std::path::Path) -> Result<String, String> {
+    use std::io::Read;
+    let mut f = std::fs::File::open(path).map_err(|e| e.to_string())?;
+    let mut ctx = ring::digest::Context::new(&ring::digest::SHA256);
+    let mut buf = [0u8; 64 * 1024];
+    loop {
+        let n = f.read(&mut buf).map_err(|e| e.to_string())?;
+        if n == 0 {
+            break;
+        }
+        ctx.update(&buf[..n]);
+    }
+    Ok(ctx.finish().as_ref().iter().map(|b| format!("{b:02x}")).collect())
+}
+
 /// 下载并安装新版本；成功后本进程会在脚本接管后退出
 pub async fn apply(st: &AppState) -> Result<serde_json::Value, String> {
     let info = check(st).await?;
@@ -158,22 +192,66 @@ pub async fn apply(st: &AppState) -> Result<serde_json::Value, String> {
     let Some(url) = info["download"].as_str().map(String::from) else {
         return Err(tr!("这个版本没有提供本平台的安装包", "This release has no package for this platform"));
     };
+    let Some(asset) = info["asset"].as_str().map(String::from) else {
+        return Err(tr!("这个版本没有提供本平台的安装包", "This release has no package for this platform"));
+    };
+    let Some(tag) = info["tag"].as_str().map(String::from) else {
+        return Err(tr!("无法获取最新版本标识", "Cannot determine the release tag"));
+    };
     let target = install_target().ok_or_else(|| tr!("无法确定安装目录", "Cannot determine the install directory"))?;
     let ver = info["latest"].as_str().unwrap_or("new").to_string();
 
-    // 下载到数据目录
+    // 先拉取并解析 SHA256SUMS.txt，缺少校验值直接中止
+    let sums_url = format!("{}/releases/download/{tag}/SHA256SUMS.txt", release_base());
+    let sums_text = curl(&["-fsSL".into(), "--connect-timeout".into(), "10".into(), "--max-time".into(), "60".into(), sums_url])
+        .await
+        .map_err(|e| tr!("无法下载校验文件 SHA256SUMS.txt：{e}", "Cannot download SHA256SUMS.txt: {e}"))?;
+    let expected_sha = parse_sha256_for(&sums_text, &asset).ok_or_else(|| {
+        tr!(
+            "SHA256SUMS.txt 中缺少 {asset} 的校验值，已取消更新",
+            "SHA256SUMS.txt has no checksum for {asset}; update aborted"
+        )
+    })?;
+
+    // 下载到数据目录私有子目录（避免 /tmp 竞态劫持）
     let dir = st.cfg.data_dir.join("update");
     tokio::fs::create_dir_all(&dir).await.map_err(|e| tr!("无法创建目录：{e}", "Cannot create the directory: {e}"))?;
-    let file = dir.join(url.rsplit('/').next().unwrap_or("update.zip"));
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
+    }
+    let file = dir.join(&asset);
     let file_s = file.to_string_lossy().into_owned();
-    curl(&["-sS".into(), "-L".into(), "--max-time".into(), "1800".into(), "-o".into(), file_s.clone(), url.clone()]).await?;
+    curl(&["-fsSL".into(), "--max-time".into(), "1800".into(), "-o".into(), file_s.clone(), url.clone()]).await?;
     let size = tokio::fs::metadata(&file).await.map(|m| m.len()).unwrap_or(0);
     if size < 1024 * 1024 {
         let _ = tokio::fs::remove_file(&file).await;
         return Err(tr!("下载的文件不完整（{size} 字节）", "The downloaded file is incomplete ({size} bytes)"));
     }
 
-    let script = if cfg!(windows) { write_windows_script(&target, &file)? } else { write_unix_script(&target, &file)? };
+    // 校验安装包 SHA-256
+    let file_for_hash = file.clone();
+    let actual_sha = tokio::task::spawn_blocking(move || sha256_file(&file_for_hash))
+        .await
+        .map_err(|e| e.to_string())??;
+    if !actual_sha.eq_ignore_ascii_case(&expected_sha) {
+        let _ = tokio::fs::remove_file(&file).await;
+        return Err(tr!(
+            "安装包 SHA-256 校验失败，已取消更新",
+            "Package SHA-256 verification failed; update aborted"
+        ));
+    }
+
+    let work = dir.join(format!("run-{:08x}", crate::util::random_scid()));
+    std::fs::create_dir_all(&work).map_err(|e| tr!("无法创建临时更新目录：{e}", "Cannot create update staging directory: {e}"))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&work, std::fs::Permissions::from_mode(0o700));
+    }
+
+    let script = if cfg!(windows) { write_windows_script(&target, &file, &work)? } else { write_unix_script(&target, &file, &work)? };
     // 脱离父进程启动脚本，然后本进程退出
     let mut cmd = Command::new(if cfg!(windows) { "cmd" } else { "sh" });
     if cfg!(windows) {
@@ -198,10 +276,10 @@ pub async fn apply(st: &AppState) -> Result<serde_json::Value, String> {
 }
 
 /// Windows：等本进程退出 → 解压 → 覆盖 → 启动
-fn write_windows_script(target: &std::path::Path, archive: &std::path::Path) -> Result<PathBuf, String> {
+fn write_windows_script(target: &std::path::Path, archive: &std::path::Path, work: &std::path::Path) -> Result<PathBuf, String> {
     let exe = exe_path();
     let name = exe.file_name().and_then(|n| n.to_str()).unwrap_or("DroidBridge.exe").to_string();
-    let tmp = std::env::temp_dir().join("droidbridge-update");
+    let tmp = work.join("extracted");
     let pid = std::process::id();
     let q = |p: &std::path::Path| p.to_string_lossy().replace('\'', "''");
     let script = format!(
@@ -220,64 +298,69 @@ fn write_windows_script(target: &std::path::Path, archive: &std::path::Path) -> 
          powershell -NoProfile -ExecutionPolicy Bypass -Command \"Expand-Archive -LiteralPath '{zipq}' -DestinationPath '{tmpq}' -Force\"\r\n\
          xcopy \"%TMP%\\*\" \"%DEST%\\\" /E /Y /I /Q >nul\r\n\
          del \"%DEST%\\%EXE%.old\" >nul 2>&1\r\n\
-         start \"\" \"%DEST%\\%EXE%\" {args}\r\n\
-         (goto) 2>nul & del \"%~f0\"\r\n",
+         rmdir /s /q \"{work}\" >nul 2>&1\r\n\
+         start \"\" \"%DEST%\\%EXE%\" {args}\r\n",
         dest = target.display(),
         zip = archive.display(),
         tmp = tmp.display(),
+        work = work.display(),
         name = name,
         pid = pid,
         zipq = q(archive),
         tmpq = q(&tmp),
         args = args_for_restart().iter().map(|a| format!("\"{}\"", a.replace('"', ""))).collect::<Vec<_>>().join(" "),
     );
-    let file = std::env::temp_dir().join("droidbridge-update.bat");
+    let file = work.join("droidbridge-update.bat");
     std::fs::write(&file, script).map_err(|e| tr!("无法写入更新脚本：{e}", "Cannot write the update script: {e}"))?;
     Ok(file)
 }
 
 /// macOS / Linux：等本进程退出 → 解压 → 覆盖 → 启动
-fn write_unix_script(target: &std::path::Path, archive: &std::path::Path) -> Result<PathBuf, String> {
+fn write_unix_script(target: &std::path::Path, archive: &std::path::Path, work: &std::path::Path) -> Result<PathBuf, String> {
     let exe = exe_path();
-    let tmp = std::env::temp_dir().join("droidbridge-update");
+    let tmp = work.join("extracted");
     let pid = std::process::id();
     let mac = cfg!(target_os = "macos");
     let dq = |p: &std::path::Path| p.to_string_lossy().replace('"', "\\\"");
     let body = if mac {
         // target 是 .app 包
         format!(
-            "TARGET=\"{target}\"\nARCHIVE=\"{archive}\"\nTMP=\"{tmp}\"\n\
+            "TARGET=\"{target}\"\nARCHIVE=\"{archive}\"\nTMP=\"{tmp}\"\nWORK=\"{work}\"\n\
              while kill -0 {pid} 2>/dev/null; do sleep 1; done\n\
              rm -rf \"$TMP\" && mkdir -p \"$TMP\" && unzip -q \"$ARCHIVE\" -d \"$TMP\"\n\
              rm -rf \"$TARGET\" && cp -R \"$TMP/DroidBridge.app\" \"$TARGET\"\n\
+             rm -rf \"$WORK\"\n\
              \"$TARGET/Contents/MacOS/DroidBridge\" {args} >/dev/null 2>&1 &\n",
             target = dq(target),
             archive = dq(archive),
             tmp = dq(&tmp),
+            work = dq(work),
             args = args_for_restart().iter().map(|x| format!("\"{x}\"")).collect::<Vec<_>>().join(" "),
         )
     } else {
         format!(
-            "TARGET=\"{target}\"\nARCHIVE=\"{archive}\"\nTMP=\"{tmp}\"\nEXE=\"{exe}\"\n\
+            "TARGET=\"{target}\"\nARCHIVE=\"{archive}\"\nTMP=\"{tmp}\"\nWORK=\"{work}\"\nEXE=\"{exe}\"\n\
              while kill -0 {pid} 2>/dev/null; do sleep 1; done\n\
              rm -rf \"$TMP\" && mkdir -p \"$TMP\" && tar -xzf \"$ARCHIVE\" -C \"$TMP\"\n\
              SRCDIR=$(find \"$TMP\" -maxdepth 2 -name droidbridge-desktop -exec dirname {{}} \\; | head -1)\n\
              [ -n \"$SRCDIR\" ] && cp -Rf \"$SRCDIR\"/. \"$TARGET\"/\n\
              chmod +x \"$EXE\" 2>/dev/null\n\
+             rm -rf \"$WORK\"\n\
              (cd \"$TARGET\" && nohup \"$EXE\" {args} >/dev/null 2>&1 &)\n",
             target = dq(target),
             archive = dq(archive),
             tmp = dq(&tmp),
+            work = dq(work),
             exe = dq(&exe),
             args = args_for_restart().iter().map(|a| format!("'{}'", a.replace('\'', "'\\''"))).collect::<Vec<_>>().join(" "),
         )
     };
-    let file = std::env::temp_dir().join("droidbridge-update.sh");
-    std::fs::write(&file, format!("#!/bin/sh\n{body}rm -f \"$0\"\n")).map_err(|e| tr!("无法写入更新脚本：{e}", "Cannot write the update script: {e}"))?;
+    let file = work.join("droidbridge-update.sh");
+    std::fs::write(&file, format!("#!/bin/sh\n{body}")).map_err(|e| tr!("无法写入更新脚本：{e}", "Cannot write the update script: {e}"))?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o755));
+        let _ = std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o700));
     }
     Ok(file)
 }
@@ -304,5 +387,23 @@ mod tests {
             assert_eq!(a, "DroidBridge-0.7.0-windows-x64.zip");
         }
         assert_eq!(asset_name("v0.7.0").unwrap(), asset_name("0.7.0").unwrap());
+    }
+
+    #[test]
+    fn checksum_verification() {
+        let tmp = std::env::temp_dir().join(format!("db-upd-sha-{:08x}", crate::util::random_scid()));
+        std::fs::write(&tmp, b"hello droidbridge").unwrap();
+        let actual = sha256_file(&tmp).unwrap();
+        let _ = std::fs::remove_file(&tmp);
+        assert_eq!(actual.len(), 64);
+
+        let sums = format!(
+            "0000000000000000000000000000000000000000000000000000000000000000  other.zip\n\
+             {} *DroidBridge-0.9.6-windows-x64.zip\n",
+            actual.to_ascii_uppercase()
+        );
+        assert_eq!(parse_sha256_for(&sums, "DroidBridge-0.9.6-windows-x64.zip"), Some(actual));
+        assert_eq!(parse_sha256_for(&sums, "missing.zip"), None);
+        assert_eq!(parse_sha256_for("not-a-valid-sha  DroidBridge-0.9.6-windows-x64.zip", "DroidBridge-0.9.6-windows-x64.zip"), None);
     }
 }

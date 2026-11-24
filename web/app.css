@@ -450,7 +450,7 @@ dialog.gallery .dlg-d{flex:none}
 .pane[hidden]{display:none}
 .pane>.hint{color:var(--faint);font-size:11px}
 .qrbox{display:grid;place-items:center;min-height:236px;padding:8px;border-radius:8px;background:#fff;width:236px;margin:0 auto}
-.qrbox svg{width:220px;height:220px}
+.qrbox svg,.qrbox img{width:220px;height:220px;display:block}
 .qrstate{text-align:center;color:var(--sub);font-size:12px;min-height:18px}
 .qrstate.err{color:var(--bad)}.qrstate.ok{color:var(--ok)}
 .ovtext{white-space:pre-line}

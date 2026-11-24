@@ -4,10 +4,12 @@
 ---@meta
 
 ---@class DbDevice 一台（已按 match 过滤的）设备
----@field serial string 序列号
+---@field serial string 设备标识（远程设备形如 `<peerId>/<serial>`）
 ---@field model string 型号
 ---@field name string 名称
 ---@field state string 状态，通常是 "device"
+---@field computer string 所在电脑名称
+---@field remote boolean 是否位于远程电脑
 local DbDevice = {}
 
 ---@param name string 系统属性名，如 "ro.product.cpu.abi"
@@ -58,14 +60,37 @@ function DbDevice:foreground() end
 
 ---@param x number
 ---@param y number
-function DbDevice:tap(x, y) end
+---@param opts? { w?: number, h?: number } 源坐标画布宽高（提供后自动按目标设备分辨率换算）
+function DbDevice:tap(x, y, opts) end
 
 ---@param x1 number
 ---@param y1 number
 ---@param x2 number
 ---@param y2 number
 ---@param ms number 滑动时长（毫秒）
-function DbDevice:swipe(x1, y1, x2, y2, ms) end
+---@param opts? { w?: number, h?: number } 源坐标画布宽高
+function DbDevice:swipe(x1, y1, x2, y2, ms, opts) end
+
+---单步触控帧注入（已开投屏时直通 scrcpy 控制通道，毫秒级延迟）
+---@overload fun(self: DbDevice, action: "down"|"up"|"move"|"cancel"|0|1|2|3, id: integer, x: number, y: number, w?: number, h?: number, p?: number): boolean
+---@param action "down"|"up"|"move"|"cancel"|0|1|2|3
+---@param x number
+---@param y number
+---@param opts? { id?: integer, w?: number, h?: number, p?: number }
+function DbDevice:touch(action, x, y, opts) end
+
+---滚轮滚动（device.input）
+---@param x number
+---@param y number
+---@param hs number 水平滚动 [-16, 16]
+---@param vs number 垂直滚动 [-16, 16]
+---@param opts? { w?: number, h?: number }
+function DbDevice:scroll(x, y, hs, vs, opts) end
+
+---转发一条 `device.action` 或 `device.input` 事件表到该设备（device.input）
+---@param ev table
+---@return boolean
+function DbDevice:send(ev) end
 
 ---@param name string "HOME"|"BACK"|"APP_SWITCH"|"POWER"|"VOLUME_UP"|"VOLUME_DOWN"|"ENTER"...
 function DbDevice:key(name) end
@@ -100,7 +125,8 @@ function DbDevice:perf() end
 ---@param x number
 ---@param y number
 ---@param ms? number 按住时长（毫秒），默认 800
-function DbDevice:longpress(x, y, ms) end
+---@param opts? { w?: number, h?: number } 源坐标画布宽高
+function DbDevice:longpress(x, y, ms, opts) end
 
 ---@return string 设备剪贴板内容（device.input）
 function DbDevice:getClipboard() end
@@ -493,10 +519,12 @@ function DbJson.decode(s) end
 ---@field warn fun(...) 警告日志
 ---@field error fun(...) 错误日志
 ---@field spawn fun(fn: fun(...), ...): nil 新协程，立即返回
+---@field parallel fun(items: any[], fn: fun(item: any, idx: integer): any): table, table|nil 并发在独立协程中执行每一项，等待全部完成后返回 results, errs
+---@field broadcast fun(devs: (DbDevice|string)[], ev: table): { ok: integer, failed: table<string, string> } 并发向多台设备广播输入事件（device.input）
 ---@field wait fun(sec: number) 等待（只能在协程里）
 ---@field every fun(sec: number, fn: fun()): DbTimer
 ---@field after fun(sec: number, fn: fun()): DbTimer
----@field on fun(event: string, fn: fun(...)) 事件：device.connected / device.disconnected / app.foreground / app.installed / app.uninstalled / media.saved / settings.changed / plugin.unload
+---@field on fun(event: string, fn: fun(...)) 事件：device.connected / device.disconnected / app.foreground / device.action / device.input / app.installed / app.uninstalled / media.saved / settings.changed / plugin.unload
 ---@field menu fun(target: string, path: string, opts: table|nil, fn: fun(...)): DbMenuItem target: device | app | file | tools | toolbar | media | logcat
 ---@field panel fun(id: string, opts: { title: string, icon?: string, dock?: string, filter?: table, refresh?: number }, render: fun(ui: DbUi, dev: DbDevice|nil)): any
 ---@field webpanel fun(id: string, opts: { title: string, icon?: string, entry: string, dock?: string, filter?: table }): any

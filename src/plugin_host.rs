@@ -8,7 +8,7 @@
 
 mod api;
 mod json;
-mod local;
+pub(crate) mod local;
 mod proc;
 mod state;
 
@@ -136,6 +136,8 @@ struct Driver {
     ready: VecDeque<(u64, MultiValue)>,
     /// 等待唤醒的协程
     sleeping: Vec<(Instant, u64)>,
+    /// 等待子协程完成的父协程（park key → task id）
+    parked: HashMap<u64, u64>,
     timers: HashMap<u64, Timer>,
     /// 等待主进程 ret 的 call：call id → task id
     awaiting: HashMap<u64, u64>,
@@ -161,6 +163,7 @@ impl Driver {
             next_task: 0,
             ready: VecDeque::new(),
             sleeping: Vec::new(),
+            parked: HashMap::new(),
             timers: HashMap::new(),
             awaiting: HashMap::new(),
             bgs: HashMap::new(),
@@ -236,6 +239,16 @@ impl Driver {
             self.next_task += 1;
             self.tasks.insert(id, Task { thread, kind: TaskKind::Spawn, client });
             self.ready.push_back((id, MultiValue::from_vec(vec![])));
+        }
+        // __host.unpark 唤醒等待中的父协程
+        if let Some(ctl) = &self.ctl {
+            let keys: Vec<u64> = ctl.unpark_queue.borrow_mut().drain(..).collect();
+            for key in keys {
+                if let Some(tid) = self.parked.remove(&key) {
+                    did = true;
+                    self.ready.push_back((tid, MultiValue::from_vec(vec![Value::Boolean(true)])));
+                }
+            }
         }
         // 新定时器 / 取消
         if let Some(ctl) = &self.ctl {
@@ -378,6 +391,11 @@ impl Driver {
                 self.sleeping.push((Instant::now() + Duration::from_secs_f64(sec), tid));
                 self.tasks.insert(tid, task);
             }
+            "park" => {
+                let key: u64 = req.get("key").unwrap_or(0);
+                self.parked.insert(key, tid);
+                self.tasks.insert(tid, task);
+            }
             "exec" | "open" | "http" | "download" | "walk" | "tar" | "hash" | "clip" => match self.start_bg(&req, &k) {
                 Ok(bg) => {
                     self.bgs.insert(bg, tid);
@@ -492,6 +510,7 @@ impl Driver {
             settings: RefCell::new(settings),
             client: RefCell::new(None),
             spawn_queue: RefCell::new(Vec::new()),
+            unpark_queue: RefCell::new(Vec::new()),
             bg_seq: Cell::new(0),
             uid: Cell::new(0),
             new_timers: RefCell::new(Vec::new()),

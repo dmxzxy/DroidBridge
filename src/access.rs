@@ -85,7 +85,6 @@ pub struct Access {
     pub discoverable: AtomicBool,
     /// 局域网内无需授权（界面设置）
     open: AtomicBool,
-    local_ips: Mutex<(Option<Instant>, Vec<IpAddr>)>,
     /// 最近访问过本机的连接者（身份 → 最近一次请求的时间）
     seen: Mutex<HashMap<String, (Ident, Instant)>>,
 }
@@ -163,7 +162,6 @@ impl Access {
             allow_hosts: allow_hosts.into_iter().map(|h| h.trim().to_ascii_lowercase()).filter(|h| !h.is_empty()).collect(),
             discoverable: AtomicBool::new(discoverable),
             open: AtomicBool::new(open),
-            local_ips: Mutex::new((None, Vec::new())),
             seen: Mutex::new(HashMap::new()),
         }
     }
@@ -379,24 +377,13 @@ impl Access {
 
     // ------------------------------------------------------------ 请求检查
 
-    /// 请求是否来自本机（回环或本机自己的网卡地址）
+    /// 请求是否来自本机回环地址（仅信任 `127.0.0.0/8`、`::1` 及 IPv4 映射回环，排除 Docker/WSL2/VM/VPN 等非回环网卡地址）
     pub fn is_local_ip(&self, ip: IpAddr) -> bool {
         let ip = match ip {
             IpAddr::V6(v6) => v6.to_ipv4_mapped().map(IpAddr::V4).unwrap_or(IpAddr::V6(v6)),
             v4 => v4,
         };
-        if ip.is_loopback() {
-            return true;
-        }
-        let mut c = self.local_ips.lock().unwrap();
-        if c.0.is_none_or(|t| t.elapsed() > Duration::from_secs(10)) {
-            let mut v = Vec::new();
-            if let Ok(ifs) = if_addrs::get_if_addrs() {
-                v.extend(ifs.into_iter().map(|i| i.ip()));
-            }
-            *c = (Some(Instant::now()), v);
-        }
-        c.1.contains(&ip)
+        ip.is_loopback()
     }
 
     fn host_allowed(&self, host: &str) -> bool {
@@ -589,5 +576,23 @@ mod tests {
         assert!(token_matches("abc", "abc"));
         assert!(!token_matches("abc", "abd"));
         assert!(!token_matches("", "abc"));
+    }
+
+    #[test]
+    fn local_ip_is_strictly_loopback() {
+        let a = acc(&[]);
+        assert!(a.is_local_ip("127.0.0.1".parse().unwrap()));
+        assert!(a.is_local_ip("127.0.0.2".parse().unwrap()));
+        assert!(a.is_local_ip("::1".parse().unwrap()));
+        assert!(a.is_local_ip("::ffff:127.0.0.1".parse().unwrap()));
+        // 局域网 / 容器桥接 / 本机非回环网卡一律不视为免授权本机
+        assert!(!a.is_local_ip("192.168.1.10".parse().unwrap()));
+        assert!(!a.is_local_ip("172.17.0.1".parse().unwrap()));
+        for lan_ip in crate::util::local_ips() {
+            if let Ok(ip) = lan_ip.parse::<IpAddr>() {
+                assert!(!a.is_local_ip(ip), "非回环网卡地址 {ip} 不应免授权放行");
+            }
+        }
+        let _ = std::fs::remove_dir_all(a.path.parent().unwrap());
     }
 }

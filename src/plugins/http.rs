@@ -370,14 +370,18 @@ pub async fn plugins_dialog(State(st): State<Shared>, Query(q): Query<HashMap<St
     .await
 }
 
-/// 上传文件到插件临时目录（kind=file 的对话框答案）
-pub async fn plugins_upload(State(st): State<Shared>, Query(q): Query<HashMap<String, String>>, body: Bytes) -> Response {
+/// 上传文件到插件临时目录（kind=file 的对话框答案，流式接收与转发，避免大文件占满内存）
+pub async fn plugins_upload(State(st): State<Shared>, headers: axum::http::HeaderMap, Query(q): Query<HashMap<String, String>>, body: axum::body::Body) -> Response {
     let path = fwd_path("/api/plugins/upload", &q);
-    if peer_of(&q).is_some() {
-        return local_or_peer(&st, &q, "POST", &path, &body, || async move { Ok(json!({})) }).await;
-    }
-    if body.is_empty() {
-        return err(StatusCode::BAD_REQUEST, tr!("文件为空", "File is empty"));
+    if let Some(id) = peer_of(&q) {
+        let Some(peer) = st.peers.get(id).await else {
+            return err(StatusCode::NOT_FOUND, tr!("远程电脑不存在", "Remote computer not found"));
+        };
+        let clen = headers.get(axum::http::header::CONTENT_LENGTH).and_then(|v| v.to_str().ok()).and_then(|s| s.parse::<u64>().ok());
+        return match peers::post_body_stream(&peer, &path, &[], clen, body, std::time::Duration::from_secs(600)).await {
+            Ok(v) => Json(v).into_response(),
+            Err(e) => err(StatusCode::BAD_GATEWAY, e),
+        };
     }
     let raw = q.get("name").map(String::as_str).unwrap_or("file");
     let name: String = raw
@@ -388,13 +392,15 @@ pub async fn plugins_upload(State(st): State<Shared>, Query(q): Query<HashMap<St
         .map(|c| if c.is_control() || "\"'`$;&|<>*?/:".contains(c) { '_' } else { c })
         .collect();
     let name = if name.trim().is_empty() { "file".to_string() } else { name };
-    let dir = st.plugins.root().join(".tmp");
+    let dir = st.plugins.root().join(".tmp").join("uploads");
     let _ = tokio::fs::create_dir_all(&dir).await;
-    let path = dir.join(format!("up-{:08x}-{name}", util::random_scid()));
-    if let Err(e) = tokio::fs::write(&path, &body).await {
-        return err(StatusCode::INTERNAL_SERVER_ERROR, tr!("保存文件失败：{e}", "Failed to save the file: {e}"));
+    let tok = &crate::access::new_token()[..24];
+    let path = dir.join(format!("up-{tok}-{name}"));
+    match peers::save_body_to_file(body, &path).await {
+        Ok(0) => err(StatusCode::BAD_REQUEST, tr!("文件为空", "File is empty")),
+        Ok(_) => Json(json!({"path": path.to_string_lossy()})).into_response(),
+        Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, e),
     }
-    Json(json!({"path": path.to_string_lossy()})).into_response()
 }
 
 pub async fn plugins_console(State(st): State<Shared>, Query(q): Query<HashMap<String, String>>) -> Response {

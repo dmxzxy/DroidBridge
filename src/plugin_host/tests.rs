@@ -136,10 +136,14 @@ impl Harness {
     }
 
     fn req(&mut self, m: &str, p: J) -> J {
+        self.req_with_devs(m, p, &devices())
+    }
+
+    fn req_with_devs(&mut self, m: &str, p: J, devs: &J) -> J {
         self.take();
         let line = json!({"t": "req", "id": 7, "m": m, "p": p}).to_string();
         self.driver.on_line(&line);
-        self.settle(&devices());
+        self.settle(devs);
         let lines = self.out.borrow().clone();
         let mut res = J::Null;
         for v in &lines {
@@ -748,6 +752,143 @@ db.log("missing:" .. tostring(ok) .. ":" .. tostring(e and e:find("无法启动"
     h.settle(&devices());
     let logs = logs_of(&h.out.borrow());
     assert!(logs.iter().any(|l| l == "missing:false:true"), "{logs:?}");
+}
+
+#[test]
+fn tmp_isolation_blocks_other_plugins_and_directory_listing() {
+    let root = temp_dir("tmpiso");
+    let pdir = root.join("plug-a");
+    let ddir = root.join(".data").join("plug-a");
+    let my_tmp = root.join(".tmp").join("plug-a");
+    let other_tmp = root.join(".tmp").join("plug-b");
+    let up_dir = root.join(".tmp").join("uploads");
+    for d in [&pdir, &ddir, &my_tmp, &other_tmp, &up_dir] {
+        std::fs::create_dir_all(d).unwrap();
+    }
+    let my_shot = my_tmp.join("shot-1.png");
+    let other_shot = other_tmp.join("shot-2.png");
+    let up_file = up_dir.join("up-0123456789abcdef01234567-test.apk");
+    std::fs::write(&my_shot, b"mine").unwrap();
+    std::fs::write(&other_shot, b"secret").unwrap();
+    std::fs::write(&up_file, b"apk").unwrap();
+
+    let (tx, _rx) = channel::<Msg>();
+    let sink: Sink = Rc::new(|_| {});
+    let ctl = Ctl {
+        tx,
+        sink,
+        info: state::PluginInfo {
+            id: "plug-a".into(),
+            name: "A".into(),
+            version: "1.0".into(),
+            dir: pdir.clone(),
+            data_dir: ddir.clone(),
+            main: "main.lua".into(),
+        },
+        granted: Default::default(), // 零权限插件
+        lang: "zh".into(),
+        node: "PC".into(),
+        settings: RefCell::new(json!({})),
+        client: RefCell::new(None),
+        spawn_queue: RefCell::new(Vec::new()),
+        unpark_queue: RefCell::new(Vec::new()),
+        bg_seq: std::cell::Cell::new(0),
+        uid: std::cell::Cell::new(0),
+        new_timers: RefCell::new(Vec::new()),
+        timer_cancel: RefCell::new(Vec::new()),
+        timer_seq: std::cell::Cell::new(0),
+        store: RefCell::new(None),
+        closed: std::cell::Cell::new(false),
+        procs: RefCell::new(Default::default()),
+    };
+
+    // 允许读自己的 .tmp/<id>/ 文件与已知路径的上传单文件
+    assert!(local::resolve(&ctl, &my_shot.to_string_lossy(), false).is_ok());
+    assert!(local::resolve(&ctl, &up_file.to_string_lossy(), false).is_ok());
+    // 禁止读其他插件的 .tmp/<other>/，禁止列举 .tmp 或 .tmp/uploads 目录，禁止写 .tmp
+    assert!(local::resolve(&ctl, &other_shot.to_string_lossy(), false).is_err());
+    assert!(local::resolve(&ctl, &up_dir.to_string_lossy(), false).is_err());
+    assert!(local::resolve(&ctl, &root.join(".tmp").to_string_lossy(), false).is_err());
+    assert!(local::resolve(&ctl, &my_shot.to_string_lossy(), true).is_err());
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn group_control_events_broadcast_and_parallel() {
+    let mut h = Harness::new(
+        "groupctl",
+        r#"
+db.on("device.action", function(dev, act)
+  if dev.serial == "S1" then
+    db.broadcast({ "S2", "p1/S3" }, act)
+    print("replicated:" .. act.kind .. ":" .. tostring(act.x) .. "x" .. tostring(act.y))
+  end
+end)
+
+db.on("device.input", function(dev, raw)
+  if dev.serial == "S1" and raw.t == "touch" then
+    local d2 = db.device("S2") or { serial = "S2" }
+    setmetatable(d2, getmetatable(dev))
+    d2:send(raw)
+  end
+end)
+
+db.menu("device", "Batch", function(dev)
+  dev:tap(120, 340, { w = 1080, h = 2400 })
+  dev:touch("down", 50, 60, { id = 1, w = 720, h = 1280, p = 0.8 })
+  dev:touch(2, -2, 80, 90, 1080, 2400, 1.0)
+  dev:scroll(200, 300, 0, -2, { w = 1080, h = 2400 })
+  local res, errs = db.parallel({ "A", "B", "C" }, function(item, idx)
+    if item == "B" then error("fail-B") end
+    local v = dev:prop("ro.serialno")
+    return idx .. ":" .. item .. ":" .. v
+  end)
+  return res[1] .. "|" .. tostring(res[2]) .. "|" .. res[3] .. "|err=" .. tostring(errs and errs[2])
+end)
+"#,
+        HostConfig::default(),
+    );
+
+    // 1) 触发 device.action 事件并检查 broadcast 调用
+    let r1 = h.req(
+        "event",
+        json!({"name": "device.action", "args": [{"serial": "S1", "model": "Pixel"}, {"kind": "tap", "x": 540, "y": 1200, "w": 1080, "h": 2400}]}),
+    );
+    assert_eq!(r1["ok"], json!(true));
+    assert!(h.log_text().contains("replicated:tap:540x1200"), "日志: {}", h.log_text());
+    {
+        let out = h.out.borrow();
+        let bc = out.iter().find(|v| v["t"] == "call" && v["m"] == "broadcast").expect("应发出 broadcast call");
+        assert_eq!(bc["p"]["serials"], json!(["S2", "p1/S3"]));
+        assert_eq!(bc["p"]["ev"]["kind"], json!("tap"));
+        assert_eq!(bc["p"]["ev"]["w"], json!(1080));
+    }
+
+    // 2) 触发 device.input 实时流事件并检查 dev:send 归一化
+    let r2 = h.req(
+        "event",
+        json!({"name": "device.input", "args": [{"serial": "S1"}, {"t": "touch", "action": 0, "id": -2, "x": 88, "y": 99, "w": 720, "h": 1600, "p": 1.0}]}),
+    );
+    assert_eq!(r2["ok"], json!(true));
+    {
+        let out = h.out.borrow();
+        let inp = out.iter().find(|v| v["t"] == "call" && v["m"] == "input" && v["p"]["serial"] == "S2").expect("S2 应收到 touch input");
+        assert_eq!(inp["p"]["kind"], json!("touch"));
+        assert_eq!(inp["p"]["x"], json!(88));
+        assert_eq!(inp["p"]["w"], json!(720));
+    }
+
+    // 3) 测试带坐标空间的 tap/touch(两种签名)/scroll 以及 db.parallel 并发与错误收集
+    let r3 = h.req("menu", json!({"id": "device:Batch", "ctx": {"serial": "S1"}}));
+    assert_eq!(r3["ok"], json!("1:A:prop-value|nil|3:C:prop-value|err=main.lua:23: fail-B"), "{r3:?}");
+    let out = h.out.borrow().clone();
+    let inputs: Vec<&J> = out.iter().filter(|v| v["t"] == "call" && v["m"] == "input").collect();
+    assert_eq!(inputs.len(), 4, "{inputs:?}");
+    assert_eq!((inputs[0]["p"]["kind"].clone(), inputs[0]["p"]["w"].clone()), (json!("tap"), json!(1080)));
+    assert_eq!((inputs[1]["p"]["kind"].clone(), inputs[1]["p"]["action"].clone(), inputs[1]["p"]["id"].clone()), (json!("touch"), json!(0), json!(1)));
+    assert_eq!((inputs[2]["p"]["kind"].clone(), inputs[2]["p"]["action"].clone(), inputs[2]["p"]["x"].clone(), inputs[2]["p"]["w"].clone()), (json!("touch"), json!(2), json!(80), json!(1080)));
+    assert_eq!((inputs[3]["p"]["kind"].clone(), inputs[3]["p"]["vs"].clone()), (json!("scroll"), json!(-2)));
 }
 
 #[test]

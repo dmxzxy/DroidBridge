@@ -10,19 +10,45 @@ use std::time::{Duration, Instant, UNIX_EPOCH};
 
 const PLUGIN_SCHEME: &str = "plugin://";
 
-/// 把插件给的路径解析成绝对路径，并做权限检查。
+/// 检查目标路径（或其最深已存在父目录）经 canonicalize 后仍落在 root 内部，防止符号链接逃逸
+pub fn within_canonical(path: &Path, root: &Path) -> bool {
+    let Ok(canon_root) = std::fs::canonicalize(root) else {
+        return false;
+    };
+    let mut cur = path;
+    let mut tail = Vec::new();
+    while !cur.exists() {
+        let Some(name) = cur.file_name() else { return false };
+        tail.push(name.to_os_string());
+        let Some(parent) = cur.parent() else { return false };
+        cur = parent;
+    }
+    let Ok(mut canon) = std::fs::canonicalize(cur) else {
+        return false;
+    };
+    for part in tail.into_iter().rev() {
+        canon.push(part);
+    }
+    canon.starts_with(&canon_root)
+}
+
+/// 把插件给的路径解析成绝对路径，并做权限与符号链接边界检查。
 pub fn resolve(ctl: &Ctl, path: &str, write: bool) -> Result<PathBuf, String> {
     let path = path.trim();
     if path.is_empty() {
         return Err("路径为空".into());
     }
-    // plugin:// 只读
+    // plugin:// 只读，且不允许通过内部符号链接逃出插件目录
     if let Some(rest) = path.strip_prefix(PLUGIN_SCHEME) {
         if write {
             return Err("插件目录是只读的".into());
         }
         check_relative(rest)?;
-        return Ok(ctl.info.dir.join(rest.replace('\\', "/")));
+        let full = ctl.info.dir.join(rest.replace('\\', "/"));
+        if !ctl.has_perm("fs.read") && full.exists() && !within_canonical(&full, &ctl.info.dir) {
+            return Err("读取该路径需要 fs.read 权限".into());
+        }
+        return Ok(full);
     }
     let p = Path::new(path);
     // 绝对路径也不能带 ..，否则 `<dataDir>/../../x` 会被当成插件自己的目录
@@ -32,18 +58,28 @@ pub fn resolve(ctl: &Ctl, path: &str, write: bool) -> Result<PathBuf, String> {
     } else {
         ctl.info.data_dir.join(p)
     };
-    let own = ctl.is_own_path(&full);
-    // 用户通过对话框上传的文件、截图等临时文件（<plugins>/.tmp）可以读
-    let tmp = ctl.info.dir.parent().is_some_and(|root| full.starts_with(root.join(".tmp")));
+    let in_data = full.starts_with(&ctl.info.data_dir) && within_canonical(&full, &ctl.info.data_dir);
+    let in_dir = !write && full.starts_with(&ctl.info.dir) && (!full.exists() || within_canonical(&full, &ctl.info.dir));
+    // 每个插件只能免权限读自己的临时目录 `.tmp/<id>/`，以及用户通过文件选择框显式上传的具体文件 `.tmp/uploads/<file>`（禁止列目录）
+    let own_tmp = !write
+        && ctl.info.dir.parent().is_some_and(|root| {
+            let my_tmp = root.join(".tmp").join(&ctl.info.id);
+            full.starts_with(&my_tmp) && (!full.exists() || within_canonical(&full, &my_tmp))
+        });
+    let upload_file = !write
+        && ctl.info.dir.parent().is_some_and(|root| {
+            let up_dir = root.join(".tmp").join("uploads");
+            full.parent() == Some(up_dir.as_path()) && full.is_file() && within_canonical(&full, &up_dir)
+        });
     if write {
         // 插件目录始终只读
         if full.starts_with(&ctl.info.dir) && !full.starts_with(&ctl.info.data_dir) {
             return Err("插件目录是只读的".into());
         }
-        if !own && !ctl.has_perm("fs") {
+        if !in_data && !ctl.has_perm("fs") {
             return Err("写入该路径需要 fs 权限".into());
         }
-    } else if !own && !tmp && !ctl.has_perm("fs.read") {
+    } else if !in_data && !in_dir && !own_tmp && !upload_file && !ctl.has_perm("fs.read") {
         return Err("读取该路径需要 fs.read 权限".into());
     }
     Ok(full)

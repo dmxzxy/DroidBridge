@@ -20,7 +20,7 @@ pub use http::{
 pub use manifest::Manifest;
 pub use sources::{run as sources_run, sources_get, sources_post};
 
-use crate::{adb, agent, AppState};
+use crate::{adb, agent, control, AppState};
 use serde_json::{json, Map, Value};
 use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
@@ -138,7 +138,7 @@ pub(crate) fn raw_serial(id: &str) -> &str {
     split_dev(id).map(|(_, s)| s).unwrap_or(id)
 }
 
-/// 每秒 50 次的限流（令牌桶）
+/// 每秒 500 次的限流（令牌桶）
 struct Rate {
     tokens: f64,
     last: Instant,
@@ -146,7 +146,7 @@ struct Rate {
 
 impl Rate {
     fn new() -> Self {
-        Self { tokens: 50.0, last: Instant::now() }
+        Self { tokens: 500.0, last: Instant::now() }
     }
 
     /// 取一个令牌；需要等待时返回等待时长
@@ -154,14 +154,148 @@ impl Rate {
         let now = Instant::now();
         let dt = now.duration_since(self.last).as_secs_f64();
         self.last = now;
-        self.tokens = (self.tokens + dt * 50.0).min(50.0);
+        self.tokens = (self.tokens + dt * 500.0).min(500.0);
         if self.tokens >= 1.0 {
             self.tokens -= 1.0;
             Duration::ZERO
         } else {
-            Duration::from_secs_f64((1.0 - self.tokens) / 50.0)
+            Duration::from_secs_f64((1.0 - self.tokens) / 500.0)
         }
     }
+}
+
+/// 跟踪用户在投屏窗口中的触控与按键序列，合成为语义动作（`device.action`）与节流后的实时流（`device.input`）
+#[derive(Default)]
+struct InputTracker {
+    pointers: HashMap<(String, i64), PointerTrack>,
+}
+
+struct PointerTrack {
+    start_x: i32,
+    start_y: i32,
+    w: u16,
+    h: u16,
+    down_at: Instant,
+    last_emit: Instant,
+    moved: bool,
+}
+
+impl InputTracker {
+    /// 处理一条用户控制消息，返回 `(实时原始事件 device.input, 语义动作事件 device.action)`
+    fn ingest(&mut self, dev_id: &str, ctl: &control::Ctl, session: Option<(u32, u32)>, now: Instant) -> (Option<Value>, Option<Value>) {
+        let fallback_wh = || session.map(|(a, b)| (a.min(u16::MAX as u32) as u16, b.min(u16::MAX as u32) as u16)).unwrap_or((0, 0));
+        match ctl {
+            control::Ctl::Touch { action, id, x, y, w, h, p, .. } => {
+                let (vw, vh) = if *w > 0 && *h > 0 { (*w, *h) } else { fallback_wh() };
+                let key = (dev_id.to_string(), *id);
+                match *action {
+                    0 => {
+                        self.pointers.insert(
+                            key,
+                            PointerTrack { start_x: *x, start_y: *y, w: vw, h: vh, down_at: now, last_emit: now, moved: false },
+                        );
+                        (Some(json!({"t": "touch", "action": 0, "id": id, "x": x, "y": y, "w": vw, "h": vh, "p": p})), None)
+                    }
+                    2 => {
+                        let mut emit = false;
+                        if let Some(trk) = self.pointers.get_mut(&key) {
+                            if vw > 0 && vh > 0 {
+                                trk.w = vw;
+                                trk.h = vh;
+                            }
+                            let thresh = ((trk.w.max(trk.h) as i32) / 45).max(12);
+                            if (*x - trk.start_x).abs() > thresh || (*y - trk.start_y).abs() > thresh {
+                                trk.moved = true;
+                            }
+                            if now.saturating_duration_since(trk.last_emit) >= Duration::from_millis(16) {
+                                trk.last_emit = now;
+                                emit = true;
+                            }
+                        } else {
+                            emit = true;
+                        }
+                        let raw = emit.then(|| json!({"t": "touch", "action": 2, "id": id, "x": x, "y": y, "w": vw, "h": vh, "p": p}));
+                        (raw, None)
+                    }
+                    1 => {
+                        let raw = Some(json!({"t": "touch", "action": 1, "id": id, "x": x, "y": y, "w": vw, "h": vh, "p": 0.0}));
+                        let act = self.pointers.remove(&key).map(|trk| {
+                            let (ew, eh) = if vw > 0 && vh > 0 { (vw, vh) } else { (trk.w, trk.h) };
+                            let thresh = ((ew.max(eh) as i32) / 45).max(12);
+                            let moved = trk.moved || (*x - trk.start_x).abs() > thresh || (*y - trk.start_y).abs() > thresh;
+                            let dur = now.saturating_duration_since(trk.down_at).as_millis().min(10_000) as u64;
+                            if moved {
+                                json!({"kind": "swipe", "x": trk.start_x, "y": trk.start_y, "x2": x, "y2": y, "w": ew, "h": eh, "duration": dur.max(60)})
+                            } else if dur >= 500 {
+                                json!({"kind": "longpress", "x": trk.start_x, "y": trk.start_y, "w": ew, "h": eh, "duration": dur})
+                            } else {
+                                json!({"kind": "tap", "x": x, "y": y, "w": ew, "h": eh})
+                            }
+                        });
+                        (raw, act)
+                    }
+                    3 => {
+                        self.pointers.remove(&key);
+                        (Some(json!({"t": "touch", "action": 3, "id": id, "x": x, "y": y, "w": vw, "h": vh, "p": 0.0})), None)
+                    }
+                    _ => (None, None),
+                }
+            }
+            control::Ctl::Scroll { x, y, w, h, hs, vs } => {
+                let (vw, vh) = if *w > 0 && *h > 0 { (*w, *h) } else { fallback_wh() };
+                (
+                    Some(json!({"t": "scroll", "x": x, "y": y, "w": vw, "h": vh, "hs": hs, "vs": vs})),
+                    Some(json!({"kind": "scroll", "x": x, "y": y, "w": vw, "h": vh, "hs": hs, "vs": vs})),
+                )
+            }
+            control::Ctl::Key { action, code, repeat, meta } => {
+                if *repeat > 0 {
+                    return (None, None);
+                }
+                let kname = agent::key_name(*code).map(String::from).unwrap_or_else(|| code.to_string());
+                let raw = Some(json!({"t": "key", "action": action, "code": code, "key": kname, "meta": meta}));
+                let act = (*action == 0).then(|| json!({"kind": "key", "key": kname, "code": code, "meta": meta}));
+                (raw, act)
+            }
+            control::Ctl::Back { action } => {
+                let raw = Some(json!({"t": "back", "action": action}));
+                let act = (*action == 0).then(|| json!({"kind": "key", "key": "back", "code": 4, "meta": 0}));
+                (raw, act)
+            }
+            control::Ctl::Text { text } => {
+                if text.is_empty() {
+                    return (None, None);
+                }
+                (Some(json!({"t": "text", "text": text})), Some(json!({"kind": "text", "text": text})))
+            }
+            control::Ctl::Clipboard { text, paste, .. } => {
+                let raw = Some(json!({"t": "clipboard", "text": text, "paste": paste}));
+                let act = (*paste && !text.is_empty()).then(|| json!({"kind": "text", "text": text}));
+                (raw, act)
+            }
+            control::Ctl::Power { on } => (Some(json!({"t": "power", "on": on})), Some(json!({"kind": "power", "on": on}))),
+            control::Ctl::Cmd { name } if name != "reset_video" => {
+                (Some(json!({"t": "cmd", "name": name})), Some(json!({"kind": "cmd", "name": name})))
+            }
+            _ => (None, None),
+        }
+    }
+}
+
+/// 解析 `wm size` 输出的屏幕宽高（优先取最后一行的 Override size）
+pub(crate) fn parse_wm_size(out: &str) -> Option<(u32, u32)> {
+    let mut found = None;
+    for line in out.lines() {
+        let s = line.rsplit(':').next().unwrap_or(line).trim();
+        if let Some((a, b)) = s.split_once('x') {
+            if let (Ok(w), Ok(h)) = (a.trim().parse::<u32>(), b.trim().parse::<u32>()) {
+                if w > 0 && h > 0 {
+                    found = Some((w, h));
+                }
+            }
+        }
+    }
+    found
 }
 
 /// 一个插件
@@ -178,8 +312,10 @@ pub(crate) struct Plugin {
     console: Mutex<VecDeque<Value>>,
     host: Mutex<Option<Arc<host::Host>>>,
     spawned: AtomicBool,
-    /// 每个插件同时最多 4 个设备操作
+    /// 轻量控制/查询并发上限（64 路）
     sem: Semaphore,
+    /// 重型 I/O 操作并发上限（4 路：install / uninstall / push / pull / ui / screenshot）
+    heavy_sem: Semaphore,
     rate: Mutex<Rate>,
     crashes: Mutex<Vec<Instant>>,
     pub forwards: Mutex<Vec<Forward>>,
@@ -200,7 +336,8 @@ impl Plugin {
             console: Mutex::new(VecDeque::new()),
             host: Mutex::new(None),
             spawned: AtomicBool::new(false),
-            sem: Semaphore::new(4),
+            sem: Semaphore::new(64),
+            heavy_sem: Semaphore::new(4),
             rate: Mutex::new(Rate::new()),
             crashes: Mutex::new(Vec::new()),
             forwards: Mutex::new(Vec::new()),
@@ -321,6 +458,12 @@ pub struct Plugins {
     remote_devs: Mutex<Option<(Instant, Vec<PluginDev>)>>,
     /// 设备 → 上次看到的前台应用
     foreground: Mutex<HashMap<String, String>>,
+    /// 本机设备物理分辨率缓存（serial → (w, h)，供未开投屏时坐标缩放）
+    screens: Mutex<HashMap<String, (u32, u32)>>,
+    /// 投屏人工输入合成器（device.input / device.action）
+    input_tracker: Mutex<InputTracker>,
+    /// 串行化写入并轮转 `.audit.log` 的异步锁
+    audit_lock: Arc<tokio::sync::Mutex<()>>,
     next_sub: AtomicU64,
     next_dialog: AtomicU64,
 }
@@ -342,6 +485,9 @@ impl Plugins {
             devices: Mutex::new(Vec::new()),
             remote_devs: Mutex::new(None),
             foreground: Mutex::new(HashMap::new()),
+            screens: Mutex::new(HashMap::new()),
+            input_tracker: Mutex::new(InputTracker::default()),
+            audit_lock: Arc::new(tokio::sync::Mutex::new(())),
             next_sub: AtomicU64::new(1),
             next_dialog: AtomicU64::new(1),
         }
@@ -405,9 +551,11 @@ impl Plugins {
         ph.console.lock().unwrap().iter().cloned().collect()
     }
 
-    /// 审计日志（会改变设备或运行程序的操作）
+    /// 审计日志（会改变设备或运行程序的操作；串行化追加并在超过 5 MiB 时自动轮转为 `.audit.log.1`）
     pub(crate) fn audit(&self, plugin: &str, op: &str, detail: Value) {
+        const AUDIT_MAX_BYTES: u64 = 5 * 1024 * 1024;
         let path = self.root.join(".audit.log");
+        let lock = self.audit_lock.clone();
         let line = json!({
             "time": chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string(),
             "plugin": plugin,
@@ -417,10 +565,7 @@ impl Plugins {
         .to_string()
             + "\n";
         tokio::spawn(async move {
-            use tokio::io::AsyncWriteExt;
-            if let Ok(mut f) = tokio::fs::OpenOptions::new().append(true).create(true).open(&path).await {
-                let _ = f.write_all(line.as_bytes()).await;
-            }
+            append_audit_bounded(&lock, &path, &line, AUDIT_MAX_BYTES).await;
         });
     }
 
@@ -543,7 +688,85 @@ impl Plugins {
     }
 
     pub(crate) fn device_sem(&self, serial: &str) -> Arc<Semaphore> {
-        self.dev_sems.lock().unwrap().entry(serial.to_string()).or_insert_with(|| Arc::new(Semaphore::new(2))).clone()
+        self.dev_sems.lock().unwrap().entry(serial.to_string()).or_insert_with(|| Arc::new(Semaphore::new(4))).clone()
+    }
+
+    /// 获取本机设备的屏幕分辨率（优先走缓存，未命中时查一次 `wm size`）
+    pub(crate) async fn screen_size(&self, st: &AppState, serial: &str) -> Option<(u32, u32)> {
+        if let Some(sz) = self.screens.lock().unwrap().get(serial).copied() {
+            return Some(sz);
+        }
+        let out = adb::run_timeout(&st.cfg.adb, &["-s", serial, "shell", "wm size"], Duration::from_secs(5)).await.ok()?;
+        let sz = parse_wm_size(&out)?;
+        self.screens.lock().unwrap().insert(serial.to_string(), sz);
+        Some(sz)
+    }
+
+    /// 用户在投屏窗口操作某台设备（含本机与远程投屏）：向订阅了 `device.input` / `device.action` 且拥有 `device.input` 权限的插件派发事件
+    pub(crate) fn on_user_ctl(&self, st: &Arc<AppState>, dev_id: &str, ctl: &control::Ctl, session: Option<(u32, u32)>) {
+        let subs: Vec<Arc<Plugin>> = self
+            .plugins()
+            .into_iter()
+            .filter(|ph| {
+                ph.state() == PluginState::Running
+                    && ph.has_perm("device.input")
+                    && (ph.is_subscribed("device.input") || ph.is_subscribed("device.action"))
+            })
+            .collect();
+        if subs.is_empty() {
+            return;
+        }
+        let (raw_ev, act_ev) = self.input_tracker.lock().unwrap().ingest(dev_id, ctl, session, Instant::now());
+        if raw_ev.is_none() && act_ev.is_none() {
+            return;
+        }
+        let dev_json = self
+            .devices_snapshot()
+            .into_iter()
+            .find(|d| d.id == dev_id)
+            .map(|d| d.json())
+            .unwrap_or_else(|| {
+                let raw = raw_serial(dev_id);
+                json!({
+                    "serial": dev_id,
+                    "model": "",
+                    "name": raw,
+                    "state": "device",
+                    "computer": if split_dev(dev_id).is_some() { "" } else { st.cfg.name.as_str() },
+                    "remote": split_dev(dev_id).is_some(),
+                })
+            });
+        let st2 = st.clone();
+        let dev_id2 = dev_id.to_string();
+        tokio::spawn(async move {
+            for ph in subs {
+                if !st2.plugins.device_allowed(&st2, &ph, &dev_id2).await {
+                    continue;
+                }
+                let Some(h) = ph.host() else { continue };
+                if let Some(ev) = &raw_ev {
+                    if ph.is_subscribed("device.input") {
+                        let p = json!({"name": "device.input", "args": [dev_json.clone(), ev.clone()]});
+                        let h2 = h.clone();
+                        tokio::spawn(async move {
+                            let _ = h2.request("event", p, Duration::from_secs(5)).await;
+                        });
+                    }
+                }
+                if let Some(ev) = &act_ev {
+                    if ph.is_subscribed("device.action") {
+                        let p = json!({"name": "device.action", "args": [dev_json.clone(), ev.clone()]});
+                        let st3 = st2.clone();
+                        let ph3 = ph.clone();
+                        tokio::spawn(async move {
+                            if let Err(e) = h.request("event", p, Duration::from_secs(10)).await {
+                                st3.plugins.console(&ph3, "warn", &tr!("事件 device.action 处理失败：{e}", "Event device.action failed: {e}"), None);
+                            }
+                        });
+                    }
+                }
+            }
+        });
     }
 
     // ------------------------------------------------------------ 接口数据
@@ -1281,12 +1504,46 @@ pub(crate) async fn fire(st: &Arc<AppState>, subs: &[Arc<Plugin>], name: &str, a
     }
 }
 
-/// 清掉 `.tmp` 里 24 小时前的上传/截图文件
+/// 串行化写入审计日志，并在当前文件达到 `max_bytes` 时轮转为 `<path>.1`（最多保留 1 份归档）
+pub(crate) async fn append_audit_bounded(lock: &tokio::sync::Mutex<()>, path: &Path, line: &str, max_bytes: u64) {
+    use tokio::io::AsyncWriteExt;
+    let _guard = lock.lock().await;
+    if let Some(parent) = path.parent() {
+        let _ = tokio::fs::create_dir_all(parent).await;
+    }
+    if max_bytes > 0 {
+        if let Ok(meta) = tokio::fs::metadata(path).await {
+            if meta.len() >= max_bytes {
+                let mut bak_os = path.as_os_str().to_os_string();
+                bak_os.push(".1");
+                let bak = PathBuf::from(bak_os);
+                let _ = tokio::fs::remove_file(&bak).await;
+                let _ = tokio::fs::rename(path, &bak).await;
+            }
+        }
+    }
+    if let Ok(mut f) = tokio::fs::OpenOptions::new().append(true).create(true).open(path).await {
+        let _ = f.write_all(line.as_bytes()).await;
+    }
+}
+
+/// 清掉 `.tmp` 及其一级子目录（`.tmp/<id>`、`.tmp/uploads`）里 24 小时前的上传/截图文件
 async fn cleanup_tmp(root: &Path) {
     let dir = root.join(".tmp");
     let Ok(mut rd) = tokio::fs::read_dir(&dir).await else { return };
     while let Ok(Some(entry)) = rd.next_entry().await {
         let Ok(meta) = entry.metadata().await else { continue };
+        if meta.is_dir() {
+            let Ok(mut sub) = tokio::fs::read_dir(entry.path()).await else { continue };
+            while let Ok(Some(child)) = sub.next_entry().await {
+                let Ok(cmeta) = child.metadata().await else { continue };
+                let Ok(modified) = cmeta.modified() else { continue };
+                if modified.elapsed().map(|d| d.as_secs() > 24 * 3600).unwrap_or(false) {
+                    let _ = tokio::fs::remove_file(child.path()).await;
+                }
+            }
+            continue;
+        }
         let Ok(modified) = meta.modified() else { continue };
         if modified.elapsed().map(|d| d.as_secs() > 24 * 3600).unwrap_or(false) {
             let _ = tokio::fs::remove_file(entry.path()).await;
@@ -1529,5 +1786,85 @@ mod tests {
         let merged = settings_values(&man, &values);
         assert_eq!(merged["a"], json!("v"));
         assert_eq!(merged["b"], Value::Null);
+    }
+
+    #[test]
+    fn wm_size_parsing() {
+        assert_eq!(parse_wm_size("Physical size: 1080x2400\n"), Some((1080, 2400)));
+        assert_eq!(parse_wm_size("Physical size: 1080x2400\nOverride size: 720x1600\n"), Some((720, 1600)));
+        assert_eq!(parse_wm_size("garbage"), None);
+    }
+
+    #[test]
+    fn input_tracker_synthesizes_tap_longpress_swipe_and_keys() {
+        let mut trk = InputTracker::default();
+        let t0 = Instant::now();
+
+        // 1) 短按 → tap
+        let (r0, a0) = trk.ingest("S1", &control::Ctl::Touch { action: 0, id: -2, x: 500, y: 800, w: 1080, h: 2400, p: 1.0, buttons: 0 }, None, t0);
+        assert!(r0.is_some() && a0.is_none());
+        let (r1, a1) = trk.ingest("S1", &control::Ctl::Touch { action: 1, id: -2, x: 505, y: 804, w: 1080, h: 2400, p: 0.0, buttons: 0 }, None, t0 + Duration::from_millis(80));
+        assert!(r1.is_some());
+        let act = a1.expect("tap action");
+        assert_eq!(act["kind"], json!("tap"));
+        assert_eq!((act["x"].clone(), act["y"].clone(), act["w"].clone(), act["h"].clone()), (json!(505), json!(804), json!(1080), json!(2400)));
+
+        // 2) 原地按住 >= 500ms → longpress
+        trk.ingest("S1", &control::Ctl::Touch { action: 0, id: -2, x: 300, y: 400, w: 1080, h: 2400, p: 1.0, buttons: 0 }, None, t0);
+        let (_, a2) = trk.ingest("S1", &control::Ctl::Touch { action: 1, id: -2, x: 302, y: 401, w: 1080, h: 2400, p: 0.0, buttons: 0 }, None, t0 + Duration::from_millis(650));
+        let act = a2.expect("longpress action");
+        assert_eq!(act["kind"], json!("longpress"));
+        assert_eq!(act["duration"], json!(650));
+
+        // 3) 拖动 + move 节流 → swipe
+        trk.ingest("S1", &control::Ctl::Touch { action: 0, id: -2, x: 500, y: 1800, w: 1080, h: 2400, p: 1.0, buttons: 0 }, None, t0);
+        // 5ms 内的 move 被节流，20ms 后的 move 正常透传
+        let (rm_fast, _) = trk.ingest("S1", &control::Ctl::Touch { action: 2, id: -2, x: 500, y: 1500, w: 1080, h: 2400, p: 1.0, buttons: 0 }, None, t0 + Duration::from_millis(5));
+        assert!(rm_fast.is_none(), "16ms 内的 move 应节流");
+        let (rm_ok, _) = trk.ingest("S1", &control::Ctl::Touch { action: 2, id: -2, x: 500, y: 1100, w: 1080, h: 2400, p: 1.0, buttons: 0 }, None, t0 + Duration::from_millis(20));
+        assert!(rm_ok.is_some(), "超过 16ms 的 move 应发送");
+        let (_, a3) = trk.ingest("S1", &control::Ctl::Touch { action: 1, id: -2, x: 500, y: 600, w: 1080, h: 2400, p: 0.0, buttons: 0 }, None, t0 + Duration::from_millis(220));
+        let act = a3.expect("swipe action");
+        assert_eq!(act["kind"], json!("swipe"));
+        assert_eq!((act["x"].clone(), act["y"].clone(), act["x2"].clone(), act["y2"].clone()), (json!(500), json!(1800), json!(500), json!(600)));
+
+        // 4) Back 与剪贴板粘贴
+        let (_, ab) = trk.ingest("S1", &control::Ctl::Back { action: 0 }, None, t0);
+        assert_eq!(ab.expect("back")["key"], json!("back"));
+        let (_, bu) = trk.ingest("S1", &control::Ctl::Back { action: 1 }, None, t0);
+        assert!(bu.is_none());
+        let (_, at) = trk.ingest("S1", &control::Ctl::Clipboard { text: "你好".into(), paste: true, seq: 1 }, None, t0);
+        assert_eq!(at.expect("paste")["text"], json!("你好"));
+    }
+
+    #[tokio::test]
+    async fn audit_log_serializes_and_rotates() {
+        let dir = std::env::temp_dir().join(format!("droidbridge-audit-{:08x}", crate::util::random_scid()));
+        let _ = tokio::fs::create_dir_all(&dir).await;
+        let path = dir.join(".audit.log");
+        let lock = Arc::new(tokio::sync::Mutex::new(()));
+
+        let mut handles = Vec::new();
+        for i in 0..24 {
+            let lock2 = lock.clone();
+            let path2 = path.clone();
+            handles.push(tokio::spawn(async move {
+                append_audit_bounded(&lock2, &path2, &format!("{{\"seq\":{i},\"pad\":\"0123456789abcdef\"}}\n"), 220).await;
+            }));
+        }
+        for h in handles {
+            h.await.unwrap();
+        }
+
+        let rotated = dir.join(".audit.log.1");
+        assert!(rotated.exists(), "超出阈值后应生成轮转归档 .audit.log.1");
+        assert!(path.exists(), "应继续写入新的 .audit.log");
+        let cur = tokio::fs::read_to_string(&path).await.unwrap();
+        let bak = tokio::fs::read_to_string(&rotated).await.unwrap();
+        for line in cur.lines().chain(bak.lines()) {
+            let v: Value = serde_json::from_str(line).expect("并发写入的每一行都应是完整合法 JSON");
+            assert!(v.get("seq").is_some());
+        }
+        let _ = tokio::fs::remove_dir_all(&dir).await;
     }
 }

@@ -270,6 +270,246 @@ pub async fn post_file(peer: &Peer, endpoint: &str, query: &str, body: &[u8]) ->
     parse_json_reply(code, &resp)
 }
 
+/// 将 HTTP 请求体流式写入本机临时文件（恒定内存开销，出错或 0 字节时自动清理临时文件）
+pub async fn save_body_to_file(body: axum::body::Body, dest: &std::path::Path) -> Result<u64, String> {
+    let mut stream = body.into_data_stream();
+    let mut f = tokio::fs::File::create(dest)
+        .await
+        .map_err(|e| tr!("保存文件失败：{e}", "Failed to save the file: {e}"))?;
+    let mut total = 0u64;
+    while let Some(chunk) = stream.next().await {
+        match chunk {
+            Ok(bytes) => {
+                if bytes.is_empty() {
+                    continue;
+                }
+                if let Err(e) = f.write_all(&bytes).await {
+                    drop(f);
+                    let _ = tokio::fs::remove_file(dest).await;
+                    return Err(tr!("写入临时文件失败：{e}", "Cannot write the temporary file: {e}"));
+                }
+                total += bytes.len() as u64;
+            }
+            Err(e) => {
+                drop(f);
+                let _ = tokio::fs::remove_file(dest).await;
+                return Err(tr!("读取上传数据流中断：{e}", "Upload stream interrupted: {e}"));
+            }
+        }
+    }
+    if let Err(e) = f.flush().await {
+        drop(f);
+        let _ = tokio::fs::remove_file(dest).await;
+        return Err(e.to_string());
+    }
+    drop(f);
+    if total == 0 {
+        let _ = tokio::fs::remove_file(dest).await;
+    }
+    Ok(total)
+}
+
+/// 从已建立连接并写完请求体的 TcpStream 读取对端 HTTP 响应头与小响应体
+async fn read_http_reply(s: &mut TcpStream) -> Result<(u16, String, Vec<u8>), String> {
+    let mut buf = Vec::new();
+    s.read_to_end(&mut buf).await.map_err(|e| e.to_string())?;
+    let split = buf
+        .windows(4)
+        .position(|w| w == b"\r\n\r\n")
+        .ok_or_else(|| tr!("对端响应格式错误", "Malformed response"))?;
+    let head = String::from_utf8_lossy(&buf[..split]).to_ascii_lowercase();
+    let mut body = buf[split + 4..].to_vec();
+    let status: u16 = head
+        .split_whitespace()
+        .nth(1)
+        .and_then(|s| s.parse().ok())
+        .ok_or_else(|| tr!("对端响应格式错误", "Malformed response"))?;
+    if head.contains("transfer-encoding: chunked") {
+        body = dechunk(&body);
+    }
+    Ok((status, head, body))
+}
+
+/// 将浏览器传入的 `axum::body::Body` 流式转发到远程节点（已知长度走 `Content-Length`，未知走 `Transfer-Encoding: chunked`，不落盘且不缓冲整包）
+pub async fn post_body_stream(
+    peer: &Peer,
+    path_query: &str,
+    headers: &[(&str, &str)],
+    content_len: Option<u64>,
+    body: axum::body::Body,
+    total: Duration,
+) -> Result<serde_json::Value, String> {
+    let addr = &peer.addr;
+    let path = with_token(path_query, &peer.token);
+    let mut extra = String::new();
+    for (k, v) in headers {
+        extra.push_str(&format!("{k}: {v}\r\n"));
+    }
+    let fut = async {
+        let mut s = tokio::time::timeout(Duration::from_secs(5), TcpStream::connect(addr))
+            .await
+            .map_err(|_| tr!("连接 {addr} 超时", "Connection to {addr} timed out"))?
+            .map_err(|e| tr!("无法连接 {addr}：{e}", "Cannot connect to {addr}: {e}"))?;
+        let framing = match content_len {
+            Some(n) => format!("Content-Length: {n}\r\n"),
+            None => "Transfer-Encoding: chunked\r\n".to_string(),
+        };
+        let req = format!(
+            "POST {path} HTTP/1.1\r\nHost: {addr}\r\nAccept: application/json\r\nX-Lang: {}\r\n{extra}Content-Type: application/octet-stream\r\n{framing}Connection: close\r\n\r\n",
+            crate::i18n::code(),
+        );
+        s.write_all(req.as_bytes()).await.map_err(|e| e.to_string())?;
+        let mut stream = body.into_data_stream();
+        let mut sent = 0u64;
+        while let Some(chunk) = stream.next().await {
+            let bytes = chunk.map_err(|e| e.to_string())?;
+            if bytes.is_empty() {
+                continue;
+            }
+            sent += bytes.len() as u64;
+            if content_len.is_some() {
+                s.write_all(&bytes).await.map_err(|e| e.to_string())?;
+            } else {
+                let hdr = format!("{:x}\r\n", bytes.len());
+                s.write_all(hdr.as_bytes()).await.map_err(|e| e.to_string())?;
+                s.write_all(&bytes).await.map_err(|e| e.to_string())?;
+                s.write_all(b"\r\n").await.map_err(|e| e.to_string())?;
+            }
+        }
+        if content_len.is_none() {
+            s.write_all(b"0\r\n\r\n").await.map_err(|e| e.to_string())?;
+        }
+        if sent == 0 && content_len == Some(0) {
+            return Err(tr!("文件为空", "File is empty"));
+        }
+        read_http_reply(&mut s).await
+    };
+    let (code, _head, resp) = tokio::time::timeout(total, fut)
+        .await
+        .map_err(|_| tr!("请求 {addr} 超时", "Request to {addr} timed out"))??;
+    parse_json_reply(code, &resp)
+}
+
+/// 将本机磁盘上的文件流式发送到远程节点（供插件远程 `push` / `install` 大 APK 使用，零内存缓冲）
+pub async fn send_file_ex(
+    peer: &Peer,
+    method: &str,
+    path_query: &str,
+    headers: &[(&str, &str)],
+    file_path: &std::path::Path,
+    total: Duration,
+) -> Result<(u16, String, Vec<u8>), String> {
+    let addr = &peer.addr;
+    let path = with_token(path_query, &peer.token);
+    let mut extra = String::new();
+    for (k, v) in headers {
+        extra.push_str(&format!("{k}: {v}\r\n"));
+    }
+    let mut file = tokio::fs::File::open(file_path).await.map_err(|e| {
+        let p = file_path.display();
+        tr!("无法读取 {p}：{e}", "Cannot read {p}: {e}")
+    })?;
+    let len = file.metadata().await.map_err(|e| e.to_string())?.len();
+    let fut = async {
+        let mut s = tokio::time::timeout(Duration::from_secs(5), TcpStream::connect(addr))
+            .await
+            .map_err(|_| tr!("连接 {addr} 超时", "Connection to {addr} timed out"))?
+            .map_err(|e| tr!("无法连接 {addr}：{e}", "Cannot connect to {addr}: {e}"))?;
+        let req = format!(
+            "{method} {path} HTTP/1.1\r\nHost: {addr}\r\nAccept: application/json\r\nX-Lang: {}\r\n{extra}Content-Type: application/octet-stream\r\nContent-Length: {len}\r\nConnection: close\r\n\r\n",
+            crate::i18n::code(),
+        );
+        s.write_all(req.as_bytes()).await.map_err(|e| e.to_string())?;
+        tokio::io::copy(&mut file, &mut s).await.map_err(|e| e.to_string())?;
+        read_http_reply(&mut s).await
+    };
+    let (code, head, resp) = tokio::time::timeout(total, fut)
+        .await
+        .map_err(|_| tr!("请求 {addr} 超时", "Request to {addr} timed out"))??;
+    Ok((code, content_type_of(&head), resp))
+}
+
+/// 流式代理远程节点的文件下载响应（保留 `Content-Disposition` / `Content-Length` 头，按 64 KB 分块转发，大文件不占内存）
+pub async fn forward_download_stream(peer: &Peer, path_query: &str, timeout: Duration) -> Result<axum::response::Response, String> {
+    use axum::response::IntoResponse;
+    let addr = &peer.addr;
+    let path = with_token(path_query, &peer.token);
+    let (mut s, raw_head, prefix) = tokio::time::timeout(timeout, async {
+        let mut s = tokio::time::timeout(Duration::from_secs(5), TcpStream::connect(addr))
+            .await
+            .map_err(|_| tr!("连接 {addr} 超时", "Connection to {addr} timed out"))?
+            .map_err(|e| tr!("无法连接 {addr}：{e}", "Cannot connect to {addr}: {e}"))?;
+        let req = format!(
+            "GET {path} HTTP/1.1\r\nHost: {addr}\r\nX-Lang: {}\r\nConnection: close\r\n\r\n",
+            crate::i18n::code(),
+        );
+        s.write_all(req.as_bytes()).await.map_err(|e| e.to_string())?;
+        let mut hdr_buf = Vec::with_capacity(2048);
+        let mut chunk = [0u8; 2048];
+        loop {
+            let n = s.read(&mut chunk).await.map_err(|e| e.to_string())?;
+            if n == 0 {
+                return Err(tr!("对端响应格式错误", "Malformed response"));
+            }
+            hdr_buf.extend_from_slice(&chunk[..n]);
+            if let Some(pos) = hdr_buf.windows(4).position(|w| w == b"\r\n\r\n") {
+                let head = String::from_utf8_lossy(&hdr_buf[..pos]).to_string();
+                let rem = hdr_buf[pos + 4..].to_vec();
+                return Ok((s, head, rem));
+            }
+            if hdr_buf.len() > 32 * 1024 {
+                return Err(tr!("对端响应头过长", "Response header too large"));
+            }
+        }
+    })
+    .await
+    .map_err(|_| tr!("请求 {addr} 超时", "Request to {addr} timed out"))??;
+
+    let lower = raw_head.to_ascii_lowercase();
+    let status: u16 = lower
+        .split_whitespace()
+        .nth(1)
+        .and_then(|x| x.parse().ok())
+        .ok_or_else(|| tr!("对端响应格式错误", "Malformed response"))?;
+
+    if status >= 400 || lower.contains("transfer-encoding: chunked") {
+        let mut body = prefix;
+        s.read_to_end(&mut body).await.map_err(|e| e.to_string())?;
+        if lower.contains("transfer-encoding: chunked") {
+            body = dechunk(&body);
+        }
+        return Ok(crate::peer_reply(status, content_type_of(&lower), body));
+    }
+
+    let mut resp_headers = axum::http::HeaderMap::new();
+    for line in raw_head.lines().skip(1) {
+        let Some((k, v)) = line.split_once(':') else { continue };
+        let kl = k.trim().to_ascii_lowercase();
+        if matches!(kl.as_str(), "content-type" | "content-length" | "content-disposition") {
+            if let (Ok(hn), Ok(hv)) = (axum::http::HeaderName::from_bytes(kl.as_bytes()), axum::http::HeaderValue::from_str(v.trim())) {
+                resp_headers.insert(hn, hv);
+            }
+        }
+    }
+    let stream = futures_util::stream::unfold((Some(prefix), s), |(mut first, mut sock)| async move {
+        if let Some(p) = first.take() {
+            if !p.is_empty() {
+                return Some((Ok::<Vec<u8>, std::io::Error>(p), (None, sock)));
+            }
+        }
+        let mut buf = vec![0u8; 64 * 1024];
+        match sock.read(&mut buf).await {
+            Ok(0) | Err(_) => None,
+            Ok(n) => {
+                buf.truncate(n);
+                Some((Ok(buf), (None, sock)))
+            }
+        }
+    });
+    let code = axum::http::StatusCode::from_u16(status).unwrap_or(axum::http::StatusCode::OK);
+    Ok((code, resp_headers, axum::body::Body::from_stream(stream)).into_response())
+}
+
 /// GET 转发并保留 Content-Type（图片等二进制内容）
 pub async fn forward_raw(peer: &Peer, path_query: &str, timeout: Duration) -> Result<(u16, String, Vec<u8>), String> {
     forward_ex(peer, "GET", path_query, &[], b"", timeout).await
@@ -323,6 +563,17 @@ fn parse_json_reply(code: u16, body: &[u8]) -> Result<serde_json::Value, String>
 
 /// 把本地浏览器的 WebSocket 与远程节点的同名接口（/ws/stream、/ws/logcat）双向桥接
 pub async fn proxy_ws(socket: WebSocket, peer: Peer, path: &'static str, raw_query: Option<String>) {
+    proxy_ws_with_ctl(socket, peer, path, raw_query, None).await;
+}
+
+/// 双向桥接远程 WebSocket；当 `ctl_tap` 为 `Some((state, dev_id))` 时同步旁路捕获浏览器发往远程投屏的控制指令供本机插件监听
+pub async fn proxy_ws_with_ctl(
+    socket: WebSocket,
+    peer: Peer,
+    path: &'static str,
+    raw_query: Option<String>,
+    ctl_tap: Option<(std::sync::Arc<crate::AppState>, String)>,
+) {
     let q = parse_query(raw_query.as_deref());
     let mut parts = Vec::new();
     for (k, v) in q.iter() {
@@ -343,11 +594,24 @@ pub async fn proxy_ws(socket: WebSocket, peer: Peer, path: &'static str, raw_que
         }
     };
     let (mut rtx, mut rrx) = remote.split();
+    let session_sz = std::sync::Arc::new(std::sync::Mutex::new(None::<(u32, u32)>));
+    let session_up = session_sz.clone();
+    let has_tap = ctl_tap.is_some();
 
     let up = async {
         while let Some(Ok(m)) = crx.next().await {
+            let mut tap_ctl = None;
             let tm = match m {
-                AMsg::Text(t) => TMsg::Text(t.as_str().into()),
+                AMsg::Text(t) => {
+                    if ctl_tap.is_some() {
+                        if let Ok(ctl) = serde_json::from_str::<crate::control::Ctl>(t.as_str()) {
+                            if !matches!(&ctl, crate::control::Ctl::Cmd { name } if name == "reset_video") {
+                                tap_ctl = Some(ctl);
+                            }
+                        }
+                    }
+                    TMsg::Text(t.as_str().into())
+                }
                 AMsg::Binary(b) => TMsg::Binary(b),
                 AMsg::Close(_) => break,
                 _ => continue,
@@ -355,13 +619,30 @@ pub async fn proxy_ws(socket: WebSocket, peer: Peer, path: &'static str, raw_que
             if rtx.send(tm).await.is_err() {
                 break;
             }
+            if let (Some((st, dev_id)), Some(ctl)) = (&ctl_tap, tap_ctl) {
+                let sz = *session_up.lock().unwrap();
+                st.plugins.on_user_ctl(st, dev_id, &ctl, sz);
+            }
         }
         let _ = rtx.close().await;
     };
     let down = async {
         while let Some(Ok(m)) = rrx.next().await {
             let am = match m {
-                TMsg::Text(t) => AMsg::Text(t.as_str().into()),
+                TMsg::Text(t) => {
+                    if has_tap && t.contains("\"session\"") {
+                        if let Ok(v) = serde_json::from_str::<serde_json::Value>(t.as_str()) {
+                            if v.get("type").and_then(|x| x.as_str()) == Some("session") {
+                                let w = v.get("width").and_then(|x| x.as_u64()).unwrap_or(0) as u32;
+                                let h = v.get("height").and_then(|x| x.as_u64()).unwrap_or(0) as u32;
+                                if w > 0 && h > 0 {
+                                    *session_sz.lock().unwrap() = Some((w, h));
+                                }
+                            }
+                        }
+                    }
+                    AMsg::Text(t.as_str().into())
+                }
                 TMsg::Binary(b) => AMsg::Binary(b),
                 TMsg::Close(_) => break,
                 _ => continue,

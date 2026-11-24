@@ -10,7 +10,12 @@ use tokio_tungstenite::tungstenite::Message as TMsg;
 /// 限流后异步执行，结果通过 `ret` 回复宿主
 pub(super) fn dispatch(app: Arc<AppState>, ph: Arc<Plugin>, id: u64, m: String, p: Value) {
     tokio::spawn(async move {
-        ph.take_rate().await;
+        let is_touch_move = m == "input"
+            && p.get("kind").and_then(Value::as_str) == Some("touch")
+            && p.get("action").and_then(Value::as_u64) == Some(2);
+        if !is_touch_move {
+            ph.take_rate().await;
+        }
         let r = handle(&app, &ph, &m, &p).await;
         let msg = match r {
             Ok(v) => json!({"t": "ret", "id": id, "ok": v}),
@@ -58,6 +63,11 @@ fn is_device_method(m: &str) -> bool {
     )
 }
 
+/// 重型设备 I/O 操作：单独限制单插件 4 并发，避免大包安装或 uiautomator 挤占轻量控制通道
+fn is_heavy_device_method(m: &str) -> bool {
+    matches!(m, "install" | "uninstall" | "push" | "pull" | "ui" | "screenshot")
+}
+
 async fn handle(app: &Arc<AppState>, ph: &Arc<Plugin>, m: &str, p: &Value) -> Result<Value, String> {
     if is_device_method(m) {
         // 先查权限，再查 match（SPEC 7.3）
@@ -65,13 +75,65 @@ async fn handle(app: &Arc<AppState>, ph: &Arc<Plugin>, m: &str, p: &Value) -> Re
             need(ph, perm)?;
         }
         let serial = device(app, ph, p).await?;
-        // 每插件最多 4 个、每设备最多 2 个插件操作
-        let _plugin_slot = ph.sem.acquire().await.expect("plugin semaphore");
+        // 本机投屏已就绪时，input / cmd / setClipboard 直通 scrcpy 控制通道，不占用并发信号量槽位
+        let can_inject = m == "input" || m == "cmd" || (m == "clipboard" && p.get("text").and_then(Value::as_str).is_some());
+        let fast_mirror = can_inject
+            && split_dev(&serial).is_none()
+            && app.mirrors.get(&serial).and_then(|mr| mr.session_size()).is_some();
+        if fast_mirror {
+            return device_op(app, ph, m, p, &serial).await;
+        }
+        // 重型 I/O 限制 4 并发，轻量控制放宽至 64 并发
+        let slot_sem = if is_heavy_device_method(m) { &ph.heavy_sem } else { &ph.sem };
+        let _plugin_slot = slot_sem.acquire().await.expect("plugin semaphore");
         let dev_sem = app.plugins.device_sem(&serial);
         let _dev_slot = dev_sem.acquire_owned().await.expect("device semaphore");
         return device_op(app, ph, m, p, &serial).await;
     }
     match m {
+        "broadcast" => {
+            need(ph, "device.input")?;
+            let ev = p.get("ev").filter(|v| v.is_object()).cloned().ok_or_else(|| tr!("缺少 ev", "Missing ev"))?;
+            let raw_list = p.get("serials").and_then(Value::as_array).cloned().unwrap_or_default();
+            let mut targets = Vec::new();
+            let mut seen = std::collections::HashSet::new();
+            for item in raw_list {
+                let Some(s) = item.as_str().map(str::trim).filter(|s| !s.is_empty()) else { continue };
+                if seen.insert(s.to_string()) && app.plugins.device_allowed(app, ph, s).await {
+                    targets.push(s.to_string());
+                }
+            }
+            let futs = targets.into_iter().map(|serial| {
+                let mut q = ev.clone();
+                if let Some(o) = q.as_object_mut() {
+                    o.insert("serial".into(), json!(serial));
+                }
+                async move {
+                    let fast = split_dev(&serial).is_none() && app.mirrors.get(&serial).and_then(|mr| mr.session_size()).is_some();
+                    let res = if fast {
+                        device_op(app, ph, "input", &q, &serial).await
+                    } else {
+                        let _ps = ph.sem.acquire().await.expect("plugin semaphore");
+                        let dsem = app.plugins.device_sem(&serial);
+                        let _ds = dsem.acquire_owned().await.expect("device semaphore");
+                        device_op(app, ph, "input", &q, &serial).await
+                    };
+                    (serial, res)
+                }
+            });
+            let results = futures_util::future::join_all(futs).await;
+            let mut ok_cnt = 0u64;
+            let mut failed = Map::new();
+            for (serial, res) in results {
+                match res {
+                    Ok(_) => ok_cnt += 1,
+                    Err(e) => {
+                        failed.insert(serial, json!(e));
+                    }
+                }
+            }
+            return Ok(json!({"ok": ok_cnt, "failed": failed}));
+        }
         "devices" => {
             // 本机 + 各远程电脑上的设备（SPEC 7.3）
             let mut out = Vec::new();
@@ -253,6 +315,9 @@ fn register(app: &Arc<AppState>, ph: &Arc<Plugin>, p: &Value) -> Result<Value, S
         let name = def.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
         if name.is_empty() {
             return Err(tr!("{kind} 缺少 name", "{kind} requires a name"));
+        }
+        if kind == "event" && (name == "device.input" || name == "device.action") {
+            need(ph, "device.input")?;
         }
         let mut c = ph.contributions.lock().unwrap();
         if kind == "event" {
@@ -489,7 +554,7 @@ async fn device_op(app: &Arc<AppState>, ph: &Arc<Plugin>, m: &str, p: &Value, id
                 let dir = media::media_dir(app).await;
                 return Ok(json!(dir.join(item.name).to_string_lossy()));
             }
-            let dir = app.plugins.root().join(".tmp");
+            let dir = app.plugins.root().join(".tmp").join(&ph.id);
             let _ = tokio::fs::create_dir_all(&dir).await;
             let path = dir.join(format!("shot-{:08x}.png", util::random_scid()));
             tokio::fs::write(&path, &png).await.map_err(|e| e.to_string())?;
@@ -519,8 +584,7 @@ async fn remote_op(peer: &crate::peers::Peer, raw: &str, m: &str, q: &Value) -> 
     match m {
         "push" | "install" => {
             let file = if m == "push" { arg_str(q, "local") } else { arg_str(q, "path") }.unwrap_or("");
-            let data = tokio::fs::read(file).await.map_err(|e| tr!("无法读取 {file}：{e}", "Cannot read {file}: {e}"))?;
-            Ok(DevOut::Json(devop::json_call(peer, raw, m, &params, &data, timeout).await?))
+            Ok(DevOut::Json(devop::json_call_file(peer, raw, m, &params, std::path::Path::new(file), timeout).await?))
         }
         "pull" | "screenshot" => Ok(DevOut::Bytes(devop::bytes_call(peer, raw, m, &params, timeout).await?)),
         _ => Ok(DevOut::Json(devop::json_call(peer, raw, m, &params, &[], timeout).await?)),
@@ -551,6 +615,13 @@ fn audit_json(m: &str, id: &str, q: &Value) -> Option<Value> {
             d.insert("package".into(), s("package"));
         }
         "input" | "cmd" => {
+            // 实时触控流中的高频 move 帧不逐条刷写审计文件（按下/抬起与语义动作仍完整记录）
+            if m == "input"
+                && arg_str(q, "kind") == Some("touch")
+                && q.get("action").and_then(Value::as_u64) == Some(2)
+            {
+                return None;
+            }
             d.insert("kind".into(), s("kind"));
             d.insert("name".into(), s("name"));
         }
@@ -670,37 +741,7 @@ pub(crate) async fn exec_local(app: &AppState, m: &str, p: &Value, s: &str) -> R
             DevOut::Json(if pkg.is_empty() { Value::Null } else { json!(pkg) })
         }
         "input" => {
-            let kind = arg_str(p, "kind").unwrap_or("");
-            let num = |k: &str| p.get(k).and_then(|v| v.as_f64().or_else(|| v.as_str().and_then(|x| x.trim().parse().ok()))).unwrap_or(0.0);
-            match kind {
-                "tap" => {
-                    let cmd = format!("input tap {} {}", num("x") as i64, num("y") as i64);
-                    shell_out(app, s, &cmd, Duration::from_secs(20)).await?;
-                }
-                "swipe" => {
-                    let ms = p.get("duration").and_then(|v| v.as_u64()).unwrap_or(300).clamp(20, 10_000);
-                    let cmd = format!("input swipe {} {} {} {} {ms}", num("x") as i64, num("y") as i64, num("x2") as i64, num("y2") as i64);
-                    shell_out(app, s, &cmd, Duration::from_secs(30)).await?;
-                }
-                "key" => {
-                    let key = arg_str(p, "key").ok_or_else(|| tr!("缺少 key", "Missing key"))?.to_ascii_lowercase();
-                    if key == "select_all" {
-                        shell_out(app, s, "input keycombination 113 29 2>/dev/null || input keyevent --longpress 29", Duration::from_secs(20)).await?;
-                    } else if let Some(code) = agent::key_code(&key) {
-                        shell_out(app, s, &format!("input keyevent {code}"), Duration::from_secs(20)).await?;
-                    } else {
-                        return Err(tr!("未知按键 {key}", "Unknown key {key}"));
-                    }
-                }
-                "text" => {
-                    let text = p.get("text").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                    if text.is_empty() {
-                        return Err(tr!("缺少 text", "Missing text"));
-                    }
-                    agent::paste_text(app, s, &text).await?;
-                }
-                other => return Err(tr!("未知输入类型：{other}", "Unknown input kind: {other}")),
-            }
+            exec_input(app, s, p).await?;
             DevOut::Json(json!(true))
         }
         "screenshot" => DevOut::Bytes(adb::run_bytes(adb_path, &["-s", s, "exec-out", "screencap", "-p"], Duration::from_secs(30)).await?),
@@ -763,13 +804,26 @@ pub(crate) async fn exec_local(app: &AppState, m: &str, p: &Value, s: &str) -> R
         }
         "clipboard" => match p.get("text").and_then(|v| v.as_str()) {
             Some(text) => {
+                if let Some(mr) = app.mirrors.get(s) {
+                    if mr.inject_ctl(&control::Ctl::Clipboard { text: text.to_string(), paste: false, seq: 0 }) {
+                        return Ok(DevOut::Json(json!(true)));
+                    }
+                }
                 agent::set_clipboard(app, s, text, false).await?;
                 DevOut::Json(json!(true))
             }
             None => DevOut::Json(json!(agent::get_clipboard(app, s).await?)),
         },
         "cmd" => {
-            agent::device_cmd(app, s, arg_str(p, "name").unwrap_or("")).await?;
+            let name = arg_str(p, "name").unwrap_or("");
+            if matches!(name, "notif" | "settings" | "collapse" | "rotate") {
+                if let Some(mr) = app.mirrors.get(s) {
+                    if mr.inject_ctl(&control::Ctl::Cmd { name: name.to_string() }) {
+                        return Ok(DevOut::Json(json!(true)));
+                    }
+                }
+            }
+            agent::device_cmd(app, s, name).await?;
             DevOut::Json(json!(true))
         }
         "tcpip" => {
@@ -779,6 +833,223 @@ pub(crate) async fn exec_local(app: &AppState, m: &str, p: &Value, s: &str) -> R
         other => return Err(tr!("未知方法：{other}", "Unknown method: {other}")),
     };
     Ok(out)
+}
+
+/// 执行输入与群控同步指令：若目标设备已开启共享投屏，直接走 scrcpy 控制通道实现毫秒级注入与自动分辨率换算；否则退回 adb shell input
+async fn exec_input(app: &AppState, s: &str, p: &Value) -> Result<(), String> {
+    let kind = arg_str(p, "kind").unwrap_or("");
+    let num = |k: &str| p.get(k).and_then(|v| v.as_f64().or_else(|| v.as_str().and_then(|x| x.trim().parse().ok()))).unwrap_or(0.0);
+    let sw = (num("w").round().max(0.0)) as u32;
+    let sh = (num("h").round().max(0.0)) as u32;
+
+    if let Some(mr) = app.mirrors.get(s) {
+        if let Some((mw, mh)) = mr.session_size() {
+            let (cw, ch) = if sw > 0 && sh > 0 {
+                (sw, sh)
+            } else if let Some((pw, ph_sz)) = app.plugins.screen_size(app, s).await {
+                if (mw > mh) != (pw > ph_sz) { (ph_sz, pw) } else { (pw, ph_sz) }
+            } else {
+                (mw, mh)
+            };
+            let w16 = cw.min(u16::MAX as u32) as u16;
+            let h16 = ch.min(u16::MAX as u32) as u16;
+            match kind {
+                "touch" => {
+                    let action = p.get("action").and_then(Value::as_u64).unwrap_or(0) as u8;
+                    let raw_id = p.get("id").and_then(Value::as_i64).unwrap_or(-3);
+                    let id = if raw_id == -2 { -3 } else if raw_id >= 0 { raw_id + 100 } else { raw_id };
+                    let pr = p.get("p").and_then(Value::as_f64).unwrap_or(1.0) as f32;
+                    if mr.inject_ctl(&control::Ctl::Touch { action, id, x: num("x") as i32, y: num("y") as i32, w: w16, h: h16, p: pr, buttons: 0 }) {
+                        return Ok(());
+                    }
+                }
+                "tap" => {
+                    let (x, y) = (num("x") as i32, num("y") as i32);
+                    if mr.inject_ctl(&control::Ctl::Touch { action: 0, id: -3, x, y, w: w16, h: h16, p: 1.0, buttons: 0 }) {
+                        tokio::time::sleep(Duration::from_millis(25)).await;
+                        mr.inject_ctl(&control::Ctl::Touch { action: 1, id: -3, x, y, w: w16, h: h16, p: 0.0, buttons: 0 });
+                        return Ok(());
+                    }
+                }
+                "longpress" => {
+                    let (x, y) = (num("x") as i32, num("y") as i32);
+                    let ms = p.get("duration").and_then(Value::as_u64).unwrap_or(800).clamp(60, 10_000);
+                    if mr.inject_ctl(&control::Ctl::Touch { action: 0, id: -3, x, y, w: w16, h: h16, p: 1.0, buttons: 0 }) {
+                        tokio::time::sleep(Duration::from_millis(ms)).await;
+                        mr.inject_ctl(&control::Ctl::Touch { action: 1, id: -3, x, y, w: w16, h: h16, p: 0.0, buttons: 0 });
+                        return Ok(());
+                    }
+                }
+                "swipe" => {
+                    let (x1, y1, x2, y2) = (num("x"), num("y"), num("x2"), num("y2"));
+                    let ms = p.get("duration").and_then(Value::as_u64).unwrap_or(300).clamp(20, 10_000);
+                    if (x1 - x2).abs() < 1.0 && (y1 - y2).abs() < 1.0 {
+                        let (ix, iy) = (x1 as i32, y1 as i32);
+                        if mr.inject_ctl(&control::Ctl::Touch { action: 0, id: -3, x: ix, y: iy, w: w16, h: h16, p: 1.0, buttons: 0 }) {
+                            tokio::time::sleep(Duration::from_millis(ms)).await;
+                            mr.inject_ctl(&control::Ctl::Touch { action: 1, id: -3, x: ix, y: iy, w: w16, h: h16, p: 0.0, buttons: 0 });
+                            return Ok(());
+                        }
+                    } else if mr.inject_ctl(&control::Ctl::Touch { action: 0, id: -3, x: x1 as i32, y: y1 as i32, w: w16, h: h16, p: 1.0, buttons: 0 }) {
+                        let steps = (ms / 16).clamp(4, 60);
+                        let step_dur = Duration::from_millis((ms / steps).max(4));
+                        for i in 1..steps {
+                            tokio::time::sleep(step_dur).await;
+                            let t = (i as f64) / (steps as f64);
+                            let cx = (x1 + (x2 - x1) * t).round() as i32;
+                            let cy = (y1 + (y2 - y1) * t).round() as i32;
+                            mr.inject_ctl(&control::Ctl::Touch { action: 2, id: -3, x: cx, y: cy, w: w16, h: h16, p: 1.0, buttons: 0 });
+                        }
+                        tokio::time::sleep(step_dur).await;
+                        mr.inject_ctl(&control::Ctl::Touch { action: 1, id: -3, x: x2 as i32, y: y2 as i32, w: w16, h: h16, p: 0.0, buttons: 0 });
+                        return Ok(());
+                    }
+                }
+                "scroll" => {
+                    if mr.inject_ctl(&control::Ctl::Scroll { x: num("x") as i32, y: num("y") as i32, w: w16, h: h16, hs: num("hs") as f32, vs: num("vs") as f32 }) {
+                        return Ok(());
+                    }
+                }
+                "key" => {
+                    let key_opt = arg_str(p, "key").map(str::to_ascii_lowercase);
+                    if key_opt.as_deref() != Some("select_all") {
+                        let code = p.get("code").and_then(Value::as_u64).map(|c| c as u32).or_else(|| key_opt.as_deref().and_then(agent::key_code));
+                        if let Some(code) = code {
+                            let meta = p.get("meta").and_then(Value::as_u64).unwrap_or(0) as u32;
+                            if let Some(act) = p.get("action").and_then(Value::as_u64) {
+                                if mr.inject_ctl(&control::Ctl::Key { action: act as u8, code, repeat: 0, meta }) {
+                                    return Ok(());
+                                }
+                            } else if mr.inject_ctl(&control::Ctl::Key { action: 0, code, repeat: 0, meta }) {
+                                mr.inject_ctl(&control::Ctl::Key { action: 1, code, repeat: 0, meta });
+                                return Ok(());
+                            }
+                        }
+                    }
+                }
+                "back" => {
+                    let act = p.get("action").and_then(Value::as_u64).unwrap_or(0) as u8;
+                    if mr.inject_ctl(&control::Ctl::Back { action: act }) {
+                        return Ok(());
+                    }
+                }
+                "text" => {
+                    let text = p.get("text").and_then(Value::as_str).unwrap_or("");
+                    if !text.is_empty() {
+                        let ctl = if text.is_ascii() {
+                            control::Ctl::Text { text: text.to_string() }
+                        } else {
+                            control::Ctl::Clipboard { text: text.to_string(), paste: true, seq: 0 }
+                        };
+                        if mr.inject_ctl(&ctl) {
+                            return Ok(());
+                        }
+                    }
+                }
+                "power" => {
+                    let on = p.get("on").and_then(Value::as_bool).unwrap_or(true);
+                    if mr.inject_ctl(&control::Ctl::Power { on }) {
+                        return Ok(());
+                    }
+                }
+                "cmd" => {
+                    let name = arg_str(p, "name").unwrap_or("");
+                    if matches!(name, "notif" | "settings" | "collapse" | "rotate")
+                        && mr.inject_ctl(&control::Ctl::Cmd { name: name.to_string() })
+                    {
+                        return Ok(());
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    // 未开启投屏时的后台降级路径：若调用方给出了源坐标画布 (w, h)，自动按物理屏幕尺寸换算
+    let scale_pt = |vx: f64, vy: f64, target: Option<(u32, u32)>| -> (i64, i64) {
+        if sw > 0 && sh > 0 {
+            if let Some((pw, ph_sz)) = target {
+                let (dw, dh) = if (sw > sh) != (pw > ph_sz) { (ph_sz, pw) } else { (pw, ph_sz) };
+                let nx = (vx * (dw as f64) / (sw as f64)).round().clamp(0.0, (dw.saturating_sub(1)) as f64) as i64;
+                let ny = (vy * (dh as f64) / (sh as f64)).round().clamp(0.0, (dh.saturating_sub(1)) as f64) as i64;
+                return (nx, ny);
+            }
+        }
+        (vx.round() as i64, vy.round() as i64)
+    };
+    let screen = if sw > 0 && sh > 0 && matches!(kind, "tap" | "longpress" | "swipe" | "scroll") {
+        app.plugins.screen_size(app, s).await
+    } else {
+        None
+    };
+
+    match kind {
+        "touch" => Ok(()),
+        "tap" => {
+            let (x, y) = scale_pt(num("x"), num("y"), screen);
+            shell_out(app, s, &format!("input tap {x} {y}"), Duration::from_secs(20)).await?;
+            Ok(())
+        }
+        "longpress" => {
+            let (x, y) = scale_pt(num("x"), num("y"), screen);
+            let ms = p.get("duration").and_then(Value::as_u64).unwrap_or(800).clamp(60, 10_000);
+            shell_out(app, s, &format!("input swipe {x} {y} {x} {y} {ms}"), Duration::from_secs(30)).await?;
+            Ok(())
+        }
+        "swipe" => {
+            let (x1, y1) = scale_pt(num("x"), num("y"), screen);
+            let (x2, y2) = scale_pt(num("x2"), num("y2"), screen);
+            let ms = p.get("duration").and_then(Value::as_u64).unwrap_or(300).clamp(20, 10_000);
+            shell_out(app, s, &format!("input swipe {x1} {y1} {x2} {y2} {ms}"), Duration::from_secs(30)).await?;
+            Ok(())
+        }
+        "scroll" => {
+            let (x, y) = scale_pt(num("x"), num("y"), screen);
+            let dx = (num("hs") * 120.0).round() as i64;
+            let dy = (num("vs") * 120.0).round() as i64;
+            if dx != 0 || dy != 0 {
+                shell_out(app, s, &format!("input swipe {x} {y} {} {} 120", (x + dx).max(0), (y + dy).max(0)), Duration::from_secs(20)).await?;
+            }
+            Ok(())
+        }
+        "key" => {
+            if p.get("action").and_then(Value::as_u64) == Some(1) {
+                return Ok(());
+            }
+            let key = arg_str(p, "key").unwrap_or("").to_ascii_lowercase();
+            if key == "select_all" {
+                shell_out(app, s, "input keycombination 113 29 2>/dev/null || input keyevent --longpress 29", Duration::from_secs(20)).await?;
+            } else if let Some(code) = p.get("code").and_then(Value::as_u64).map(|c| c as u32).or_else(|| (!key.is_empty()).then(|| agent::key_code(&key)).flatten()) {
+                shell_out(app, s, &format!("input keyevent {code}"), Duration::from_secs(20)).await?;
+            } else if key.is_empty() {
+                return Err(tr!("缺少 key", "Missing key"));
+            } else {
+                return Err(tr!("未知按键 {key}", "Unknown key {key}"));
+            }
+            Ok(())
+        }
+        "back" => {
+            if p.get("action").and_then(Value::as_u64).unwrap_or(0) == 0 {
+                shell_out(app, s, "input keyevent 4", Duration::from_secs(20)).await?;
+            }
+            Ok(())
+        }
+        "text" => {
+            let text = p.get("text").and_then(Value::as_str).unwrap_or("").to_string();
+            if text.is_empty() {
+                return Err(tr!("缺少 text", "Missing text"));
+            }
+            agent::paste_text(app, s, &text).await
+        }
+        "power" => {
+            let on = p.get("on").and_then(Value::as_bool).unwrap_or(true);
+            let code = if on { 224 } else { 223 };
+            shell_out(app, s, &format!("input keyevent {code}"), Duration::from_secs(20)).await?;
+            Ok(())
+        }
+        "cmd" => agent::device_cmd(app, s, arg_str(p, "name").unwrap_or("")).await,
+        other => Err(tr!("未知输入类型：{other}", "Unknown input kind: {other}")),
+    }
 }
 
 /// 安装 APK，返回能识别到的新包名（不做权限检查，也不写审计）
@@ -1091,15 +1362,25 @@ fn arg_str<'a>(p: &'a Value, k: &str) -> Option<&'a str> {
 }
 
 /// 主进程侧再检查一遍插件给的本机路径（宿主已检查过，这里防止绕过）：
-/// 必须是绝对路径、不含 `..`；插件数据目录可读写，插件目录与 `.tmp` 只读，其余需要 fs / fs.read 权限
+/// 必须是绝对路径、不含 `..`；插件数据目录可读写，插件目录、专属 `.tmp/<id>` 与用户上传文件只读，其余需要 fs / fs.read 权限
 fn local_path(app: &AppState, ph: &Plugin, path: &str, write: bool) -> Result<String, String> {
     let p = std::path::Path::new(path);
     if !p.is_absolute() || p.components().any(|c| matches!(c, std::path::Component::ParentDir)) {
         return Err(tr!("本机路径必须是绝对路径且不能包含 ..", "Local paths must be absolute and must not contain .."));
     }
     let root = app.plugins.root();
-    let own_rw = p.starts_with(root.join(".data").join(&ph.id));
-    let own_ro = p.starts_with(&ph.dir) || p.starts_with(root.join(".tmp"));
+    let data_dir = root.join(".data").join(&ph.id);
+    if write && p.starts_with(&ph.dir) && !p.starts_with(&data_dir) {
+        return Err(tr!("插件目录是只读的", "Plugin directory is read-only"));
+    }
+    let canon = crate::plugin_host::local::within_canonical;
+    let own_rw = p.starts_with(&data_dir) && canon(p, &data_dir);
+    let my_tmp = root.join(".tmp").join(&ph.id);
+    let up_dir = root.join(".tmp").join("uploads");
+    let own_ro = !write
+        && ((p.starts_with(&ph.dir) && (!p.exists() || canon(p, &ph.dir)))
+            || (p.starts_with(&my_tmp) && (!p.exists() || canon(p, &my_tmp)))
+            || (p.parent() == Some(up_dir.as_path()) && p.is_file() && canon(p, &up_dir)));
     let ok = if write { own_rw || ph.has_perm("fs") } else { own_rw || own_ro || ph.has_perm("fs.read") };
     if !ok {
         let need = if write { "fs" } else { "fs.read" };

@@ -10,7 +10,6 @@
 use super::calls::{exec_local, DevOut};
 use super::*;
 use crate::{peers, util};
-use axum::body::Bytes;
 use axum::extract::{ConnectInfo, Query, State};
 use axum::http::{header, HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
@@ -33,7 +32,7 @@ pub async fn plugins_devop(
     Query(q): Query<HashMap<String, String>>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
-    body: Bytes,
+    body: axum::body::Body,
 ) -> Response {
     let op = q.get("op").map(String::as_str).unwrap_or("").to_string();
     let serial = q.get("serial").map(String::as_str).unwrap_or("").trim().to_string();
@@ -56,17 +55,16 @@ pub async fn plugins_devop(
     };
     let mut params = params;
 
-    // push / install 的文件内容先写到 `.tmp`，用完删除
+    // push / install 的文件内容流式写到 `.tmp`，用完删除（避免大 APK 整包缓冲进内存）
     let mut tmp: Option<PathBuf> = None;
     if matches!(op.as_str(), "push" | "install") {
-        if body.is_empty() {
-            return err(StatusCode::BAD_REQUEST, tr!("缺少文件内容", "Missing file content"));
-        }
         let dir = st.plugins.root().join(".tmp");
         let _ = tokio::fs::create_dir_all(&dir).await;
         let path = dir.join(format!("devop-{:08x}", util::random_scid()));
-        if let Err(e) = tokio::fs::write(&path, &body).await {
-            return err(StatusCode::INTERNAL_SERVER_ERROR, tr!("保存文件失败：{e}", "Failed to save the file: {e}"));
+        match peers::save_body_to_file(body, &path).await {
+            Ok(0) => return err(StatusCode::BAD_REQUEST, tr!("缺少文件内容", "Missing file content")),
+            Ok(_) => {}
+            Err(e) => return err(StatusCode::INTERNAL_SERVER_ERROR, e),
         }
         let file = path.to_string_lossy().to_string();
         params[if op == "push" { "local" } else { "path" }] = json!(file);
@@ -77,16 +75,21 @@ pub async fn plugins_devop(
     if let Some(p) = &tmp {
         let _ = tokio::fs::remove_file(p).await;
     }
-    st.plugins.audit(
-        "devop",
-        &op,
-        json!({
-            "serial": serial,
-            "from": addr.ip().to_canonical().to_string(),
-            "ok": r.is_ok(),
-            "detail": audit_detail(&op, &params),
-        }),
-    );
+    let is_touch_move = op == "input"
+        && params.get("kind").and_then(Value::as_str) == Some("touch")
+        && params.get("action").and_then(Value::as_u64) == Some(2);
+    if !is_touch_move {
+        st.plugins.audit(
+            "devop",
+            &op,
+            json!({
+                "serial": serial,
+                "from": addr.ip().to_canonical().to_string(),
+                "ok": r.is_ok(),
+                "detail": audit_detail(&op, &params),
+            }),
+        );
+    }
     match r {
         Ok(DevOut::Json(v)) => Json(json!({"ok": v})).into_response(),
         Ok(DevOut::Bytes(b)) => ([(header::CONTENT_TYPE, "application/octet-stream")], b).into_response(),
@@ -176,6 +179,25 @@ pub(crate) async fn json_call(
     timeout: Duration,
 ) -> Result<Value, String> {
     let (code, _ct, reply) = call(peer, raw, op, p, body, timeout).await?;
+    Ok(parse_reply(peer, code, &reply)?.get("ok").cloned().unwrap_or(Value::Null))
+}
+
+/// 发起带本机文件体的流式 devop 请求并取 `ok` 的值（不把文件读进内存）
+pub(crate) async fn json_call_file(
+    peer: &peers::Peer,
+    raw: &str,
+    op: &str,
+    p: &Value,
+    file_path: &std::path::Path,
+    timeout: Duration,
+) -> Result<Value, String> {
+    let params = serde_json::to_string(p).map_err(|e| e.to_string())?;
+    let hdr = util::url_encode(&params);
+    if hdr.len() > 6000 {
+        return Err(tr!("参数过长，无法转发给远程电脑", "The parameters are too long to forward to the remote computer"));
+    }
+    let path = format!("/api/plugins/devop?op={}&serial={}", util::url_encode(op), util::url_encode(raw));
+    let (code, _ct, reply) = peers::send_file_ex(peer, "POST", &path, &[("X-Devop", hdr.as_str())], file_path, timeout).await?;
     Ok(parse_reply(peer, code, &reply)?.get("ok").cloned().unwrap_or(Value::Null))
 }
 
