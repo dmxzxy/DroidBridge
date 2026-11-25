@@ -25,6 +25,27 @@ pub struct Manifest {
     /// 需要的最低 DroidBridge 版本
     #[serde(rename = "minHost")]
     pub min_host: String,
+    /// 英文界面下显示的名称与说明（可省略）
+    pub en: Localized,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Localized {
+    pub name: String,
+    pub description: String,
+}
+
+impl Manifest {
+    /// 按当前界面语言显示的名称
+    pub fn display_name(&self) -> &str {
+        if crate::i18n::is_en() && !self.en.name.is_empty() { &self.en.name } else { &self.name }
+    }
+
+    /// 按当前界面语言显示的说明
+    pub fn display_description(&self) -> &str {
+        if crate::i18n::is_en() && !self.en.description.is_empty() { &self.en.description } else { &self.description }
+    }
 }
 
 impl Default for Manifest {
@@ -41,6 +62,7 @@ impl Default for Manifest {
             settings: Vec::new(),
             embed: Vec::new(),
             min_host: String::new(),
+            en: Localized::default(),
         }
     }
 }

@@ -152,7 +152,7 @@ const check = (l, ok, d) => { console.log((ok ? '✓ ' : '✗ ') + l + (d ? '  '
   await send('Page.navigate', { url: 'http://127.0.0.1:8892/?s=desk&lang=zh' });
   await waitReady();
   items = await rmenu('.dev.open');
-  check('已投屏的设备：关闭投屏/应用/文件/复制序列号', items === '关闭投屏/应用管理…/文件管理…/复制序列号', items);
+  check('已投屏的设备：关闭投屏/应用/文件/备注名/复制序列号', items === '关闭投屏/应用管理…/文件管理…/设置备注名…/复制序列号', items);
   check('右键时高亮该行', (await ev(`!!document.querySelector('.dev.ctx-on')`)) === true);
   // 关掉一个投屏，再右键它
   await ev(`closeMenu(); [...viewers.values()][0].close(); 1`);
@@ -160,7 +160,7 @@ const check = (l, ok, d) => { console.log((ok ? '✓ ' : '✗ ') + l + (d ? '  '
   items = await rmenu('.dev:not(.open):not(.na)');
   check('未投屏的设备：开始投屏', items.startsWith('开始投屏/'), items);
   items = await rmenu('.dev.na');
-  check('离线 / 未授权设备：只有复制序列号', items === '复制序列号', items);
+  check('离线 / 未授权设备：只有备注名和复制序列号', items === '设置备注名…/复制序列号', items);
   items = await rmenu('.host:not(.local)');
   check('远程电脑：与⋯菜单相同并可复制地址', items.includes('编辑') && items.includes('复制地址') && items.includes('移除'), items);
   await ev(`document.querySelectorAll('dialog[open]').forEach(d => d.close()); closeMenu(); peerDialog(); 1`);
@@ -176,7 +176,7 @@ const check = (l, ok, d) => { console.log((ok ? '✓ ' : '✗ ') + l + (d ? '  '
   for (let i = 0; i < 20 && !(await ev(`!!document.querySelector('dialog.apps .app')`)); i++) await sleep(250);
   await rclick(...Object.values(JSON.parse(await ev(`JSON.stringify((() => { const r = document.querySelector('dialog.apps .app').getBoundingClientRect(); return { x: r.left + 60, y: r.top + r.height / 2 }; })())`))));
   items = await menuItems();
-  check('应用列表：启动/强制停止/…/复制包名', items.startsWith('启动/强制停止') && items.endsWith('复制包名'), items);
+  check('应用列表：启动/置顶/强制停止/…/复制包名', items.startsWith('启动/置顶/强制停止') && items.endsWith('复制包名'), items);
   await ev(`document.querySelectorAll('dialog[open]').forEach(d => d.close()); closeMenu(); filesDialog(hosts.get('local'), __DEV.local[0]); 1`);
   for (let i = 0; i < 20 && !(await ev(`!!document.querySelector('dialog.files .fb-row:not(.dir)')`)); i++) await sleep(200);
   await rclick(...Object.values(JSON.parse(await ev(`JSON.stringify((() => { const r = [...document.querySelectorAll('dialog.files .fb-row')].find(x => !x.classList.contains('dir')).getBoundingClientRect(); return { x: r.left + 80, y: r.top + r.height / 2 }; })())`))));

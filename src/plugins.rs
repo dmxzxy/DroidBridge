@@ -875,9 +875,9 @@ impl Plugins {
                 let man = ph.manifest();
                 let mut v = json!({
                     "id": ph.id,
-                    "name": man.name,
+                    "name": man.display_name(),
                     "version": man.version,
-                    "description": man.description,
+                    "description": man.display_description(),
                     "author": man.author,
                     "dir": ph.dir.to_string_lossy(),
                     "kind": if self.is_builtin(ph) { "builtin" }
@@ -1535,7 +1535,7 @@ async fn watch_files(st: &Arc<AppState>, fingerprint: &mut HashMap<PathBuf, u64>
         }
         if ph.host().is_some() {
             st.plugins.reload(st, &ph);
-            let name = ph.manifest().name.clone();
+            let name = ph.manifest().display_name().to_string();
             st.plugins.toast(&ph.id, tr!("{name} 已重新加载", "{name} reloaded"), "info");
         } else {
             st.plugins.start(st, &ph);

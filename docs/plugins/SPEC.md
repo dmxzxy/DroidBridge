@@ -21,6 +21,7 @@
   "description": "",
   "author": "",
   "main": "main.lua",            // 默认 main.lua
+  "en": { "name": "MyGame Tools", "description": "" }, // 可选，英文界面下显示的名称与说明
   "permissions": ["device.shell", "exec"],
   "match": { "apps": ["com.my.game"], "models": ["Pixel*"], "serials": ["*"] }, // 可选，限定插件能看到的设备；各项为 OR 内的 glob 列表，多项之间 AND
   "settings": [

@@ -17,7 +17,7 @@ See and control Android devices from your computer — not only the ones plugged
 - **App manager** — list installed apps; launch, force stop, clear data, uninstall
 - **Files** — fast storage browser next to the screen or in its own window: thumbnails, preview, multi-select, upload, download, rename, delete, install APKs
 - **Shared viewing** — several people can watch the same device at once over a single mirroring session; everyone sees who is watching and who is in control, and only one person operates at a time
-- **Batch install & group control** — install one APK on many devices at once; mirror taps and keys on several devices
+- **Batch install & sync input** — install one APK on many devices at once; mirror your input on one device to several others
 - **AI agents (MCP)** — let Claude Code, Cursor and other MCP clients read the screen and operate any device; you watch every action live and can pause the AI
 - **Plugins (Lua)** — build project-specific tools: menu items for devices, apps and files, panels next to the screen (including embedded web pages of your own tools), drawings on the mirrored screen, status items, performance metrics, log highlights, AI tools and long-running helper processes; plugins run in separate processes, so a broken plugin cannot take the app down. Teams can publish plugins as a plugin source that everyone installs and updates from Settings, with an update dot on the settings button and optional auto updates ([docs/plugins/SOURCES.md](docs/plugins/SOURCES.md)). See [docs/plugins/README.md](docs/plugins/README.md) (Chinese)
 - **Install APKs / send files** — drop them onto a device screen
@@ -147,10 +147,10 @@ Click the **folder** icon in a device window's side toolbar to open the file bro
 
 Only shared storage (`/sdcard`, `/storage/emulated/0`) is reachable; paths are validated on the server. Uploads are written to a temporary name and renamed when complete.
 
-### Batch install and group control
+### Batch install and sync input
 
 - **Install on many devices**: click the package icon at the top of the sidebar (or drop an APK onto an empty part of the window), pick the devices — on this computer and on remote computers — and install. Up to 4 devices install at a time; each row shows its result, and failed devices can be retried. Some phones (OPPO, vivo, Xiaomi…) ask for confirmation on the device; the row shows "Confirm on the device…".
-- **Group control**: with two or more devices open, click the link icon in each device's title bar. Taps, swipes, scrolling, keys and typed text on any grouped device are sent to all grouped devices; coordinates are scaled to each device's resolution, so devices with the same aspect ratio line up best.
+- **Sync input**: with two or more devices open, click the link icon in each device's title bar (devices on this computer and on remote computers both work). Taps, drags, scrolling, keys, typing and pasting on any synced device are replayed in order on the others, with a ripple where the touch lands; coordinates are scaled to each device's resolution, so devices with the same aspect ratio line up best. It is a built-in plugin that can be turned off in Settings → Plugins.
 
 ### Browser access
 
@@ -294,7 +294,7 @@ web/js/             UI code, split by area (classic scripts sharing one global s
                     api: backend calls / 后端调用
                     devices: computers, devices, sidebar / 电脑、设备、侧栏
                     peers: remote computers, wireless, settings, help / 远程电脑、无线、设置、帮助
-                    viewer: mirroring, control, recording, perf overlay, group control / 投屏与控制
+                    viewer: mirroring, control, recording, perf overlay / 投屏与控制
                     logcat: log panel / 日志面板
                     audio: sound playback / 声音
                     gallery: screenshots and recordings / 相册

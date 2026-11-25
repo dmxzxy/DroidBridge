@@ -1753,7 +1753,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// 群控：连在一组的设备，一台上的按下 / 移动 / 抬起按顺序同步到正在投屏的远程设备，并在它的画面上显示扩散圈
+    /// 同步操作：连在一组的设备，一台上的按下 / 移动 / 抬起按顺序同步到正在投屏的远程设备，并在它的画面上显示扩散圈
     #[tokio::test]
     async fn linked_devices_relay_full_gestures_to_remote_mirror() {
         let dir = std::env::temp_dir().join(format!("droidbridge-link-{:08x}", util::random_scid()));

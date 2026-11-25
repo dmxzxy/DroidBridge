@@ -27,7 +27,7 @@ DroidBridge 的插件用 **Lua 5.4** 编写：一个文件夹里放 `plugin.json
 
 ### 内置插件
 
-程序自带的插件（目前是 **群控** `group-control`）每次启动都会写进插件目录，默认启用。它们可以在列表里停用，但不能删除，也不能被插件源里同 id 的插件覆盖；改动或删掉它的文件，下次加载会恢复成程序自带的版本。插件列表里用锁图标标出。
+程序自带的插件（目前是 **同步操作** `group-control`）每次启动都会写进插件目录，默认启用。它们可以在列表里停用，但不能删除，也不能被插件源里同 id 的插件覆盖；改动或删掉它的文件，下次加载会恢复成程序自带的版本。插件列表里用锁图标标出。
 
 ### 第一个插件
 
@@ -96,6 +96,7 @@ end })
 | `permissions` | 否 | 权限列表，见下一节。不写表示只需要“基础能力” |
 | `match` | 否 | 限定插件能看到的设备，见下 |
 | `settings` | 否 | 设置项 schema，界面会据此生成表单 |
+| `en` | 否 | 英文界面下的名称和说明：`{ "name": "...", "description": "..." }`，不写就用 `name` / `description` |
 | `minHost` | 否 | 需要的最低 DroidBridge 版本（如 `0.9.4`）。本机版本更低时插件不启动，列表里显示「需要 DroidBridge 0.9.4」 |
 
 ### `match`：限制插件能看到哪些设备
@@ -254,7 +255,7 @@ dev:rename("/sdcard/a.txt", "b.txt")     -- 返回新路径
 dev:remove("/sdcard/b.txt")              -- 或 dev:remove({ "/sdcard/x", "/sdcard/y" })
 ```
 
-输入、群控同步与系统操作（`device.input`）：
+输入、多设备同步与系统操作（`device.input`）：
 
 ```lua
 dev:tap(540, 1200, { w = 1080, h = 2400 })               -- 可选 {w, h}：按比例自动换算到目标设备分辨率
@@ -326,7 +327,7 @@ item:remove()
 - `toolbar` 菜单项加 `pin = true` 时不进拼图菜单，直接作为图标按钮放在投屏卡片的标题栏里；`on` 给出按钮处于开启状态的设备 serial 列表（这些卡片的边框会高亮）。状态变了就用同一个 `id` 再调用一次 `db.menu` 更新：
 
 ```lua
-db.menu("toolbar", "群控", { id = "toggle", icon = "link", pin = true, on = { "R5CT10ABCDE" } }, function(dev) end)
+db.menu("toolbar", "同步操作", { id = "toggle", icon = "link", pin = true, on = { "R5CT10ABCDE" } }, function(dev) end)
 ```
 
 面板：
@@ -492,7 +493,7 @@ end)
 db.on("device.connected", function(dev) db.log("接入 " .. dev.serial) end)
 db.on("device.disconnected", function(dev) end)
 db.on("app.foreground", function(dev, pkg) end)   -- 需要 device.apps
-db.on("device.action", function(dev, act) end)    -- 需要 device.observe：投屏人工操作的语义动作（tap/longpress/swipe/scroll/key/text/cmd/power），适合群控同步与脚本录制
+db.on("device.action", function(dev, act) end)    -- 需要 device.observe：投屏人工操作的语义动作（tap/longpress/swipe/scroll/key/text/cmd/power），适合多设备同步与脚本录制
 db.on("device.input", function(dev, raw) end)     -- 需要 device.observe：投屏人工操作的 60Hz 原始控制流（touch/scroll/key/back/text/clipboard/power/cmd），适合毫秒级实时跟手
 db.on("app.installed", function(dev, pkg) end)
 db.on("app.uninstalled", function(dev, pkg) end)   -- 应用管理或插件卸载后

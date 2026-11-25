@@ -896,19 +896,19 @@ fn builtin_group_control_plugin() {
     let mut h = Harness::new("builtin-gc", include_str!("../builtin/group-control/main.lua"), HostConfig::default());
     let last_toggle = |h: &Harness| -> J {
         let out = h.out.borrow();
-        out.iter().rev().find(|v| v["m"] == "register" && v["p"]["def"]["id"] == "toggle").cloned().expect("应注册群控按钮")
+        out.iter().rev().find(|v| v["m"] == "register" && v["p"]["def"]["id"] == "toggle").cloned().expect("应注册同步按钮")
     };
     assert_eq!(last_toggle(&h)["p"]["def"]["pin"], json!(true));
 
     // 只有一台时提示再加一台；两台后按钮在两台上都是开启状态，状态栏显示人数
     let r = h.req("menu", json!({"id": "toggle", "ctx": {"serial": "S1"}}));
-    assert_eq!(r["ok"], json!("再给至少一台设备打开群控"));
+    assert_eq!(r["ok"], json!("再给至少一台设备打开同步"));
     h.req("menu", json!({"id": "toggle", "ctx": {"serial": "p1/S2"}}));
     assert_eq!(last_toggle(&h)["p"]["def"]["on"], json!(["S1", "p1/S2"]));
     {
         let out = h.out.borrow();
         let st = out.iter().rev().find(|v| v["m"] == "register" && v["p"]["kind"] == "status").unwrap();
-        assert_eq!(st["p"]["def"]["text"], json!("群控 2"));
+        assert_eq!(st["p"]["def"]["text"], json!("同步 2"));
     }
 
     // 分组交给主程序同步

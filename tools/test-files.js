@@ -67,10 +67,10 @@ const check = (l, ok, d) => { console.log((ok ? '✓ ' : '✗ ') + l + (d !== un
   // 后退（缓存：立即显示）
   await ev(`[...viewers.values()][0].files.back(); 1`);
   check('后退立即显示（缓存）', (await rows('.vlog .fb')).includes('Camera'), await rows('.vlog .fb'));
-  // 打开日志会替换文件面板
+  // 打开日志时切到日志，文件面板留在后台（保留状态）
   await ev(`[...viewers.values()][0].logBtn.click(); 1`);
   await sleep(300);
-  check('打开日志后文件面板关闭（侧栏只放一个）', (await ev(`!document.querySelector('.vlog .fb') && !!document.querySelector('.vlog .lpanel') && !viewers.values().next().value.filesBtn.classList.contains('on')`)) === true);
+  check('打开日志后切到日志，文件面板转到后台', (await ev(`(() => { const v = viewers.values().next().value; return !!document.querySelector('.vlog .lpanel') && v.filesWrap.hidden && !v.filesBtn.classList.contains('on') && v.filesBtn.classList.contains('bg'); })()`)) === true);
   await ev(`[...viewers.values()][0].filesBtn.click(); 1`);
   await sleep(500);
   check('再打开文件面板记住上次的位置', (await ev(`document.querySelector('.vlog .fb-crumbs').innerText.replace(/\\s+/g, '')`)) === '存储›DCIM');

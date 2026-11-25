@@ -127,7 +127,7 @@ pub(super) async fn supervise(app: Arc<AppState>, ph: Arc<Plugin>) {
                 };
                 if n >= 3 {
                     app.plugins.set_state(&ph, PluginState::Failed, Some(reason));
-                    let name = ph.manifest().name.clone();
+                    let name = ph.manifest().display_name().to_string();
                     app.plugins.toast(&ph.id, tr!("插件 {name} 反复崩溃，已停止", "Plugin {name} keeps crashing and was stopped"), "error");
                     ph.spawned.store(false, Ordering::SeqCst);
                     return;
