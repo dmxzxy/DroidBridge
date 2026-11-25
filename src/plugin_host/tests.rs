@@ -911,24 +911,29 @@ fn builtin_group_control_plugin() {
         assert_eq!(st["p"]["def"]["text"], json!("群控 2"));
     }
 
-    // 群控设备上的触控转发给其他群控设备，并在从机上画落点
-    h.take();
-    h.req("event", json!({"name": "device.input", "args": [{"serial": "S1"}, {"t": "touch", "action": 0, "id": -1, "x": 100, "y": 200, "w": 1080, "h": 2400, "p": 1.0}]}));
+    // 分组交给主程序同步
     {
         let out = h.out.borrow();
-        let bc = out.iter().find(|v| v["m"] == "broadcast").expect("应转发");
-        assert_eq!(bc["p"]["serials"], json!(["p1/S2"]));
-        assert_eq!((bc["p"]["ev"]["kind"].clone(), bc["p"]["ev"]["x"].clone()), (json!("touch"), json!(100)));
+        let link = out.iter().rev().find(|v| v["m"] == "link").expect("应调用 link");
+        assert_eq!(link["p"]["serials"], json!(["S1", "p1/S2"]));
+    }
+
+    // 群控设备上的点击在从机上画落点；不在组里的设备不画
+    h.take();
+    h.req("event", json!({"name": "device.action", "args": [{"serial": "S3"}, {"kind": "tap", "x": 1, "y": 2, "w": 1080, "h": 2400}]}));
+    assert!(!h.out.borrow().iter().any(|v| v["m"] == "overlay"));
+    h.req("event", json!({"name": "device.action", "args": [{"serial": "S1"}, {"kind": "tap", "x": 100, "y": 200, "w": 1080, "h": 2400}]}));
+    {
+        let out = h.out.borrow();
         let ov = out.iter().find(|v| v["m"] == "overlay").expect("应画落点");
         assert_eq!(ov["p"]["serial"], json!("p1/S2"));
     }
 
-    // 不在群控里的设备不转发；退出后不再转发
-    h.take();
-    h.req("event", json!({"name": "device.input", "args": [{"serial": "S3"}, {"t": "key", "action": 0, "code": 4}]}));
+    // 退出后分组只剩一台
     h.req("menu", json!({"id": "toggle", "ctx": {"serial": "S1"}}));
-    h.req("event", json!({"name": "device.input", "args": [{"serial": "p1/S2"}, {"t": "key", "action": 0, "code": 4}]}));
-    assert!(!h.out.borrow().iter().any(|v| v["m"] == "broadcast"), "{:?}", h.out.borrow());
+    let out = h.out.borrow();
+    let link = out.iter().rev().find(|v| v["m"] == "link").unwrap();
+    assert_eq!(link["p"]["serials"], json!(["p1/S2"]));
 }
 
 #[test]

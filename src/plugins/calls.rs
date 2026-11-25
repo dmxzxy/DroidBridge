@@ -35,6 +35,22 @@ pub(super) fn dispatch(app: Arc<AppState>, ph: Arc<Plugin>, id: u64, m: String, 
     });
 }
 
+/// `db.link` 同步到远程设备：按顺序逐条转发
+pub(super) fn relay_worker(app: Arc<AppState>, ph: &Arc<Plugin>) -> mpsc::Sender<(String, Value)> {
+    let (tx, mut rx) = mpsc::channel::<(String, Value)>(512);
+    let weak = Arc::downgrade(ph);
+    tokio::spawn(async move {
+        while let Some((serial, mut q)) = rx.recv().await {
+            let Some(ph) = weak.upgrade() else { break };
+            if let Some(o) = q.as_object_mut() {
+                o.insert("serial".into(), json!(serial));
+            }
+            let _ = device_op(&app, &ph, "input", &q, &serial).await;
+        }
+    });
+    tx
+}
+
 /// 需要设备参数的方法（先做权限与 match 检查，再占用并发名额）
 fn is_device_method(m: &str) -> bool {
     matches!(
@@ -99,6 +115,18 @@ async fn handle(app: &Arc<AppState>, ph: &Arc<Plugin>, m: &str, p: &Value) -> Re
         return device_op(app, ph, m, p, &serial).await;
     }
     match m {
+        "link" => {
+            need(ph, "device.input")?;
+            let mut list: Vec<String> = Vec::new();
+            for item in p.get("serials").and_then(Value::as_array).cloned().unwrap_or_default() {
+                let Some(s) = item.as_str().map(str::trim).filter(|s| !s.is_empty()) else { continue };
+                if !list.iter().any(|x| x == s) && app.plugins.device_allowed(app, ph, s).await {
+                    list.push(s.to_string());
+                }
+            }
+            *ph.link.lock().unwrap() = list.clone();
+            return Ok(json!(list));
+        }
         "broadcast" => {
             need(ph, "device.input")?;
             let ev = p.get("ev").filter(|v| v.is_object()).cloned().ok_or_else(|| tr!("缺少 ev", "Missing ev"))?;

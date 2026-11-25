@@ -1732,11 +1732,14 @@ function pluginViewerUpdate(v) {
   const panels = pluginPanelsFor(devId, 'device');
   const menus = pluginToolbarEntries(devId, false);
   if (v.plugPins) {
+    let anyOn = false;
     v.plugPins.replaceChildren(...pluginToolbarEntries(devId, true).map((e) => {
       const on = Array.isArray(e.on) && e.on.includes(devId);
+      anyOn = anyOn || on;
       const label = String(e.path || e.id).split('/').pop();
       return ib(pluginIcon(e.icon), label, () => pluginInvoke({ plugin: e.plugin, kind: 'menu', id: e.id, ctx: { serial: devId } }), on ? 'on' : '');
     }));
+    v.root.classList.toggle('pin-on', anyOn);
   }
   v.plugBtn.hidden = !(panels.length || menus.length);
   if (v.plugBtn.hidden) pluginDockClose(v);

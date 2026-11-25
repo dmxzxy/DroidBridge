@@ -321,6 +321,32 @@ fn input_worker(st: Arc<AppState>, ph: &Arc<Plugin>) -> mpsc::Sender<InputJob> {
     tx
 }
 
+/// 可以同步到其他设备的人工操作
+fn relayable(ctl: &control::Ctl) -> bool {
+    use control::Ctl::*;
+    match ctl {
+        Touch { .. } | Scroll { .. } | Key { .. } | Back { .. } | Text { .. } | Clipboard { .. } | Power { .. } => true,
+        Cmd { name } => name != "reset_video",
+        _ => false,
+    }
+}
+
+/// 人工操作转成插件 `input` 调用的参数（转发到远程设备用）
+fn input_json(ctl: &control::Ctl) -> Option<Value> {
+    use control::Ctl::*;
+    Some(match ctl {
+        Touch { action, id, x, y, w, h, p, .. } => json!({"kind": "touch", "action": action, "id": id, "x": x, "y": y, "w": w, "h": h, "p": p}),
+        Scroll { x, y, w, h, hs, vs } => json!({"kind": "scroll", "x": x, "y": y, "w": w, "h": h, "hs": hs, "vs": vs}),
+        Key { action, code, meta, .. } => json!({"kind": "key", "action": action, "code": code, "meta": meta}),
+        Back { action } => json!({"kind": "back", "action": action}),
+        Text { text } => json!({"kind": "text", "text": text}),
+        Clipboard { text, paste: true, .. } if !text.is_empty() => json!({"kind": "text", "text": text}),
+        Power { on } => json!({"kind": "power", "on": on}),
+        Cmd { name } if name != "reset_video" => json!({"kind": "cmd", "name": name}),
+        _ => return None,
+    })
+}
+
 /// 解析 `wm size` 输出的屏幕宽高（优先取最后一行的 Override size）
 pub(crate) fn parse_wm_size(out: &str) -> Option<(u32, u32)> {
     let mut found = None;
@@ -360,6 +386,10 @@ pub(crate) struct Plugin {
     move_rate: Mutex<Rate>,
     /// 投屏输入事件的有序派发队列（首次需要时创建）
     input_q: Mutex<Option<mpsc::Sender<InputJob>>>,
+    /// `db.link` 连在一起的设备：其中一台的人工操作由主程序直接同步到其他几台
+    pub(crate) link: Mutex<Vec<String>>,
+    /// 同步到远程设备的有序转发队列
+    relay_q: Mutex<Option<mpsc::Sender<(String, Value)>>>,
     crashes: Mutex<Vec<Instant>>,
     pub forwards: Mutex<Vec<Forward>>,
 }
@@ -384,6 +414,8 @@ impl Plugin {
             rate: Mutex::new(Rate::new(500.0)),
             move_rate: Mutex::new(Rate::new(MOVE_PER_SEC)),
             input_q: Mutex::new(None),
+            link: Mutex::new(Vec::new()),
+            relay_q: Mutex::new(None),
             crashes: Mutex::new(Vec::new()),
             forwards: Mutex::new(Vec::new()),
         }
@@ -754,6 +786,7 @@ impl Plugins {
 
     /// 用户在投屏窗口操作某台设备（含本机与远程投屏）：向订阅了 `device.input` / `device.action` 且拥有 `device.observe` 权限的插件派发事件
     pub(crate) fn on_user_ctl(&self, st: &Arc<AppState>, dev_id: &str, ctl: &control::Ctl, session: Option<(u32, u32)>) {
+        self.relay_linked(st, dev_id, ctl);
         let subs: Vec<Arc<Plugin>> = self
             .plugins()
             .into_iter()
@@ -792,6 +825,35 @@ impl Plugins {
             let tx = q.get_or_insert_with(|| input_worker(st.clone(), &ph));
             // 队列满说明插件处理不过来，丢弃这一帧
             let _ = tx.try_send(job);
+        }
+    }
+
+    /// 把一台设备上的人工操作按到达顺序同步到 `db.link` 同组的其他设备：本机投屏中的设备直接注入，其余经有序队列转发
+    fn relay_linked(&self, st: &Arc<AppState>, dev_id: &str, ctl: &control::Ctl) {
+        if !relayable(ctl) {
+            return;
+        }
+        for ph in self.plugins() {
+            let targets: Vec<String> = {
+                let l = ph.link.lock().unwrap();
+                if l.len() < 2 || !l.iter().any(|s| s == dev_id) {
+                    continue;
+                }
+                l.iter().filter(|s| *s != dev_id).cloned().collect()
+            };
+            if ph.state() != PluginState::Running || !ph.has_perm("device.input") {
+                continue;
+            }
+            for t in targets {
+                if split_dev(&t).is_none() && st.mirrors.get(&t).is_some_and(|mr| mr.inject_ctl(ctl)) {
+                    continue;
+                }
+                if let Some(ev) = input_json(ctl) {
+                    let mut q = ph.relay_q.lock().unwrap();
+                    let tx = q.get_or_insert_with(|| calls::relay_worker(st.clone(), &ph));
+                    let _ = tx.try_send((t, ev));
+                }
+            }
         }
     }
 
@@ -1262,6 +1324,7 @@ fn now_ms() -> u64 {
 
 /// 通知宿主停止（不等待）
 fn stop_host(ph: &Plugin) {
+    ph.link.lock().unwrap().clear();
     if let Some(h) = ph.host() {
         h.control(host::HostCmd::Stop);
     }

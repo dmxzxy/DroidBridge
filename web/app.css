@@ -229,6 +229,7 @@ main{flex:1;min-width:0;min-height:calc(100vh - var(--sb-h));padding:12px 16px 1
 .vtools{width:44px;flex:none;display:flex;flex-direction:column;align-items:center;gap:2px;padding:6px 0;border-left:1px solid var(--line)}
 .vtools .sep{width:18px;height:1px;margin:5px 0;background:var(--line)}
 .plug-pins{display:contents}
+.viewer.pin-on{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
 .viewer:fullscreen{width:100vw !important;border:0;border-radius:0;background:#000;justify-content:center}
 .viewer:fullscreen .vhead,.viewer:fullscreen .vtools,.viewer:fullscreen .typing{display:none}
 .viewer:fullscreen .vbody,.viewer:fullscreen .vcol,.viewer:fullscreen .screen{flex:1}

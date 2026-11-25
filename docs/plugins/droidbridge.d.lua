@@ -521,6 +521,7 @@ function DbJson.decode(s) end
 ---@field spawn fun(fn: fun(...), ...): nil 新协程，立即返回
 ---@field parallel fun(items: any[], fn: fun(item: any, idx: integer): any): table, table|nil 并发在独立协程中执行每一项，等待全部完成后返回 results, errs
 ---@field broadcast fun(devs: (DbDevice|string)[], ev: table): { ok: integer, failed: table<string, string> } 并发向多台设备广播输入事件（device.input）
+---@field link fun(devs: (DbDevice|string)[]): string[] 把设备连成一组，用户在其中一台的投屏操作由主程序按顺序同步到其他几台；传空表解除（device.input）
 ---@field wait fun(sec: number) 等待（只能在协程里）
 ---@field every fun(sec: number, fn: fun()): DbTimer
 ---@field after fun(sec: number, fn: fun()): DbTimer

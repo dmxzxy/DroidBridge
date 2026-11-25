@@ -945,6 +945,14 @@ function db.spawn(fn, ...)
 end
 
 --- 向多台设备（dev 对象或 serial 字符串列表）并发广播同一个输入事件（device.action 或 device.input）
+function db.link(devs)
+  local serials = {}
+  for _, d in ipairs(devs or {}) do
+    local s = type(d) == "table" and d.serial or (type(d) == "string" and d or nil)
+    if s and s ~= "" then serials[#serials + 1] = s end
+  end
+  return call("link", { serials = serials }) or {}
+end
 function db.broadcast(devs, ev)
   if type(devs) ~= "table" then error("db.broadcast: 需要设备列表", 2) end
   local q = normalize_input_ev(ev)

@@ -263,6 +263,7 @@ dev:swipe(100, 1600, 100, 400, 300, { w = 1080, h = 2400 })
 dev:touch("down", 540, 1200, { id = 1, w = 1080, h = 2400, p = 1.0 })  -- down / move / up / cancel（已开投屏时毫秒级跟手）
 dev:scroll(540, 1200, 0, -2, { w = 1080, h = 2400 })     -- 滚轮滚动
 dev:send(ev)                                             -- 直接转发 device.action 或 device.input 事件表
+db.link({ dev1, "S2", "pc1/S3" })                      -- 把这些设备连成一组：用户在其中一台投屏里的操作由主程序按顺序直接同步到其他几台（不经过 Lua，适合实时群控）；db.link({}) 解除，插件停止时自动解除
 db.broadcast({ dev2, dev3 }, ev)                         -- 并发广播输入事件到多台本机/远程设备 -> {ok, failed}
 dev:setClipboard("文字")                                 -- 写设备剪贴板（不粘贴）
 local s = dev:getClipboard()
@@ -322,7 +323,7 @@ item:remove()
 - `filter`：`hasApp`（布尔）、`models`、`serials`（glob 列表）由主程序按设备判断；`packages`（glob 列表，匹配包名）、`ext`（glob 列表，匹配扩展名）、`dir`（布尔）由界面判断
 - 处理函数参数：`device`/`toolbar` → `fn(dev)`；`app` → `fn(dev, pkg)`；`file` → `fn(dev, path, isDir)`；`tools` → `fn()`；`media`（相册里的截图、录屏）→ `fn(item)`，item = `{name, kind, device, size, time, path}`；`logcat`（日志行）→ `fn(dev, line)`，line 是原始文字
 - 返回值：字符串会作为提示显示，其他值只表示成功
-- `toolbar` 菜单项加 `pin = true` 时不进拼图菜单，直接作为图标按钮放在投屏卡片的工具列里；`on` 给出按钮处于开启状态的设备 serial 列表。状态变了就用同一个 `id` 再调用一次 `db.menu` 更新：
+- `toolbar` 菜单项加 `pin = true` 时不进拼图菜单，直接作为图标按钮放在投屏卡片的标题栏里；`on` 给出按钮处于开启状态的设备 serial 列表（这些卡片的边框会高亮）。状态变了就用同一个 `id` 再调用一次 `db.menu` 更新：
 
 ```lua
 db.menu("toolbar", "群控", { id = "toggle", icon = "link", pin = true, on = { "R5CT10ABCDE" } }, function(dev) end)
