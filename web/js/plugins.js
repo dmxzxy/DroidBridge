@@ -16,6 +16,7 @@ const PLUGIN_PERMS = {
   'device.install': '安装和卸载应用',
   'device.apps': '查看应用列表、启动/停止/清除应用、读取前台应用',
   'device.input': '点击、滑动、按键、输入文字，读写设备剪贴板',
+  'device.observe': '看到你在投屏窗口里的操作，包括输入的文字和粘贴的内容',
   'device.screen': '截取屏幕、读取界面结构、在画面上绘制覆盖层',
   'device.forward': '建立端口转发',
   'device.logs': '读取设备日志',
@@ -878,7 +879,7 @@ addEventListener('message', (e) => {
 
 const PLUGIN_PERM_ICON = {
   'device.shell': 'terminal', 'device.files': 'folder', 'device.install': 'package', 'device.apps': 'grid',
-  'device.input': 'target', 'device.screen': 'camera', 'device.forward': 'swap', 'device.logs': 'logs',
+  'device.input': 'target', 'device.observe': 'eye', 'device.screen': 'camera', 'device.forward': 'swap', 'device.logs': 'logs',
   'device.perf': 'activity', 'device.connect': 'wifi', 'fs.read': 'file', 'fs': 'drive', 'exec': 'play', 'net': 'globe', 'web.embed': 'monitor',
   'clipboard': 'paste', 'media': 'images', 'mcp': 'bot',
 };

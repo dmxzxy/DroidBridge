@@ -39,7 +39,8 @@
 | `device.files` | `dev:push` / `dev:pull`、`dev:list` `mkdir` `rename` `remove`（只限共享存储） |
 | `device.install` | `dev:install` / `dev:uninstall` |
 | `device.apps` | `dev:apps` `hasApp` `launch` `stop` `clear` `foreground`、`app.foreground` 事件 |
-| `device.input` | `dev:tap` `swipe` `longpress` `touch` `scroll` `send` `key` `text` `cmd`、`db.broadcast`、`dev:getClipboard` / `setClipboard`、`device.action` / `device.input` 事件 |
+| `device.input` | `dev:tap` `swipe` `longpress` `touch` `scroll` `send` `key` `text` `cmd`、`db.broadcast`、`dev:getClipboard` / `setClipboard` |
+| `device.observe` | `device.action` / `device.input` 事件（含用户输入的文字与剪贴板内容） |
 | `device.screen` | `dev:screenshot`、`dev:ui` `find` `waitFor`、`db.overlay` |
 | `device.forward` | `dev:forward` / `dev:reverse` / `dev:unforward` |
 | `device.logs` | `dev:logcat`、`db.logcat.watch` |
@@ -139,7 +140,7 @@
 - `hasApp` `{serial, package}` → bool
 - `launch` `{serial, package, activity?}`；`stop` `{serial, package}`；`clear` `{serial, package}`
 - `foreground` `{serial}` → package 字符串或 null
-- `input` `{serial, kind:"tap"|"longpress"|"swipe"|"touch"|"scroll"|"key"|"back"|"text"|"power"|"cmd", x?,y?,x2?,y2?,w?,h?,duration?,action?,id?,p?,hs?,vs?,key?,code?,meta?,text?,on?,name?}`（目标设备已开启共享投屏时直通 scrcpy 控制通道并自动按会话尺寸换算 `(w,h)`；未开启投屏时退回 `adb shell input` 并按 `wm size` 换算 `(w,h)`）
+- `input` `{serial, kind:"tap"|"longpress"|"swipe"|"touch"|"scroll"|"key"|"back"|"text"|"power"|"cmd", x?,y?,x2?,y2?,w?,h?,duration?,action?,id?,p?,hs?,vs?,key?,code?,meta?,text?,on?,name?}`（目标设备已开启共享投屏时直通 scrcpy 控制通道并自动按会话尺寸换算 `(w,h)`；未开启投屏时退回 `adb shell input` 并按 `wm size` 换算 `(w,h)`；`touch` 未投屏时返回错误；`touch` move 帧单独限流每秒 240 帧，超出直接返回 `false`）
 - `broadcast` `{serials:[...], ev:{...}}` → `{ok, failed}`（检查 `device.input` 权限与各设备的 `match` 范围，并发向多台本机/远程设备派发 `input`）
 - `screenshot` `{serial, save?}` → 本机 PNG 路径（save=true 时同时存入图库）
 - `forward` `{serial, local, remote, reverse?}` → 实际本机端口（local=0 自动分配）；`unforward` `{serial, local?, remote?, reverse?}`。插件停止时主进程自动移除它建立的所有转发
@@ -198,7 +199,7 @@
 - 状态：`stopped | starting | running | crashed | failed | needs_grant | disabled | invalid`（清单错误）。
 - 限流：重型设备 I/O（`install`/`uninstall`/`push`/`pull`/`ui`/`screenshot`）每个插件同时最多 4 个，其余轻量设备操作最多 64 个；每台设备同时最多 4 个慢速插件操作（本机投屏直通 `input`/`cmd`/`setClipboard` 免占信号量）；每个插件每秒最多 500 次 call，超出则排队等待。
 - 控制台：每个插件保留最近 1000 条 `{time, level, msg, src}`；新条目通过 ws 广播 `console`。
-- 事件：维护设备列表（每 2 秒 `adb devices`），变化时向订阅了 `device.connected` / `device.disconnected` 的插件发 `event`。有插件订阅 `app.foreground` 时，每 2 秒查一次这些设备的前台应用，变化才发。有拥有 `device.input` 权限的插件订阅 `device.action` 或 `device.input` 时，旁路捕获人工在投屏窗口（含本机 `Mirror::handle_text` 与远程 `peers::proxy_ws_with_ctl`）发送的控制帧，合成为语义动作 `device.action` 与 60Hz 节流控制流 `device.input`（插件注入的控制帧不经过此入口，杜绝回环）。DroidBridge 自身完成安装（文件管理器、拖放、插件 install）后发 `app.installed` `{dev, package}`（能拿到包名时）；应用管理或插件卸载后发 `app.uninstalled` `{dev, package}`；截图、录屏存入图库后发 `media.saved` `{item}`。插件启动完成（ready）后对每台在线设备补发一次 `device.connected`。
+- 事件：维护设备列表（每 2 秒 `adb devices`），变化时向订阅了 `device.connected` / `device.disconnected` 的插件发 `event`。有插件订阅 `app.foreground` 时，每 2 秒查一次这些设备的前台应用，变化才发。有拥有 `device.observe` 权限的插件订阅 `device.action` 或 `device.input` 时，旁路捕获人工在投屏窗口（含本机 `Mirror::handle_text` 与远程 `peers::proxy_ws_with_ctl`）发送的控制帧，合成为语义动作 `device.action` 与 60Hz 节流控制流 `device.input`（插件注入的控制帧不经过此入口，杜绝回环）。DroidBridge 自身完成安装（文件管理器、拖放、插件 install）后发 `app.installed` `{dev, package}`（能拿到包名时）；应用管理或插件卸载后发 `app.uninstalled` `{dev, package}`；截图、录屏存入图库后发 `media.saved` `{item}`。插件启动完成（ready）后对每台在线设备补发一次 `device.connected`。
 - MCP：`mcp.rs` 的工具列表追加本机所有运行中插件注册的工具，名字 `<pluginid>__<name>`（非法字符替换为 `_`，截断到 64）。调用时路由到对应插件 `mcp` 请求（120 秒超时）。远程电脑：`list_tools` 同时向各远程电脑 `GET /api/plugins/mcp` 合并（按名字去重）；调用远程设备时经 `/api/agent/exec` 转发，`agent::exec` 遇到含 `__` 的工具名交给 `plugins::mcp_call`。
 
 ### 4.1 HTTP 接口（全部经过现有 auth 中间件；带 `?peer=` 时转发给远程电脑）

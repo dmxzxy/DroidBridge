@@ -13,7 +13,15 @@ pub(super) fn dispatch(app: Arc<AppState>, ph: Arc<Plugin>, id: u64, m: String, 
         let is_touch_move = m == "input"
             && p.get("kind").and_then(Value::as_str) == Some("touch")
             && p.get("action").and_then(Value::as_u64) == Some(2);
-        if !is_touch_move {
+        if is_touch_move {
+            // move 帧单独限流，超出上限直接丢弃（下一帧会覆盖它）
+            if !ph.take_move() {
+                if let Some(h) = ph.host() {
+                    let _ = h.out.send(json!({"t": "ret", "id": id, "ok": false})).await;
+                }
+                return;
+            }
+        } else {
             ph.take_rate().await;
         }
         let r = handle(&app, &ph, &m, &p).await;
@@ -317,7 +325,7 @@ fn register(app: &Arc<AppState>, ph: &Arc<Plugin>, p: &Value) -> Result<Value, S
             return Err(tr!("{kind} 缺少 name", "{kind} requires a name"));
         }
         if kind == "event" && (name == "device.input" || name == "device.action") {
-            need(ph, "device.input")?;
+            need(ph, "device.observe")?;
         }
         let mut c = ph.contributions.lock().unwrap();
         if kind == "event" {
@@ -984,7 +992,10 @@ async fn exec_input(app: &AppState, s: &str, p: &Value) -> Result<(), String> {
     };
 
     match kind {
-        "touch" => Ok(()),
+        "touch" => Err(tr!(
+            "touch 需要设备正在投屏；未投屏时请用 tap / swipe，或转发 device.action 事件",
+            "touch needs the device to be mirrored; use tap / swipe or forward device.action events otherwise"
+        )),
         "tap" => {
             let (x, y) = scale_pt(num("x"), num("y"), screen);
             shell_out(app, s, &format!("input tap {x} {y}"), Duration::from_secs(20)).await?;

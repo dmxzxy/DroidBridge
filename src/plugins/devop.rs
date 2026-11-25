@@ -61,7 +61,7 @@ pub async fn plugins_devop(
         let dir = st.plugins.root().join(".tmp");
         let _ = tokio::fs::create_dir_all(&dir).await;
         let path = dir.join(format!("devop-{:08x}", util::random_scid()));
-        match peers::save_body_to_file(body, &path).await {
+        match peers::save_body_to_file(body, &path, peers::UPLOAD_MAX).await {
             Ok(0) => return err(StatusCode::BAD_REQUEST, tr!("缺少文件内容", "Missing file content")),
             Ok(_) => {}
             Err(e) => return err(StatusCode::INTERNAL_SERVER_ERROR, e),

@@ -275,7 +275,7 @@ pub async fn apply(st: &AppState) -> Result<serde_json::Value, String> {
     Ok(json!({"ok": true, "version": ver, "size": size}))
 }
 
-/// Windows：等本进程退出 → 解压 → 覆盖 → 启动
+/// Windows：等本进程退出 → 解压 → 覆盖 → 启动 → 删除脚本所在的工作目录（必须是最后一行）
 fn write_windows_script(target: &std::path::Path, archive: &std::path::Path, work: &std::path::Path) -> Result<PathBuf, String> {
     let exe = exe_path();
     let name = exe.file_name().and_then(|n| n.to_str()).unwrap_or("DroidBridge.exe").to_string();
@@ -298,8 +298,8 @@ fn write_windows_script(target: &std::path::Path, archive: &std::path::Path, wor
          powershell -NoProfile -ExecutionPolicy Bypass -Command \"Expand-Archive -LiteralPath '{zipq}' -DestinationPath '{tmpq}' -Force\"\r\n\
          xcopy \"%TMP%\\*\" \"%DEST%\\\" /E /Y /I /Q >nul\r\n\
          del \"%DEST%\\%EXE%.old\" >nul 2>&1\r\n\
-         rmdir /s /q \"{work}\" >nul 2>&1\r\n\
-         start \"\" \"%DEST%\\%EXE%\" {args}\r\n",
+         start \"\" \"%DEST%\\%EXE%\" {args}\r\n\
+         (goto) 2>nul & rmdir /s /q \"{work}\" >nul 2>&1\r\n",
         dest = target.display(),
         zip = archive.display(),
         tmp = tmp.display(),

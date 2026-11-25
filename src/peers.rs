@@ -271,7 +271,13 @@ pub async fn post_file(peer: &Peer, endpoint: &str, query: &str, body: &[u8]) ->
 }
 
 /// 将 HTTP 请求体流式写入本机临时文件（恒定内存开销，出错或 0 字节时自动清理临时文件）
-pub async fn save_body_to_file(body: axum::body::Body, dest: &std::path::Path) -> Result<u64, String> {
+/// 推送到设备的单个文件上限
+pub const PUSH_MAX: u64 = 4 << 30;
+/// 文件管理与插件上传的单个文件上限
+pub const UPLOAD_MAX: u64 = 2 << 30;
+
+/// 把请求体流式写入文件，超过 `limit` 字节时中止并删除文件
+pub async fn save_body_to_file(body: axum::body::Body, dest: &std::path::Path, limit: u64) -> Result<u64, String> {
     let mut stream = body.into_data_stream();
     let mut f = tokio::fs::File::create(dest)
         .await
@@ -289,6 +295,11 @@ pub async fn save_body_to_file(body: axum::body::Body, dest: &std::path::Path) -
                     return Err(tr!("写入临时文件失败：{e}", "Cannot write the temporary file: {e}"));
                 }
                 total += bytes.len() as u64;
+                if total > limit {
+                    drop(f);
+                    let _ = tokio::fs::remove_file(dest).await;
+                    return Err(tr!("文件超过 {} MB 上限", "File exceeds the {} MB limit", limit >> 20));
+                }
             }
             Err(e) => {
                 drop(f);

@@ -725,21 +725,66 @@ fn format_perf(m: &Value) -> String {
     )
 }
 
+/// 按 sh 的规则拆分命令：去掉引号，未加引号的 | 分隔管道各段；引号不成对时返回 None
+fn shell_words(cmd: &str) -> Option<Vec<Vec<String>>> {
+    let (mut segs, mut words, mut cur) = (Vec::new(), Vec::new(), String::new());
+    let (mut quote, mut in_word) = (None::<char>, false);
+    for c in cmd.chars() {
+        match (quote, c) {
+            (Some(q), c) if c == q => quote = None,
+            (Some(_), c) => cur.push(c),
+            (None, '\'' | '"') => { quote = Some(c); in_word = true; }
+            (None, '|') => {
+                if in_word { words.push(std::mem::take(&mut cur)); in_word = false; }
+                segs.push(std::mem::take(&mut words));
+            }
+            (None, c) if c.is_whitespace() => if in_word { words.push(std::mem::take(&mut cur)); in_word = false; },
+            (None, c) => { cur.push(c); in_word = true; }
+        }
+    }
+    if quote.is_some() { return None; }
+    if in_word { words.push(cur); }
+    segs.push(words);
+    Some(segs)
+}
+
+/// dumpsys 的参数里不能出现会改动设备状态的子命令
+fn dumpsys_arg_ok(a: &str) -> bool {
+    let w = a.trim_start_matches('-').to_ascii_lowercase();
+    !a.starts_with('+') && !matches!(
+        w.as_str(),
+        "set" | "reset" | "enable" | "disable" | "unplug" | "unforce" | "force-idle" | "step" | "clear" | "write"
+            | "whitelist" | "tempwhitelist" | "except-idle-whitelist" | "sys-whitelist" | "add" | "remove" | "put" | "delete" | "kill"
+    )
+}
+
+/// logcat 只允许 -d 加读取类参数，不能清空日志或写文件
+fn logcat_args_ok(args: &[&str]) -> bool {
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        match *a {
+            "-d" | "-s" | "-g" | "-S" | "-D" | "--dividers" => {}
+            "-t" | "-T" | "-v" | "-b" | "-e" | "--pid" | "--format" | "--buffer" | "--regex" => if it.next().is_none() { return false },
+            a if a.starts_with("--pid=") || a.starts_with("--format=") || a.starts_with("--buffer=") || a.starts_with("--regex=") => {}
+            a if a.starts_with('-') => return false,
+            _ => {}
+        }
+    }
+    true
+}
+
 /// 只读 shell：只允许纯查询类命令，不允许管道以外的组合、转义与重定向，并剔除可执行子命令或写文件的工具
 fn shell_allowed(cmd: &str) -> bool {
     if cmd.chars().any(|c| (c.is_control() && c != '\t') || [';', '&', '>', '<', '`', '$', '\\'].contains(&c)) {
         return false;
     }
-    cmd.split('|').all(|part| {
-        let w: Vec<&str> = part.split_whitespace().collect();
+    let Some(segs) = shell_words(cmd) else { return false };
+    segs.iter().all(|seg| {
+        let w: Vec<&str> = seg.iter().map(String::as_str).collect();
         match w.as_slice() {
             [] => false,
-            ["dumpsys", rest @ ..] => !rest.iter().any(|a| {
-                matches!(
-                    a.to_ascii_lowercase().as_str(),
-                    "set" | "reset" | "enable" | "disable" | "unplug" | "force-idle" | "step" | "clear" | "write"
-                )
-            }),
+            ["dumpsys", rest @ ..] => rest.iter().all(|a| dumpsys_arg_ok(a)),
+            ["logcat", "-d", rest @ ..] => logcat_args_ok(rest),
             ["getprop", ..]
             | ["ls", ..]
             | ["cat", ..]
@@ -756,7 +801,6 @@ fn shell_allowed(cmd: &str) -> bool {
             | ["wc", ..]
             | ["uniq", ..]
             | ["cut", ..]
-            | ["logcat", "-d", ..]
             | ["uname", ..]
             | ["free", ..]
             | ["stat", ..]
@@ -870,6 +914,17 @@ mod tests {
         assert!(!shell_allowed("dumpsys battery set level 1"));
         assert!(!shell_allowed("settings put global x 1"));
         assert!(!shell_allowed("echo $(reboot)"));
+        assert!(shell_allowed("dumpsys package com.x | grep \"versionName|versionCode\""));
+        assert!(shell_allowed("logcat -d -t 200 -v time ActivityManager:I *:S"));
+        assert!(!shell_allowed("dumpsys battery 'set' level 1"));
+        assert!(!shell_allowed("dumpsys battery s\"\"et ac 1"));
+        assert!(!shell_allowed("dumpsys batterystats --reset"));
+        assert!(!shell_allowed("dumpsys deviceidle whitelist +com.x"));
+        assert!(!shell_allowed("dumpsys procstats --clear"));
+        assert!(!shell_allowed("logcat -d -c"));
+        assert!(!shell_allowed("logcat -d '-c'"));
+        assert!(!shell_allowed("logcat -d -f /sdcard/x"));
+        assert!(!shell_allowed("cat 'unterminated"));
         assert!(!read_only("shell"));
     }
 }

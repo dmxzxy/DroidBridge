@@ -208,7 +208,7 @@ pub async fn upload_body(st: &AppState, serial: &str, dir: &str, name: &str, bod
     let tmp = st.cfg.data_dir.join("uploads");
     let _ = tokio::fs::create_dir_all(&tmp).await;
     let local = tmp.join(format!("up-{:08x}.bin", crate::util::random_scid()));
-    let written = crate::peers::save_body_to_file(body, &local).await?;
+    let written = crate::peers::save_body_to_file(body, &local, crate::peers::UPLOAD_MAX).await?;
     if written == 0 {
         return Err(tr!("文件为空", "File is empty"));
     }

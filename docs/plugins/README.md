@@ -131,7 +131,8 @@ end)
 | `device.files` | `dev:push` / `dev:pull`，`dev:list` `mkdir` `rename` `remove`（共享存储 `/sdcard`） |
 | `device.install` | `dev:install` / `dev:uninstall` |
 | `device.apps` | `dev:apps` `hasApp` `launch` `stop` `clear` `foreground`，`app.foreground` 事件 |
-| `device.input` | `dev:tap` `swipe` `longpress` `touch` `scroll` `send` `key` `text` `cmd`、`db.broadcast`、`dev:getClipboard` / `setClipboard`、`device.action` 与 `device.input` 事件 |
+| `device.input` | `dev:tap` `swipe` `longpress` `touch` `scroll` `send` `key` `text` `cmd`、`db.broadcast`、`dev:getClipboard` / `setClipboard` |
+| `device.observe` | `device.action` 与 `device.input` 事件：看到用户在投屏窗口里的操作，包括输入的文字和粘贴的内容 |
 | `device.screen` | `dev:screenshot`、`dev:ui` `find` `waitFor`、`db.overlay` |
 | `device.forward` | `dev:forward` / `dev:reverse` / `dev:unforward` |
 | `device.logs` | `dev:logcat`、`db.logcat.watch` |
@@ -264,7 +265,7 @@ local s = dev:getClipboard()
 dev:cmd("notif")                                         -- notif 展开通知栏 / settings 展开快捷设置 / collapse 收起 / rotate 旋转屏幕
 ```
 
-> 当目标设备已打开投屏窗口时，`tap` / `swipe` / `longpress` / `touch` / `scroll` / `key` / `text` / `setClipboard` / `cmd` 会直接走已建立的 `scrcpy` 控制通道（毫秒级延迟，不重复启动 `adb`，也不占用重型 `Semaphore(4)` 槽位）；未打开投屏时自动降级为 `adb shell input`，并在提供 `{ w, h }` 时按目标设备物理屏幕尺寸自动换算坐标。`dev:touch` 同时支持 `dev:touch(action, x, y, { id, w, h, p })` 与位置参数 `dev:touch(action, id, x, y, w, h, p)`。
+> 当目标设备已打开投屏窗口时，`tap` / `swipe` / `longpress` / `touch` / `scroll` / `key` / `text` / `setClipboard` / `cmd` 会直接走已建立的 `scrcpy` 控制通道（毫秒级延迟，不重复启动 `adb`，也不占用重型 `Semaphore(4)` 槽位）；未打开投屏时自动降级为 `adb shell input`，并在提供 `{ w, h }` 时按目标设备物理屏幕尺寸自动换算坐标；`touch` 没有降级路径，未投屏时返回错误。`touch` 的 move 帧每秒最多 240 帧，超出的帧被丢弃并返回 `false`。`dev:touch` 同时支持 `dev:touch(action, x, y, { id, w, h, p })` 与位置参数 `dev:touch(action, id, x, y, w, h, p)`。
 
 无线连接（`device.connect`，只作用于这台电脑的 adb）：
 
@@ -481,8 +482,8 @@ end)
 db.on("device.connected", function(dev) db.log("接入 " .. dev.serial) end)
 db.on("device.disconnected", function(dev) end)
 db.on("app.foreground", function(dev, pkg) end)   -- 需要 device.apps
-db.on("device.action", function(dev, act) end)    -- 需要 device.input：投屏人工操作的语义动作（tap/longpress/swipe/scroll/key/text/cmd/power），适合群控同步与脚本录制
-db.on("device.input", function(dev, raw) end)     -- 需要 device.input：投屏人工操作的 60Hz 原始控制流（touch/scroll/key/back/text/clipboard/power/cmd），适合毫秒级实时跟手
+db.on("device.action", function(dev, act) end)    -- 需要 device.observe：投屏人工操作的语义动作（tap/longpress/swipe/scroll/key/text/cmd/power），适合群控同步与脚本录制
+db.on("device.input", function(dev, raw) end)     -- 需要 device.observe：投屏人工操作的 60Hz 原始控制流（touch/scroll/key/back/text/clipboard/power/cmd），适合毫秒级实时跟手
 db.on("app.installed", function(dev, pkg) end)
 db.on("app.uninstalled", function(dev, pkg) end)   -- 应用管理或插件卸载后
 db.on("media.saved", function(item) end)           -- 截图、录屏存入相册后；item 同 db.media.list

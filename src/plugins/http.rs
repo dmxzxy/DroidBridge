@@ -396,7 +396,7 @@ pub async fn plugins_upload(State(st): State<Shared>, headers: axum::http::Heade
     let _ = tokio::fs::create_dir_all(&dir).await;
     let tok = &crate::access::new_token()[..24];
     let path = dir.join(format!("up-{tok}-{name}"));
-    match peers::save_body_to_file(body, &path).await {
+    match peers::save_body_to_file(body, &path, peers::UPLOAD_MAX).await {
         Ok(0) => err(StatusCode::BAD_REQUEST, tr!("文件为空", "File is empty")),
         Ok(_) => Json(json!({"path": path.to_string_lossy()})).into_response(),
         Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, e),

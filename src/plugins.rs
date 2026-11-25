@@ -138,15 +138,16 @@ pub(crate) fn raw_serial(id: &str) -> &str {
     split_dev(id).map(|(_, s)| s).unwrap_or(id)
 }
 
-/// 每秒 500 次的限流（令牌桶）
+/// 每秒 `per_sec` 次的限流（令牌桶）
 struct Rate {
+    per_sec: f64,
     tokens: f64,
     last: Instant,
 }
 
 impl Rate {
-    fn new() -> Self {
-        Self { tokens: 500.0, last: Instant::now() }
+    fn new(per_sec: f64) -> Self {
+        Self { per_sec, tokens: per_sec, last: Instant::now() }
     }
 
     /// 取一个令牌；需要等待时返回等待时长
@@ -154,14 +155,27 @@ impl Rate {
         let now = Instant::now();
         let dt = now.duration_since(self.last).as_secs_f64();
         self.last = now;
-        self.tokens = (self.tokens + dt * 500.0).min(500.0);
+        self.tokens = (self.tokens + dt * self.per_sec).min(self.per_sec);
         if self.tokens >= 1.0 {
             self.tokens -= 1.0;
             Duration::ZERO
         } else {
-            Duration::from_secs_f64((1.0 - self.tokens) / 500.0)
+            Duration::from_secs_f64((1.0 - self.tokens) / self.per_sec)
         }
     }
+}
+
+/// 插件触控 move 帧每秒上限（够 4 台设备 60Hz 跟手），超出的帧直接丢弃
+const MOVE_PER_SEC: f64 = 240.0;
+/// 每个插件待派发的投屏输入事件上限，插件处理不过来时丢弃新事件
+const INPUT_QUEUE: usize = 512;
+
+/// 待派发给某个插件的一次投屏人工输入
+struct InputJob {
+    dev_id: String,
+    dev_json: Value,
+    raw: Option<Value>,
+    act: Option<Value>,
 }
 
 /// 跟踪用户在投屏窗口中的触控与按键序列，合成为语义动作（`device.action`）与节流后的实时流（`device.input`）
@@ -282,6 +296,30 @@ impl InputTracker {
     }
 }
 
+/// 为插件创建投屏输入事件的派发任务：按到达顺序逐个发给插件，插件卸载后自动结束
+fn input_worker(st: Arc<AppState>, ph: &Arc<Plugin>) -> mpsc::Sender<InputJob> {
+    let (tx, mut rx) = mpsc::channel::<InputJob>(INPUT_QUEUE);
+    let weak = Arc::downgrade(ph);
+    tokio::spawn(async move {
+        while let Some(job) = rx.recv().await {
+            let Some(ph) = weak.upgrade() else { break };
+            if !st.plugins.device_allowed(&st, &ph, &job.dev_id).await {
+                continue;
+            }
+            let Some(h) = ph.host() else { continue };
+            if let Some(ev) = job.raw.filter(|_| ph.is_subscribed("device.input")) {
+                let _ = h.request("event", json!({"name": "device.input", "args": [job.dev_json.clone(), ev]}), Duration::from_secs(5)).await;
+            }
+            if let Some(ev) = job.act.filter(|_| ph.is_subscribed("device.action")) {
+                if let Err(e) = h.request("event", json!({"name": "device.action", "args": [job.dev_json, ev]}), Duration::from_secs(10)).await {
+                    st.plugins.console(&ph, "warn", &tr!("事件 device.action 处理失败：{e}", "Event device.action failed: {e}"), None);
+                }
+            }
+        }
+    });
+    tx
+}
+
 /// 解析 `wm size` 输出的屏幕宽高（优先取最后一行的 Override size）
 pub(crate) fn parse_wm_size(out: &str) -> Option<(u32, u32)> {
     let mut found = None;
@@ -317,6 +355,10 @@ pub(crate) struct Plugin {
     /// 重型 I/O 操作并发上限（4 路：install / uninstall / push / pull / ui / screenshot）
     heavy_sem: Semaphore,
     rate: Mutex<Rate>,
+    /// 触控 move 帧的独立限流
+    move_rate: Mutex<Rate>,
+    /// 投屏输入事件的有序派发队列（首次需要时创建）
+    input_q: Mutex<Option<mpsc::Sender<InputJob>>>,
     crashes: Mutex<Vec<Instant>>,
     pub forwards: Mutex<Vec<Forward>>,
 }
@@ -338,7 +380,9 @@ impl Plugin {
             spawned: AtomicBool::new(false),
             sem: Semaphore::new(64),
             heavy_sem: Semaphore::new(4),
-            rate: Mutex::new(Rate::new()),
+            rate: Mutex::new(Rate::new(500.0)),
+            move_rate: Mutex::new(Rate::new(MOVE_PER_SEC)),
+            input_q: Mutex::new(None),
             crashes: Mutex::new(Vec::new()),
             forwards: Mutex::new(Vec::new()),
         }
@@ -389,7 +433,12 @@ impl Plugin {
         self.contributions.lock().unwrap().events.contains(event)
     }
 
-    /// 无人使用本次调用的令牌（每秒最多 50 次，超出时排队等待）
+    /// 取一个触控 move 帧的令牌；超出上限时返回 false（该帧应丢弃）
+    pub(crate) fn take_move(&self) -> bool {
+        self.move_rate.lock().unwrap().take().is_zero()
+    }
+
+    /// 取一次调用的令牌（每秒最多 500 次，超出时排队等待）
     pub(crate) async fn take_rate(&self) {
         loop {
             let d = self.rate.lock().unwrap().take();
@@ -702,14 +751,14 @@ impl Plugins {
         Some(sz)
     }
 
-    /// 用户在投屏窗口操作某台设备（含本机与远程投屏）：向订阅了 `device.input` / `device.action` 且拥有 `device.input` 权限的插件派发事件
+    /// 用户在投屏窗口操作某台设备（含本机与远程投屏）：向订阅了 `device.input` / `device.action` 且拥有 `device.observe` 权限的插件派发事件
     pub(crate) fn on_user_ctl(&self, st: &Arc<AppState>, dev_id: &str, ctl: &control::Ctl, session: Option<(u32, u32)>) {
         let subs: Vec<Arc<Plugin>> = self
             .plugins()
             .into_iter()
             .filter(|ph| {
                 ph.state() == PluginState::Running
-                    && ph.has_perm("device.input")
+                    && ph.has_perm("device.observe")
                     && (ph.is_subscribed("device.input") || ph.is_subscribed("device.action"))
             })
             .collect();
@@ -736,37 +785,13 @@ impl Plugins {
                     "remote": split_dev(dev_id).is_some(),
                 })
             });
-        let st2 = st.clone();
-        let dev_id2 = dev_id.to_string();
-        tokio::spawn(async move {
-            for ph in subs {
-                if !st2.plugins.device_allowed(&st2, &ph, &dev_id2).await {
-                    continue;
-                }
-                let Some(h) = ph.host() else { continue };
-                if let Some(ev) = &raw_ev {
-                    if ph.is_subscribed("device.input") {
-                        let p = json!({"name": "device.input", "args": [dev_json.clone(), ev.clone()]});
-                        let h2 = h.clone();
-                        tokio::spawn(async move {
-                            let _ = h2.request("event", p, Duration::from_secs(5)).await;
-                        });
-                    }
-                }
-                if let Some(ev) = &act_ev {
-                    if ph.is_subscribed("device.action") {
-                        let p = json!({"name": "device.action", "args": [dev_json.clone(), ev.clone()]});
-                        let st3 = st2.clone();
-                        let ph3 = ph.clone();
-                        tokio::spawn(async move {
-                            if let Err(e) = h.request("event", p, Duration::from_secs(10)).await {
-                                st3.plugins.console(&ph3, "warn", &tr!("事件 device.action 处理失败：{e}", "Event device.action failed: {e}"), None);
-                            }
-                        });
-                    }
-                }
-            }
-        });
+        for ph in subs {
+            let job = InputJob { dev_id: dev_id.to_string(), dev_json: dev_json.clone(), raw: raw_ev.clone(), act: act_ev.clone() };
+            let mut q = ph.input_q.lock().unwrap();
+            let tx = q.get_or_insert_with(|| input_worker(st.clone(), &ph));
+            // 队列满说明插件处理不过来，丢弃这一帧
+            let _ = tx.try_send(job);
+        }
     }
 
     // ------------------------------------------------------------ 接口数据

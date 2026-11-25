@@ -464,7 +464,7 @@ fn router(state: Shared) -> Router {
         .route("/api/adb/tcpip", post(adb_tcpip))
         .route("/api/adb/qr", post(adb_qr_start))
         .route("/api/adb/qr/{id}", get(adb_qr_status).delete(adb_qr_cancel))
-        .route("/api/push", post(push_file).layer(DefaultBodyLimit::max(4usize << 30)))
+        .route("/api/push", post(push_file).layer(DefaultBodyLimit::max(peers::PUSH_MAX as usize)))
         .route("/api/media", get(media::media_list_handler))
         .route("/api/media/shot", post(media::media_shot_handler).layer(DefaultBodyLimit::max(64usize << 20)))
         .route("/api/media/file/{name}", get(media::media_file_handler))
@@ -486,7 +486,7 @@ fn router(state: Shared) -> Router {
         .route("/api/files/mkdir", post(files_mkdir))
         .route("/api/files/rename", post(files_rename))
         .route("/api/files/delete", post(files_delete))
-        .route("/api/files/upload", post(files_upload).layer(DefaultBodyLimit::max(2usize << 30)))
+        .route("/api/files/upload", post(files_upload).layer(DefaultBodyLimit::max(peers::UPLOAD_MAX as usize)))
         .route("/api/files/download", get(files_download))
         .route("/api/files/preview", get(files_preview))
         .route("/api/files/install", post(files_install))
@@ -502,8 +502,8 @@ fn router(state: Shared) -> Router {
         .route("/api/plugins/metrics", get(plugins::plugins_metrics))
         .route("/api/plugins/web", post(plugins::plugins_web))
         .route("/api/plugins/dialog", post(plugins::plugins_dialog))
-        .route("/api/plugins/upload", post(plugins::plugins_upload).layer(DefaultBodyLimit::max(2usize << 30)))
-        .route("/api/plugins/devop", post(plugins::plugins_devop).layer(DefaultBodyLimit::max(2usize << 30)))
+        .route("/api/plugins/upload", post(plugins::plugins_upload).layer(DefaultBodyLimit::max(peers::UPLOAD_MAX as usize)))
+        .route("/api/plugins/devop", post(plugins::plugins_devop).layer(DefaultBodyLimit::max(peers::UPLOAD_MAX as usize)))
         .route("/api/plugins/console", get(plugins::plugins_console))
         .route("/api/plugins/mcp", get(plugins::plugins_mcp_list))
         .route("/ws/plugins", get(plugins::plugins_ws))
@@ -905,8 +905,8 @@ async fn clients_list(State(st): State<Shared>, Query(q): Query<HashMap<String, 
 }
 
 /// 手动生成访问令牌（给旧版本、脚本、AI 客户端用）；令牌只返回这一次。只能在本机直连（不含反向代理）生成
-async fn clients_issue(State(st): State<Shared>, ConnectInfo(addr): ConnectInfo<SocketAddr>, headers: HeaderMap, Json(r): Json<PairReq>) -> Response {
-    if !is_local_request(&st, &headers, Some(addr.ip()), &HashMap::new()) {
+async fn clients_issue(State(st): State<Shared>, ConnectInfo(addr): ConnectInfo<SocketAddr>, headers: HeaderMap, Query(q): Query<HashMap<String, String>>, Json(r): Json<PairReq>) -> Response {
+    if !is_local_request(&st, &headers, Some(addr.ip()), &q) {
         return err(StatusCode::FORBIDDEN, tr!("只能在本机生成访问令牌", "Access tokens can only be created on the computer itself"));
     }
     let name = if r.name.trim().is_empty() { tr!("访问令牌", "Access token") } else { r.name };
@@ -1146,7 +1146,7 @@ async fn push_file(State(st): State<Shared>, headers: HeaderMap, Query(q): Query
     let dir = st.cfg.data_dir.join("uploads");
     let _ = tokio::fs::create_dir_all(&dir).await;
     let tmp = dir.join(format!("{:08x}{}", util::random_scid(), if is_apk { ".apk" } else { ".bin" }));
-    match peers::save_body_to_file(body, &tmp).await {
+    match peers::save_body_to_file(body, &tmp, peers::PUSH_MAX).await {
         Ok(0) => return err(StatusCode::BAD_REQUEST, tr!("文件为空", "File is empty")),
         Ok(_) => {}
         Err(e) => return err(StatusCode::INTERNAL_SERVER_ERROR, e),
@@ -1494,12 +1494,16 @@ mod tests {
     }
 
     fn test_state_with_adb(data_dir: PathBuf, name: &str, adb: PathBuf) -> Shared {
+        test_state_full(data_dir, name, adb, None)
+    }
+
+    fn test_state_full(data_dir: PathBuf, name: &str, adb: PathBuf, token: Option<String>) -> Shared {
         let _ = std::fs::create_dir_all(&data_dir);
         let cfg = Config {
             bind: "127.0.0.1".into(),
             port: 0,
             https_port: 0,
-            token: None,
+            token,
             name: name.into(),
             adb,
             data_dir,
@@ -1723,6 +1727,43 @@ mod tests {
         let res3 = app.clone().call(req3).await.unwrap();
         assert_eq!(res3.status(), StatusCode::FORBIDDEN);
 
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 启用 --token 时，本机界面用 ?token= 也能生成访问令牌
+    #[tokio::test]
+    async fn clients_issue_accepts_query_token() {
+        use tower::Service;
+        let dir = std::env::temp_dir().join(format!("droidbridge-issue-{:08x}", util::random_scid()));
+        let st = test_state_full(dir.clone(), "HostTok", PathBuf::from("adb-not-installed"), Some("s3cret".into()));
+        let app = router(st);
+        let call = |uri: &str| {
+            let mut req = axum::http::Request::builder()
+                .method("POST")
+                .uri(uri)
+                .header("host", "127.0.0.1:8730")
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(r#"{"name":"cli"}"#))
+                .unwrap();
+            req.extensions_mut().insert(ConnectInfo("127.0.0.1:5000".parse::<SocketAddr>().unwrap()));
+            app.clone().call(req)
+        };
+        assert_eq!(call("/api/clients?token=s3cret").await.unwrap().status(), StatusCode::OK);
+        assert_ne!(call("/api/clients?token=wrong").await.unwrap().status(), StatusCode::OK);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 流式保存请求体超过上限时中止并删除文件
+    #[tokio::test]
+    async fn save_body_enforces_limit() {
+        let dir = std::env::temp_dir().join(format!("droidbridge-limit-{:08x}", util::random_scid()));
+        let _ = std::fs::create_dir_all(&dir);
+        let f = dir.join("x.bin");
+        let ok = peers::save_body_to_file(axum::body::Body::from(vec![1u8; 100]), &f, 100).await;
+        assert_eq!(ok, Ok(100));
+        let big = peers::save_body_to_file(axum::body::Body::from(vec![1u8; 101]), &f, 100).await;
+        assert!(big.is_err());
+        assert!(!f.exists());
         let _ = std::fs::remove_dir_all(&dir);
     }
 
