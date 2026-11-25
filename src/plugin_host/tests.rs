@@ -892,6 +892,46 @@ end)
 }
 
 #[test]
+fn builtin_group_control_plugin() {
+    let mut h = Harness::new("builtin-gc", include_str!("../builtin/group-control/main.lua"), HostConfig::default());
+    let last_toggle = |h: &Harness| -> J {
+        let out = h.out.borrow();
+        out.iter().rev().find(|v| v["m"] == "register" && v["p"]["def"]["id"] == "toggle").cloned().expect("应注册群控按钮")
+    };
+    assert_eq!(last_toggle(&h)["p"]["def"]["pin"], json!(true));
+
+    // 只有一台时提示再加一台；两台后按钮在两台上都是开启状态，状态栏显示人数
+    let r = h.req("menu", json!({"id": "toggle", "ctx": {"serial": "S1"}}));
+    assert_eq!(r["ok"], json!("再给至少一台设备打开群控"));
+    h.req("menu", json!({"id": "toggle", "ctx": {"serial": "p1/S2"}}));
+    assert_eq!(last_toggle(&h)["p"]["def"]["on"], json!(["S1", "p1/S2"]));
+    {
+        let out = h.out.borrow();
+        let st = out.iter().rev().find(|v| v["m"] == "register" && v["p"]["kind"] == "status").unwrap();
+        assert_eq!(st["p"]["def"]["text"], json!("群控 2"));
+    }
+
+    // 群控设备上的触控转发给其他群控设备，并在从机上画落点
+    h.take();
+    h.req("event", json!({"name": "device.input", "args": [{"serial": "S1"}, {"t": "touch", "action": 0, "id": -1, "x": 100, "y": 200, "w": 1080, "h": 2400, "p": 1.0}]}));
+    {
+        let out = h.out.borrow();
+        let bc = out.iter().find(|v| v["m"] == "broadcast").expect("应转发");
+        assert_eq!(bc["p"]["serials"], json!(["p1/S2"]));
+        assert_eq!((bc["p"]["ev"]["kind"].clone(), bc["p"]["ev"]["x"].clone()), (json!("touch"), json!(100)));
+        let ov = out.iter().find(|v| v["m"] == "overlay").expect("应画落点");
+        assert_eq!(ov["p"]["serial"], json!("p1/S2"));
+    }
+
+    // 不在群控里的设备不转发；退出后不再转发
+    h.take();
+    h.req("event", json!({"name": "device.input", "args": [{"serial": "S3"}, {"t": "key", "action": 0, "code": 4}]}));
+    h.req("menu", json!({"id": "toggle", "ctx": {"serial": "S1"}}));
+    h.req("event", json!({"name": "device.input", "args": [{"serial": "p1/S2"}, {"t": "key", "action": 0, "code": 4}]}));
+    assert!(!h.out.borrow().iter().any(|v| v["m"] == "broadcast"), "{:?}", h.out.borrow());
+}
+
+#[test]
 fn fs_walk_and_tar() {
     let long = format!("{}/{}/deep.lua", "d".repeat(60), "e".repeat(60));
     let main = format!(

@@ -593,6 +593,9 @@ pub(crate) async fn install(st: &Arc<AppState>, url: &str, id: &str) -> Result<S
     if !host_ok(&entry.min_host) {
         return Err(tr!("需要 DroidBridge {0}", "Requires DroidBridge {0}", entry.min_host.trim()));
     }
+    if super::builtin::is_builtin(id) {
+        return Err(tr!("{id} 是内置插件，不能用插件源覆盖", "{id} is a built-in plugin and cannot be replaced from a source"));
+    }
     let (state, from) = status(plugs, &src, &idx, &entry, &list.iter().map(|s| s.url.clone()).collect());
     match state {
         "local" => return Err(tr!("{id} 是本地插件，不能用插件源覆盖", "{id} is a local plugin and cannot be replaced from a source")),
@@ -652,6 +655,9 @@ pub(crate) async fn uninstall(st: &Arc<AppState>, id: &str) -> Result<(), String
     let _g = BUSY.lock().await;
     let plugs = &st.plugins;
     let ph = plugs.get(id).ok_or_else(|| tr!("插件不存在", "Plugin not found"))?;
+    if plugs.is_builtin(&ph) {
+        return Err(tr!("内置插件不能删除，可以停用", "Built-in plugins cannot be removed, only disabled"));
+    }
     if is_linked(plugs.root(), &ph.dir) || read_marker(&ph.dir).is_none() {
         return Err(tr!("只能卸载从插件源安装的插件", "Only plugins installed from a source can be uninstalled"));
     }

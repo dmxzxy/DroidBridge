@@ -1,0 +1,9 @@
+{
+  "id": "group-control",
+  "name": "群控 Group Control",
+  "version": "1.0.0",
+  "description": "在一台设备上的操作同步到其他群控设备 / Mirror your input on one device to the other devices in the group",
+  "author": "DroidBridge",
+  "main": "main.lua",
+  "permissions": ["device.input", "device.observe", "device.screen"]
+}

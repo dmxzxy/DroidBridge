@@ -610,7 +610,9 @@ function db.menu(target, path, a, b)
   if type(fn) ~= "function" then error("db.menu: 处理函数不能为空", 2) end
   if type(target) ~= "string" or type(path) ~= "string" then error("db.menu: target/path 必须是字符串", 2) end
   local id = opts.id or (target .. ":" .. path)
-  local def = { id = id, target = target, path = path, icon = opts.icon, filter = opts.filter }
+  local on = opts.on
+  if type(on) == "table" and #on == 0 then on = nil end
+  local def = { id = id, target = target, path = path, icon = opts.icon, filter = opts.filter, pin = opts.pin and true or nil, on = on }
   menus[id] = { fn = fn, def = def }
   reg("menu", def)
   return {

@@ -5,6 +5,7 @@
 //! 权限授予、子进程生命周期（崩溃重启、ping 看门狗、热重载）、宿主发起的 call（SPEC 3.3）、
 //! 设备与前台应用事件、控制台与审计日志、以及 HTTP/WS 接口（SPEC 4.1）。
 
+pub(crate) mod builtin;
 mod calls;
 mod devop;
 mod host;
@@ -810,7 +811,8 @@ impl Plugins {
                     "description": man.description,
                     "author": man.author,
                     "dir": ph.dir.to_string_lossy(),
-                    "kind": if std::fs::symlink_metadata(&ph.dir).map(|m| m.file_type().is_symlink()).unwrap_or(false) { "link" }
+                    "kind": if self.is_builtin(ph) { "builtin" }
+                        else if std::fs::symlink_metadata(&ph.dir).map(|m| m.file_type().is_symlink()).unwrap_or(false) { "link" }
                         else if sources::is_linked(&self.root, &ph.dir) { "outside" }
                         else if ph.dir.join(".source.json").exists() { "source" } else { "local" },
                     "state": ph.state().as_str(),
@@ -981,6 +983,7 @@ impl Plugins {
     pub(crate) fn load(&self) {
         let _ = std::fs::create_dir_all(self.root.join(".data"));
         let _ = std::fs::create_dir_all(self.root.join(".tmp"));
+        builtin::install(&self.root);
         let saved = self.read_state();
         let mut list: Vec<Arc<Plugin>> = Vec::new();
         let mut ids: HashSet<String> = HashSet::new();
@@ -999,7 +1002,7 @@ impl Plugins {
                 error = Some(tr!("插件 id 重复：{id}", "Duplicate plugin id: {id}"));
             }
             ids.insert(man.id.clone());
-            let entry = saved.get(&man.id).cloned().unwrap_or_default();
+            let entry = self.entry_for(&saved, &man, &dir);
             let ph = Arc::new(Plugin::new(man.clone(), dir, entry));
             let state = initial_state(&man, &ph, error.as_deref());
             *ph.state.lock().unwrap() = state;
@@ -1008,10 +1011,27 @@ impl Plugins {
         }
         list.sort_by(|a, b| a.id.cmp(&b.id));
         *self.list.lock().unwrap() = list;
+        self.save_state();
+    }
+
+    /// 内置插件：随程序发布、放在 `root/<id>/` 的插件
+    pub(crate) fn is_builtin(&self, ph: &Plugin) -> bool {
+        builtin::is_builtin(&ph.id) && ph.dir == self.root.join(&ph.id)
+    }
+
+    /// 插件的保存状态；内置插件第一次出现时默认启用，启用时总是拥有清单里的全部权限
+    fn entry_for(&self, saved: &HashMap<String, StateEntry>, man: &Manifest, dir: &Path) -> StateEntry {
+        let builtin = builtin::is_builtin(&man.id) && dir == self.root.join(&man.id);
+        let mut e = saved.get(&man.id).cloned().unwrap_or_else(|| StateEntry { enabled: builtin, ..Default::default() });
+        if builtin && e.enabled {
+            e.granted = man.permissions.clone();
+        }
+        e
     }
 
     /// 重新扫描：已有插件只更新清单（进程不动），新增的加入列表，消失的停止并移除
     pub(crate) fn rescan(&self, st: &Arc<AppState>) {
+        builtin::install(&self.root);
         let saved = self.read_state();
         let found = scan(&self.root);
         let current = self.plugins();
@@ -1044,7 +1064,7 @@ impl Plugins {
                 list.push(ph.clone());
                 continue;
             }
-            let entry = saved.get(&man.id).cloned().unwrap_or_default();
+            let entry = self.entry_for(&saved, &man, &dir);
             let ph = Arc::new(Plugin::new(man.clone(), dir, entry));
             let state = initial_state(&man, &ph, error.as_deref());
             *ph.state.lock().unwrap() = state;
@@ -1696,12 +1716,39 @@ mod tests {
 
         p.load();
         let list = p.plugins();
-        assert_eq!(list.len(), 3, "{:?}", list.iter().map(|x| x.id.clone()).collect::<Vec<_>>());
+        let own: Vec<_> = list.iter().filter(|x| !builtin::is_builtin(&x.id)).collect();
+        assert_eq!(own.len(), 3, "{:?}", list.iter().map(|x| x.id.clone()).collect::<Vec<_>>());
         let alpha = p.get("alpha").unwrap();
         assert_eq!(alpha.state(), PluginState::Disabled);
         assert!(p.get("hidden").is_none());
         let bad = list.iter().find(|x| x.state() == PluginState::Invalid).unwrap();
         assert!(bad.error().is_some());
+        let _ = std::fs::remove_dir_all(&data);
+    }
+
+    #[test]
+    fn builtin_plugins_ship_enabled_and_cannot_be_lost() {
+        let data = temp_root("builtin");
+        let p = Plugins::new(&data);
+        p.load();
+        let id = builtin::BUILTIN[0].id;
+        let ph = p.get(id).unwrap();
+        assert!(p.is_builtin(&ph));
+        assert!(ph.enabled());
+        assert_eq!(ph.granted(), ph.manifest().permissions);
+        assert_eq!(p.list_json(true, false)["list"].as_array().unwrap().iter().find(|v| v["id"] == id).unwrap()["kind"], "builtin");
+
+        // 用户停用后保持停用；文件被改动或删除后重新加载会恢复
+        p.disable(&ph).unwrap();
+        let main = p.root().join(id).join("main.lua");
+        std::fs::write(&main, "-- edited").unwrap();
+        std::fs::remove_file(p.root().join(id).join("plugin.json")).unwrap();
+        let p2 = Plugins::new(&data);
+        p2.load();
+        let ph2 = p2.get(id).unwrap();
+        assert!(!ph2.enabled());
+        assert_eq!(std::fs::read_to_string(&main).unwrap(), builtin::BUILTIN[0].files.iter().find(|f| f.0 == "main.lua").unwrap().1);
+        assert!(p2.root().join(id).join("plugin.json").exists());
         let _ = std::fs::remove_dir_all(&data);
     }
 

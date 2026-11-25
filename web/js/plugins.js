@@ -1047,7 +1047,8 @@ function pluginSettingsPane() {
       onclick: open, onkeydown: (e) => { if (e.key === 'Enter' && e.target === e.currentTarget) open(); } },
       pluginTile(p),
       h('div', { class: 'plug-row-m' },
-        h('div', { class: 'plug-row-n' }, h('span', { class: 'dot ' + pluginStateDot(st) }), h('b', {}, pluginTxt(p.name || p.id))),
+        h('div', { class: 'plug-row-n' }, h('span', { class: 'dot ' + pluginStateDot(st) }), h('b', {}, pluginTxt(p.name || p.id)),
+          p.kind === 'builtin' ? h('span', { class: 'plug-lock', title: t('内置插件：可以停用，不能删除'), html: svg('lock') }) : null),
         err ? h('div', { class: 'plug-row-e' }, err) : null),
       grantBtn,
       info.manage ? pluginSrcAction(srcCtx, pluginSrcEntry(p.id), true) : null,
@@ -1720,11 +1721,23 @@ function pluginLogHighlight(raw, tag) {
 }
 
 // ---------------- 投屏窗口：页签与工具栏 ----------------
+/** 投屏卡片工具列的插件项：pin 的直接显示成按钮，其余放进拼图菜单 */
+function pluginToolbarEntries(devId, pinned) {
+  return pluginMenuEntries(devId, 'toolbar', { serial: devId }).filter((m) => !!m.pin === pinned);
+}
+
 function pluginViewerUpdate(v) {
   if (!v || !v.plugBtn) return;
   const devId = pluginDevId(v.host, v.dev.serial);
   const panels = pluginPanelsFor(devId, 'device');
-  const menus = pluginMenuEntries(devId, 'toolbar', { serial: devId });
+  const menus = pluginToolbarEntries(devId, false);
+  if (v.plugPins) {
+    v.plugPins.replaceChildren(...pluginToolbarEntries(devId, true).map((e) => {
+      const on = Array.isArray(e.on) && e.on.includes(devId);
+      const label = String(e.path || e.id).split('/').pop();
+      return ib(pluginIcon(e.icon), label, () => pluginInvoke({ plugin: e.plugin, kind: 'menu', id: e.id, ctx: { serial: devId } }), on ? 'on' : '');
+    }));
+  }
   v.plugBtn.hidden = !(panels.length || menus.length);
   if (v.plugBtn.hidden) pluginDockClose(v);
   else if (v.plugDock) pluginDockSync(v);
@@ -1757,7 +1770,7 @@ function pluginDockMenu(v) {
     const p = (v.plugDock && v.plugDock.groupSel.get(g.key)) || g.panels[0];
     items.push({ icon: pluginIcon(g.panels[0].icon, 'monitor'), label: g.title, fn: () => pluginDockOpen(v, p) });
   }
-  const menus = pluginMenuEntries(devId, 'toolbar', { serial: devId });
+  const menus = pluginToolbarEntries(devId, false);
   if (menus.length) {
     if (items.length) items.push('-');
     items.push(...pluginMenuTree(menus, { serial: devId }));

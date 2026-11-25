@@ -25,6 +25,10 @@ DroidBridge 的插件用 **Lua 5.4** 编写：一个文件夹里放 `plugin.json
 
 团队把插件发布成插件源（一个 `index.json` 清单 + 插件包）后，在 **设置 → 插件** 顶栏的地球按钮里添加清单地址（或本机文件夹），里面的插件就会出现在插件列表中，可以直接安装、更新。发布方法和清单格式见 [SOURCES.md](SOURCES.md)。
 
+### 内置插件
+
+程序自带的插件（目前是 **群控** `group-control`）每次启动都会写进插件目录，默认启用。它们可以在列表里停用，但不能删除，也不能被插件源里同 id 的插件覆盖；改动或删掉它的文件，下次加载会恢复成程序自带的版本。插件列表里用锁图标标出。
+
 ### 第一个插件
 
 `plugins/hello/plugin.json`：
@@ -318,6 +322,11 @@ item:remove()
 - `filter`：`hasApp`（布尔）、`models`、`serials`（glob 列表）由主程序按设备判断；`packages`（glob 列表，匹配包名）、`ext`（glob 列表，匹配扩展名）、`dir`（布尔）由界面判断
 - 处理函数参数：`device`/`toolbar` → `fn(dev)`；`app` → `fn(dev, pkg)`；`file` → `fn(dev, path, isDir)`；`tools` → `fn()`；`media`（相册里的截图、录屏）→ `fn(item)`，item = `{name, kind, device, size, time, path}`；`logcat`（日志行）→ `fn(dev, line)`，line 是原始文字
 - 返回值：字符串会作为提示显示，其他值只表示成功
+- `toolbar` 菜单项加 `pin = true` 时不进拼图菜单，直接作为图标按钮放在投屏卡片的工具列里；`on` 给出按钮处于开启状态的设备 serial 列表。状态变了就用同一个 `id` 再调用一次 `db.menu` 更新：
+
+```lua
+db.menu("toolbar", "群控", { id = "toggle", icon = "link", pin = true, on = { "R5CT10ABCDE" } }, function(dev) end)
+```
 
 面板：
 

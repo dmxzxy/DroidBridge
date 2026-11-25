@@ -1,4 +1,4 @@
-// 投屏查看器：视频解码、控制、录制、性能浮层、群控、AI 提示
+// 投屏查看器：视频解码、控制、录制、性能浮层、AI 提示
 // 由 web/index.html 拆分而来；经典脚本，按 index.html 中的顺序加载，共享全局作用域。
 'use strict';
 
@@ -47,20 +47,17 @@ function setStage(k, v) {
 }
 
 let stageSig = '';
-/** 舞台工具条：多台设备时出现，只用图标；群控状态在左侧 */
+/** 舞台工具条：多台设备时出现，只用图标 */
 function renderStageBar() {
   const bar = $('#stageBar');
   const ready = allReadyDevices();
   const all = [...viewers.values()];
-  const synced = all.filter(v => v.sync);
-  const ratios = synced.filter(v => v.vw > 0 && v.vh > 0).map(v => v.vw / v.vh);
-  const skew = ratios.length >= 2 && Math.max(...ratios) / Math.min(...ratios) > 1.08;
   const unopened = ready.filter(({ hst, d }) => !findViewer(hst, d)).length;
   const multi = all.length >= 2;
   const canOpenAll = unopened > 0 && ready.length >= 2;
   const show = !isMobile() && (multi || canOpenAll);
   // 状态没变就不重建，避免拖动缩放滑块时被定时刷新打断
-  const sig = [show, multi, canOpenAll, STAGE.mode, STAGE.compact, all.length, synced.length, skew, unopened, LANG].join();
+  const sig = [show, multi, canOpenAll, STAGE.mode, STAGE.compact, all.length, unopened, LANG].join();
   if (sig === stageSig) return;
   stageSig = sig;
   const wasHidden = bar.hidden;
@@ -80,12 +77,6 @@ function renderStageBar() {
     },
   });
   const fit = STAGE.mode === 'fit';
-  const sync = synced.length ? h('div', { class: 'stage-sync', title: t('群控同步中 · 已选 {0}/{1} 台', synced.length, all.length) },
-    h('span', { class: 'ico', html: svg('link') }),
-    h('b', {}, synced.length + '/' + all.length),
-    skew ? h('span', { class: 'ico warn', title: t('设备屏幕比例不一致，边缘点击可能偏移'), html: svg('alert') }) : null,
-    synced.length < all.length ? ib('plus', t('全部加入群控'), () => { for (const v of all) if (!v.sync) v.toggleSync(true, true); }) : null,
-    ib('x', t('退出群控'), () => { for (const v of all) if (v.sync) v.toggleSync(false); })) : null;
   const openAll = canOpenAll ? h('button', {
     class: 'ib', type: 'button', title: t('全部投屏'), 'aria-label': t('全部投屏'),
     onclick: () => { for (const { hst, d } of allReadyDevices()) if (!findViewer(hst, d)) openViewer(hst, d); },
@@ -93,7 +84,6 @@ function renderStageBar() {
   const closeAll = multi ? ib('closeAll', t('全部关闭'), () => { for (const v of [...viewers.values()]) v.close(); }) : null;
 
   bar.replaceChildren(...[
-    sync,
     h('div', { class: 'stage-grow' }),
     openAll, closeAll,
     ...(multi ? [
@@ -162,6 +152,7 @@ class Viewer {
     this.fileInput = h('input', { type: 'file', multiple: true, hidden: true, onchange: () => { this.upload([...this.fileInput.files]); this.fileInput.value = ''; } });
     this.plugBtn = ib('puzzle', t('插件'), () => pluginDockMenu(this));
     this.plugBtn.hidden = true;
+    this.plugPins = h('span', { class: 'plug-pins' });
     this.moreBtn = ib('more', t('更多'), () => this.moreMenu());
     this.logBtn = ib('logs', t('日志'), () => this.toggleLog());
     this.filesBtn = ib('folder', t('文件'), () => this.toggleFiles());
@@ -174,8 +165,6 @@ class Viewer {
     this.aiLabel = h('span', { class: 'ai-l' });
     this.aiBtn = h('button', { type: 'button', onclick: () => this.setAgentPaused(!this.aiPaused) }, t('暂停'));
     this.aiBar = h('div', { class: 'aibar', hidden: true }, h('span', { class: 'ai-dot' }), h('b', {}, 'AI'), this.aiLabel, this.aiBtn);
-    this.syncBtn = ib('link', t('群控：在这台设备上的操作同步到其他群控设备'), () => this.toggleSync());
-    this.syncBtn.hidden = viewers.size < 1;
     // 右侧面板：日志 / 文件 / 插件可同时开着，切换时保留各自状态；宽度可拖动
     this.dockW = parseInt(pref.get('dock_w', '0'), 10) || 0;
     this.activeDock = null;
@@ -189,7 +178,7 @@ class Viewer {
     this.bindDockResizer();
     this.root = h('div', { class: 'viewer' },
       ctxMenu(h('div', { class: 'vhead' }, this.dot, this.nameEl, this.recEl, h('span', { class: 'sub' }, this.host.remote ? this.host.name : ''), this.statEl, this.eyeEl,
-        this.syncBtn, ib('max', t('全屏'), () => this.fullscreen()), ib('x', t('关闭'), () => this.close())), () => this.moreItems()),
+        ib('max', t('全屏'), () => this.fullscreen()), ib('x', t('关闭'), () => this.close())), () => this.moreItems()),
       h('div', { class: 'vmain' },
       h('div', { class: 'vbody' },
         h('div', { class: 'vcol' },
@@ -200,7 +189,7 @@ class Viewer {
           ib('power', t('电源键'), key(AKEY.POWER)), ib('volUp', t('音量 +'), key(AKEY.VOLUME_UP)), ib('volDown', t('音量 −'), key(AKEY.VOLUME_DOWN)),
           ib('rotate', t('旋转屏幕'), () => this.send({ t: 'cmd', name: 'rotate' })),
           h('div', { class: 'sep' }),
-          ib('camera', t('截取屏幕'), () => this.screenshot()), this.recBtn, this.kbBtn, this.audioBtn, this.logBtn, this.filesBtn, this.plugBtn, this.perfBtn, this.moreBtn)),
+          ib('camera', t('截取屏幕'), () => this.screenshot()), this.recBtn, this.kbBtn, this.audioBtn, this.logBtn, this.filesBtn, this.plugPins, this.plugBtn, this.perfBtn, this.moreBtn)),
       this.vlog),
       this.fileInput);
     this.bindInput();
@@ -506,7 +495,6 @@ class Viewer {
         this.vw = m.width; this.vh = m.height;
         if (this.canvas.width !== m.width || this.canvas.height !== m.height) { this.canvas.width = m.width; this.canvas.height = m.height; }
         this.fit();
-        if (this.sync) renderStageBar();
         break;
       case 'error': this.lastError = m.msg; break;
       case 'audio':
@@ -615,38 +603,7 @@ class Viewer {
     this.send({ t: 'clipboard', text, paste: true });
   }
   sendRaw(obj) { if (this.ws && this.ws.readyState === 1) this.ws.send(JSON.stringify(obj)); }
-  /** 发送控制消息；开启群控时同步给其他群控设备（坐标按各自分辨率等比换算，并在从机上显示同步落点波纹） */
-  send(obj) {
-    this.sendRaw(obj);
-    if (!this.sync || !SYNC_TYPES.has(obj.t) || (obj.t === 'cmd' && obj.name === 'reset_video')) return;
-    for (const v of viewers.values()) {
-      if (v === this || !v.sync) continue;
-      if (obj.w) {
-        if (v.vw) {
-          v.sendRaw({ ...obj, x: Math.round(obj.x / obj.w * v.vw), y: Math.round(obj.y / obj.h * v.vh), w: v.vw, h: v.vh });
-          if (obj.t === 'touch' && obj.action === 0) v.syncMark(obj.x / obj.w, obj.y / obj.h);
-        }
-      } else {
-        v.sendRaw(obj);
-      }
-    }
-  }
-  syncMark(fx, fy) {
-    const sr = this.canvas.parentElement.getBoundingClientRect(), cr = this.canvas.getBoundingClientRect();
-    if (!cr.width) return;
-    const el = h('div', { class: 'aitap synctap' });
-    el.style.left = (cr.left - sr.left + fx * cr.width) + 'px';
-    el.style.top = (cr.top - sr.top + fy * cr.height) + 'px';
-    this.canvas.parentElement.append(el);
-    setTimeout(() => el.remove(), 600);
-  }
-  toggleSync(on = !this.sync, quiet = false) {
-    this.sync = on;
-    this.root.classList.toggle('synced', on);
-    this.syncBtn.classList.toggle('on', on);
-    renderStageBar();
-    if (on && !quiet && [...viewers.values()].filter(v => v.sync).length < 2) toast(t('再给至少一台设备打开群控'));
-  }
+  send(obj) { this.sendRaw(obj); }
 
   // ---- AI Agent 操作提示 ----
   onAgent(m) {
@@ -1013,8 +970,6 @@ function openViewer(hst, dev) {
 }
 
 function afterViewersChange() {
-  // 群控至少需要两台设备
-  for (const v of viewers.values()) { v.syncBtn.hidden = viewers.size < 2; if (viewers.size < 2 && v.sync) v.toggleSync(false); }
   $('#placeholder').style.display = viewers.size ? 'none' : '';
   if (!viewers.size) { document.body.classList.remove('viewing'); history.replaceState(null, '', location.pathname + location.search); }
   renderSide();
