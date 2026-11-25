@@ -1584,6 +1584,10 @@ function pluginOnEvent(m) {
       }
       break;
     }
+    case 'ripple': {
+      for (const v of pluginViewersOf(pluginTxt(m.serial))) v.syncMark(+m.x, +m.y);
+      break;
+    }
     case 'overlay': {
       const devId = pluginTxt(m.serial);
       const list = (pluginOverlayMaps.get(devId) || []).filter((x) => x.plugin !== m.plugin);

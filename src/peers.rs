@@ -608,9 +608,32 @@ pub async fn proxy_ws_with_ctl(
     let session_sz = std::sync::Arc::new(std::sync::Mutex::new(None::<(u32, u32)>));
     let session_up = session_sz.clone();
     let has_tap = ctl_tap.is_some();
+    // 群控同步到这台远程设备的指令（按当前画面尺寸换算坐标后写进同一条连接）
+    let (mut relay_rx, relay_tx) = match &ctl_tap {
+        Some((st, dev_id)) => {
+            let (rx, tx) = st.plugins.remote_attach(dev_id);
+            (Some(rx), Some(tx))
+        }
+        None => (None, None),
+    };
 
     let up = async {
-        while let Some(Ok(m)) = crx.next().await {
+        loop {
+            let m = tokio::select! {
+                m = crx.next() => match m {
+                    Some(Ok(m)) => m,
+                    _ => break,
+                },
+                Some(ctl) = async { match relay_rx.as_mut() { Some(rx) => rx.recv().await, None => std::future::pending().await } } => {
+                    let sz = *session_up.lock().unwrap();
+                    let ctl = match sz { Some((w, h)) => ctl.scale(w, h), None => continue };
+                    let Ok(text) = serde_json::to_string(&ctl) else { continue };
+                    if rtx.send(TMsg::Text(text.into())).await.is_err() {
+                        break;
+                    }
+                    continue;
+                }
+            };
             let mut tap_ctl = None;
             let tm = match m {
                 AMsg::Text(t) => {
@@ -667,6 +690,9 @@ pub async fn proxy_ws_with_ctl(
     tokio::select! {
         _ = up => {},
         _ = down => {},
+    }
+    if let (Some((st, dev_id)), Some(tx)) = (&ctl_tap, &relay_tx) {
+        st.plugins.remote_detach(dev_id, tx);
     }
 }
 

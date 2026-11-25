@@ -1753,6 +1753,45 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// 群控：连在一组的设备，一台上的按下 / 移动 / 抬起按顺序同步到正在投屏的远程设备，并在它的画面上显示扩散圈
+    #[tokio::test]
+    async fn linked_devices_relay_full_gestures_to_remote_mirror() {
+        let dir = std::env::temp_dir().join(format!("droidbridge-link-{:08x}", util::random_scid()));
+        let st = test_state_in(dir.clone(), "HostLink");
+        st.plugins.load();
+        let ph = st.plugins.get("group-control").unwrap();
+        st.plugins.set_state(&ph, plugins::PluginState::Running, None);
+        *ph.link.lock().unwrap() = vec!["S1".into(), "pc/S2".into()];
+        let (mut rx, tx) = st.plugins.remote_attach("pc/S2");
+        let mut events = st.plugins.subscribe();
+
+        let touch = |action: u8, x: i32| control::Ctl::Touch { action, id: -1, x, y: 500, w: 1080, h: 2400, p: 1.0, buttons: 0 };
+        for (a, x) in [(0, 100), (2, 200), (2, 300), (1, 400)] {
+            st.plugins.on_user_ctl(&st, "S1", &touch(a, x), None);
+        }
+        st.plugins.on_user_ctl(&st, "S1", &control::Ctl::Text { text: "hi".into() }, None);
+        let mut got = Vec::new();
+        while let Ok(c) = rx.try_recv() {
+            got.push(match c {
+                control::Ctl::Touch { action, x, .. } => format!("t{action}:{x}"),
+                control::Ctl::Text { text } => format!("text:{text}"),
+                other => format!("{other:?}"),
+            });
+        }
+        assert_eq!(got, vec!["t0:100", "t2:200", "t2:300", "t1:400", "text:hi"]);
+        let ev = events.try_recv().expect("应发出扩散圈事件");
+        let v: serde_json::Value = serde_json::from_str(&ev.text).unwrap();
+        assert_eq!((v["type"].as_str(), v["serial"].as_str()), (Some("ripple"), Some("pc/S2")));
+
+        // 不在组里的设备、组被清空后都不再同步
+        st.plugins.on_user_ctl(&st, "S3", &touch(0, 1), None);
+        *ph.link.lock().unwrap() = vec![];
+        st.plugins.on_user_ctl(&st, "S1", &touch(0, 1), None);
+        assert!(rx.try_recv().is_err());
+        st.plugins.remote_detach("pc/S2", &tx);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// 流式保存请求体超过上限时中止并删除文件
     #[tokio::test]
     async fn save_body_enforces_limit() {

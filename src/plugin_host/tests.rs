@@ -918,17 +918,6 @@ fn builtin_group_control_plugin() {
         assert_eq!(link["p"]["serials"], json!(["S1", "p1/S2"]));
     }
 
-    // 群控设备上的点击在从机上画落点；不在组里的设备不画
-    h.take();
-    h.req("event", json!({"name": "device.action", "args": [{"serial": "S3"}, {"kind": "tap", "x": 1, "y": 2, "w": 1080, "h": 2400}]}));
-    assert!(!h.out.borrow().iter().any(|v| v["m"] == "overlay"));
-    h.req("event", json!({"name": "device.action", "args": [{"serial": "S1"}, {"kind": "tap", "x": 100, "y": 200, "w": 1080, "h": 2400}]}));
-    {
-        let out = h.out.borrow();
-        let ov = out.iter().find(|v| v["m"] == "overlay").expect("应画落点");
-        assert_eq!(ov["p"]["serial"], json!("p1/S2"));
-    }
-
     // 退出后分组只剩一台
     h.req("menu", json!({"id": "toggle", "ctx": {"serial": "S1"}}));
     let out = h.out.borrow();

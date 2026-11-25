@@ -331,22 +331,6 @@ fn relayable(ctl: &control::Ctl) -> bool {
     }
 }
 
-/// 人工操作转成插件 `input` 调用的参数（转发到远程设备用）
-fn input_json(ctl: &control::Ctl) -> Option<Value> {
-    use control::Ctl::*;
-    Some(match ctl {
-        Touch { action, id, x, y, w, h, p, .. } => json!({"kind": "touch", "action": action, "id": id, "x": x, "y": y, "w": w, "h": h, "p": p}),
-        Scroll { x, y, w, h, hs, vs } => json!({"kind": "scroll", "x": x, "y": y, "w": w, "h": h, "hs": hs, "vs": vs}),
-        Key { action, code, meta, .. } => json!({"kind": "key", "action": action, "code": code, "meta": meta}),
-        Back { action } => json!({"kind": "back", "action": action}),
-        Text { text } => json!({"kind": "text", "text": text}),
-        Clipboard { text, paste: true, .. } if !text.is_empty() => json!({"kind": "text", "text": text}),
-        Power { on } => json!({"kind": "power", "on": on}),
-        Cmd { name } if name != "reset_video" => json!({"kind": "cmd", "name": name}),
-        _ => return None,
-    })
-}
-
 /// 解析 `wm size` 输出的屏幕宽高（优先取最后一行的 Override size）
 pub(crate) fn parse_wm_size(out: &str) -> Option<(u32, u32)> {
     let mut found = None;
@@ -388,8 +372,6 @@ pub(crate) struct Plugin {
     input_q: Mutex<Option<mpsc::Sender<InputJob>>>,
     /// `db.link` 连在一起的设备：其中一台的人工操作由主程序直接同步到其他几台
     pub(crate) link: Mutex<Vec<String>>,
-    /// 同步到远程设备的有序转发队列
-    relay_q: Mutex<Option<mpsc::Sender<(String, Value)>>>,
     crashes: Mutex<Vec<Instant>>,
     pub forwards: Mutex<Vec<Forward>>,
 }
@@ -415,7 +397,6 @@ impl Plugin {
             move_rate: Mutex::new(Rate::new(MOVE_PER_SEC)),
             input_q: Mutex::new(None),
             link: Mutex::new(Vec::new()),
-            relay_q: Mutex::new(None),
             crashes: Mutex::new(Vec::new()),
             forwards: Mutex::new(Vec::new()),
         }
@@ -544,6 +525,8 @@ pub struct Plugins {
     screens: Mutex<HashMap<String, (u32, u32)>>,
     /// 投屏人工输入合成器（device.input / device.action）
     input_tracker: Mutex<InputTracker>,
+    /// 正在投屏的远程设备 → 往它的投屏连接里写控制指令
+    remote_ctl: Mutex<HashMap<String, mpsc::UnboundedSender<control::Ctl>>>,
     /// 串行化写入并轮转 `.audit.log` 的异步锁
     audit_lock: Arc<tokio::sync::Mutex<()>>,
     next_sub: AtomicU64,
@@ -569,6 +552,7 @@ impl Plugins {
             foreground: Mutex::new(HashMap::new()),
             screens: Mutex::new(HashMap::new()),
             input_tracker: Mutex::new(InputTracker::default()),
+            remote_ctl: Mutex::new(HashMap::new()),
             audit_lock: Arc::new(tokio::sync::Mutex::new(())),
             next_sub: AtomicU64::new(1),
             next_dialog: AtomicU64::new(1),
@@ -828,7 +812,21 @@ impl Plugins {
         }
     }
 
-    /// 把一台设备上的人工操作按到达顺序同步到 `db.link` 同组的其他设备：本机投屏中的设备直接注入，其余经有序队列转发
+    /// 正在投屏的远程设备：转发进它的投屏连接（返回值用于退出时注销）
+    pub(crate) fn remote_attach(&self, dev_id: &str) -> (mpsc::UnboundedReceiver<control::Ctl>, mpsc::UnboundedSender<control::Ctl>) {
+        let (tx, rx) = mpsc::unbounded_channel();
+        self.remote_ctl.lock().unwrap().insert(dev_id.to_string(), tx.clone());
+        (rx, tx)
+    }
+
+    pub(crate) fn remote_detach(&self, dev_id: &str, tx: &mpsc::UnboundedSender<control::Ctl>) {
+        let mut m = self.remote_ctl.lock().unwrap();
+        if m.get(dev_id).is_some_and(|cur| cur.same_channel(tx)) {
+            m.remove(dev_id);
+        }
+    }
+
+    /// 把一台设备上的人工操作按到达顺序同步到 `db.link` 同组的其他投屏中的设备：本机的直接注入 scrcpy，远程的写进它的投屏连接
     fn relay_linked(&self, st: &Arc<AppState>, dev_id: &str, ctl: &control::Ctl) {
         if !relayable(ctl) {
             return;
@@ -845,14 +843,23 @@ impl Plugins {
                 continue;
             }
             for t in targets {
+                self.ripple(dev_id, &t, ctl);
                 if split_dev(&t).is_none() && st.mirrors.get(&t).is_some_and(|mr| mr.inject_ctl(ctl)) {
                     continue;
                 }
-                if let Some(ev) = input_json(ctl) {
-                    let mut q = ph.relay_q.lock().unwrap();
-                    let tx = q.get_or_insert_with(|| calls::relay_worker(st.clone(), &ph));
-                    let _ = tx.try_send((t, ev));
+                if let Some(tx) = self.remote_ctl.lock().unwrap().get(&t) {
+                    let _ = tx.send(ctl.clone());
                 }
+            }
+        }
+    }
+
+    /// 按下时在被同步的设备画面上显示扩散圈（坐标为比例）
+    fn ripple(&self, from: &str, to: &str, ctl: &control::Ctl) {
+        if let control::Ctl::Touch { action: 0, x, y, w, h, .. } = ctl {
+            if *w > 0 && *h > 0 {
+                let (fx, fy) = (*x as f64 / *w as f64, *y as f64 / *h as f64);
+                self.emit(None, json!({"type": "ripple", "serial": to, "from": from, "x": fx, "y": fy}));
             }
         }
     }

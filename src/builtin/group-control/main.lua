@@ -1,12 +1,11 @@
 -- 群控：在一台设备上的操作同步到其他群控设备
--- 同步由主程序按顺序直接注入（db.link），插件只管理分组、按钮、状态栏和落点提示
+-- 同步与落点扩散圈由主程序完成（db.link），插件只管理分组、按钮和状态栏
 
 local EN = db.lang == "en"
 local function T(zh, en) return EN and en or zh end
 
 local group = {}   -- 群控中的设备 serial -> true
 local sizes = {}   -- 设备画面尺寸 serial -> {w, h}
-local marks = {}   -- 从机落点标记的令牌，新标记出现时旧的不再清除
 local skew = false
 
 local function members()
@@ -60,30 +59,12 @@ refresh = function()
   })
 end
 
--- 在从机画面上短暂显示同步落点
-local function mark(s, act)
-  local tok = {}
-  marks[s] = tok
-  db.overlay({ serial = s }, { { type = "point", x = act.x, y = act.y, color = "#3fb27f" } }, { w = act.w, h = act.h })
-  db.after(0.6, function()
-    if marks[s] == tok then
-      marks[s] = nil
-      db.overlay({ serial = s }, nil)
-    end
-  end)
-end
-
 db.on("device.action", function(dev, act)
   local src = dev.serial
   if not group[src] then return end
   if tonumber(act.w) and act.w > 0 and tonumber(act.h) and act.h > 0 then
     sizes[src] = { w = act.w, h = act.h }
     if skewed() ~= skew then refresh() end
-  end
-  if act.kind == "tap" or act.kind == "longpress" then
-    for s in pairs(group) do
-      if s ~= src then mark(s, act) end
-    end
   end
 end)
 

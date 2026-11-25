@@ -263,7 +263,7 @@ dev:swipe(100, 1600, 100, 400, 300, { w = 1080, h = 2400 })
 dev:touch("down", 540, 1200, { id = 1, w = 1080, h = 2400, p = 1.0 })  -- down / move / up / cancel（已开投屏时毫秒级跟手）
 dev:scroll(540, 1200, 0, -2, { w = 1080, h = 2400 })     -- 滚轮滚动
 dev:send(ev)                                             -- 直接转发 device.action 或 device.input 事件表
-db.link({ dev1, "S2", "pc1/S3" })                      -- 把这些设备连成一组：用户在其中一台投屏里的操作由主程序按顺序直接同步到其他几台（不经过 Lua，适合实时群控）；db.link({}) 解除，插件停止时自动解除
+db.link({ dev1, "S2", "pc1/S3" })                      -- 把这些设备连成一组：用户在其中一台投屏里的操作由主程序按顺序直接同步到组里其他正在投屏的设备（本机或远程电脑，不经过 Lua），按下处显示扩散圈；db.link({}) 解除，插件停止时自动解除
 db.broadcast({ dev2, dev3 }, ev)                         -- 并发广播输入事件到多台本机/远程设备 -> {ok, failed}
 dev:setClipboard("文字")                                 -- 写设备剪贴板（不粘贴）
 local s = dev:getClipboard()

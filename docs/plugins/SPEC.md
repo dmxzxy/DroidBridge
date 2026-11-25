@@ -141,7 +141,7 @@
 - `launch` `{serial, package, activity?}`；`stop` `{serial, package}`；`clear` `{serial, package}`
 - `foreground` `{serial}` → package 字符串或 null
 - `input` `{serial, kind:"tap"|"longpress"|"swipe"|"touch"|"scroll"|"key"|"back"|"text"|"power"|"cmd", x?,y?,x2?,y2?,w?,h?,duration?,action?,id?,p?,hs?,vs?,key?,code?,meta?,text?,on?,name?}`（目标设备已开启共享投屏时直通 scrcpy 控制通道并自动按会话尺寸换算 `(w,h)`；未开启投屏时退回 `adb shell input` 并按 `wm size` 换算 `(w,h)`；`touch` 未投屏时返回错误；`touch` move 帧单独限流每秒 240 帧，超出直接返回 `false`）
-- `link` `{serials:[...]}` → 实际生效的 serial 列表（需要 `device.input`，按 match 过滤）。之后用户在组内任一台的投屏操作由主进程直接注入其他设备（本机投屏中的设备走 scrcpy 控制通道，其余按顺序经 `input` 转发）；传空列表解除，插件停止时清空
+- `link` `{serials:[...]}` → 实际生效的 serial 列表（需要 `device.input`，按 match 过滤）。之后用户在组内任一台的投屏操作由主进程直接注入组内其他正在投屏的设备（本机走 scrcpy 控制通道，远程设备写进它的投屏连接，按原顺序），并向前端发 `{type:"ripple", serial, x, y}`（比例坐标）显示扩散圈；传空列表解除，插件停止时清空
 - `broadcast` `{serials:[...], ev:{...}}` → `{ok, failed}`（检查 `device.input` 权限与各设备的 `match` 范围，并发向多台本机/远程设备派发 `input`）
 - `screenshot` `{serial, save?}` → 本机 PNG 路径（save=true 时同时存入图库）
 - `forward` `{serial, local, remote, reverse?}` → 实际本机端口（local=0 自动分配）；`unforward` `{serial, local?, remote?, reverse?}`。插件停止时主进程自动移除它建立的所有转发

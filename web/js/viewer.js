@@ -604,6 +604,16 @@ class Viewer {
   }
   sendRaw(obj) { if (this.ws && this.ws.readyState === 1) this.ws.send(JSON.stringify(obj)); }
   send(obj) { this.sendRaw(obj); }
+  /** 群控同步到这台设备时，在落点显示扩散圈（fx/fy 为画面比例坐标） */
+  syncMark(fx, fy) {
+    const sr = this.canvas.parentElement.getBoundingClientRect(), cr = this.canvas.getBoundingClientRect();
+    if (!cr.width || !(fx >= 0 && fx <= 1 && fy >= 0 && fy <= 1)) return;
+    const el = h('div', { class: 'aitap synctap' });
+    el.style.left = (cr.left - sr.left + fx * cr.width) + 'px';
+    el.style.top = (cr.top - sr.top + fy * cr.height) + 'px';
+    this.canvas.parentElement.append(el);
+    setTimeout(() => el.remove(), 600);
+  }
 
   // ---- AI Agent 操作提示 ----
   onAgent(m) {
