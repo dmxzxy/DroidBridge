@@ -285,6 +285,24 @@ async fn handle(app: &Arc<AppState>, ph: &Arc<Plugin>, m: &str, p: &Value) -> Re
                 .collect();
             Ok(json!(list))
         }
+        "ai.tools" => {
+            need(ph, "ai.call")?;
+            Ok(json!({"tools": ai_tools(app, Some(&ph.id)), "guides": ai_guides(app, Some(&ph.id))}))
+        }
+        "ai.call" => {
+            need(ph, "ai.call")?;
+            let name = arg_str(p, "name").ok_or_else(|| tr!("缺少 name", "Missing name"))?;
+            let serial = arg_str(p, "serial").filter(|s| !s.is_empty());
+            if let Some(s) = serial {
+                if !app.plugins.device_allowed(app, ph, s).await {
+                    return Err(tr!("设备不在插件的使用范围内：{s}", "The device is outside the plugin's scope: {s}"));
+                }
+            }
+            let args = p.get("args").cloned().filter(|v| v.is_object()).unwrap_or(json!({}));
+            let r = ai_call(app, name, &args, serial).await?;
+            app.plugins.audit(&ph.id, m, json!({"name": name, "serial": serial}));
+            Ok(r)
+        }
         "plugin.call" => {
             let target = arg_str(p, "plugin").unwrap_or_default();
             let name = arg_str(p, "name").ok_or_else(|| tr!("缺少 name", "Missing name"))?;
@@ -328,8 +346,17 @@ async fn handle(app: &Arc<AppState>, ph: &Arc<Plugin>, m: &str, p: &Value) -> Re
 fn register(app: &Arc<AppState>, ph: &Arc<Plugin>, p: &Value) -> Result<Value, String> {
     let kind = arg_str(p, "kind").unwrap_or("");
     let def = p.get("def").cloned().ok_or_else(|| tr!("缺少 def", "Missing def"))?;
-    if kind == "mcp" {
-        need(ph, "mcp")?;
+    if kind == "mcp" || kind == "aiguide" {
+        need(ph, "ai")?;
+    }
+    if kind == "aiguide" {
+        let text = def.get("text").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        if text.len() > 16 * 1024 {
+            return Err(tr!("使用说明不能超过 16 KB", "The guide must not exceed 16 KB"));
+        }
+        ph.contributions.lock().unwrap().ai_guide = text;
+        app.plugins.emit_changed();
+        return Ok(json!(true));
     }
     if kind == "event" || kind == "export" {
         let name = def.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();

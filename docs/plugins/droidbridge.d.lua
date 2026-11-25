@@ -318,12 +318,45 @@ local DbPerf = {}
 ---@param fn fun(dev: DbDevice|nil): number|nil
 function DbPerf.metric(id, opts, fn) end
 
+---@class DbAiTool
+---@field name string <插件id>__<名称>
+---@field plugin string
+---@field tool string
+---@field description string
+---@field inputSchema table
+---@field readOnly boolean
+
+---@class DbAi
+local DbAi = {}
+
+---注册一个 AI 工具（给其他插件和 MCP 客户端用），名字会变成 <插件id>__<name>；需要 ai 权限
+---@param name string
+---@param opts { description?: string, params?: table<string, table>, required?: string[], readOnly?: boolean }
+---@param fn fun(dev: DbDevice|nil, args: table): string|table
+function DbAi.tool(name, opts, fn) end
+
+---给 AI 的使用说明，再次调用替换，空字符串清除；需要 ai 权限
+---@param text string
+function DbAi.guide(text) end
+
+---其他运行中插件的 AI 工具和使用说明；需要 ai.call 权限
+---@return { tools: DbAiTool[], guides: { plugin: string, name: string, text: string }[] }
+function DbAi.tools() end
+
+---调用其他插件的 AI 工具，返回对方处理函数的返回值；需要 ai.call 权限
+---@param name string
+---@param args? table
+---@param dev? DbDevice|string
+---@return any
+function DbAi.call(name, args, dev) end
+
+---旧名，等同于 db.ai
 ---@class DbMcp
 local DbMcp = {}
 
----注册一个 AI（MCP）工具，名字会变成 <插件id>__<name>
+---@deprecated 用 db.ai.tool
 ---@param name string
----@param opts { description?: string, params?: table<string, table>, required?: string[] }
+---@param opts { description?: string, params?: table<string, table>, required?: string[], readOnly?: boolean }
 ---@param fn fun(dev: DbDevice|nil, args: table): string|table
 function DbMcp.tool(name, opts, fn) end
 
@@ -505,6 +538,7 @@ function DbJson.decode(s) end
 ---@field settings table<string, any> 只读：当前设置值
 ---@field logcat DbLogcat
 ---@field perf DbPerf
+---@field ai DbAi
 ---@field mcp DbMcp
 ---@field fs DbFs
 ---@field ui DbUiNs

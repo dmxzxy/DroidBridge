@@ -753,18 +753,20 @@ function db.perf.metric(id, opts, fn)
   }
 end
 
-db.mcp = {}
+db.ai = {}
 
-function db.mcp.tool(name, opts, fn)
-  if not H.has_perm("mcp") then error("db.mcp.tool 需要 mcp 权限", 2) end
-  if type(name) ~= "string" then error("db.mcp.tool: name 必须是字符串", 2) end
-  if type(fn) ~= "function" then error("db.mcp.tool: 需要函数", 2) end
+--- 注册 AI 工具；readOnly = true 表示不改变设备和电脑的状态
+function db.ai.tool(name, opts, fn)
+  if not H.has_perm("ai") then error("db.ai.tool 需要 ai 权限", 2) end
+  if type(name) ~= "string" then error("db.ai.tool: name 必须是字符串", 2) end
+  if type(fn) ~= "function" then error("db.ai.tool: 需要函数", 2) end
   opts = opts or {}
   local def = {
     name = name,
     description = opts.description or "",
     params = opts.params or {},
     required = opts.required,
+    readOnly = opts.readOnly == true,
   }
   mcps[name] = { fn = fn, def = def }
   reg("mcp", def)
@@ -776,6 +778,30 @@ function db.mcp.tool(name, opts, fn)
     end,
   }
 end
+
+--- 告诉 AI 什么时候用、怎么组合这个插件的工具（再次调用会替换，传空字符串清除）
+function db.ai.guide(text)
+  if not H.has_perm("ai") then error("db.ai.guide 需要 ai 权限", 2) end
+  if type(text) ~= "string" then error("db.ai.guide: 需要字符串", 2) end
+  call("register", { kind = "aiguide", def = { text = text } })
+end
+
+--- 其他运行中插件的 AI 工具和使用说明：{tools = {...}, guides = {...}}
+function db.ai.tools()
+  if not H.has_perm("ai.call") then error("db.ai.tools 需要 ai.call 权限", 2) end
+  return call("ai.tools", {})
+end
+
+--- 调用其他插件的 AI 工具，name 为 db.ai.tools 返回的 name（`<插件id>__<名称>`）
+function db.ai.call(name, args, dev)
+  if not H.has_perm("ai.call") then error("db.ai.call 需要 ai.call 权限", 2) end
+  if type(name) ~= "string" then error("db.ai.call: name 必须是字符串", 2) end
+  local serial = type(dev) == "table" and dev.serial or dev
+  return call("ai.call", { name = name, args = args or {}, serial = serial })
+end
+
+-- 旧名
+db.mcp = { tool = db.ai.tool }
 
 -- ---------------------------------------------------------------- logcat
 
@@ -1338,7 +1364,7 @@ local function dispatch(m, p)
     return fn(p.args, p.from)
   elseif m == "mcp" then
     local item = mcps[p.name]
-    if not item then error("MCP 工具不存在: " .. tostring(p.name)) end
+    if not item then error("AI 工具不存在: " .. tostring(p.name)) end
     return item.fn(dev_arg(p.serial), p.args or {})
   elseif m == "event" then
     local name = p.name

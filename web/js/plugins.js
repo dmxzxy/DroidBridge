@@ -28,7 +28,9 @@ const PLUGIN_PERMS = {
   'net': '访问网络',
   'clipboard': '读写这台电脑的剪贴板',
   'media': '把图片、录屏保存到相册',
-  'mcp': '向 AI（MCP）注册工具',
+  'mcp': '向 AI 提供工具',
+  'ai': '向 AI 提供工具',
+  'ai.call': '使用其他插件提供的 AI 工具（以对方插件的权限操作设备）',
   'web.embed': '在面板里嵌入插件声明的外部网站',
 };
 
@@ -882,7 +884,7 @@ const PLUGIN_PERM_ICON = {
   'device.shell': 'terminal', 'device.files': 'folder', 'device.install': 'package', 'device.apps': 'grid',
   'device.input': 'target', 'device.observe': 'eye', 'device.screen': 'camera', 'device.forward': 'swap', 'device.logs': 'logs',
   'device.perf': 'activity', 'device.connect': 'wifi', 'fs.read': 'file', 'fs': 'drive', 'exec': 'play', 'net': 'globe', 'web.embed': 'monitor',
-  'clipboard': 'paste', 'media': 'images', 'mcp': 'bot',
+  'clipboard': 'paste', 'media': 'images', 'mcp': 'bot', 'ai': 'bot', 'ai.call': 'bot',
 };
 
 function pluginStateText(st) {

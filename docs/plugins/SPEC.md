@@ -53,7 +53,8 @@
 | `net` | `db.http.request` / `db.http.download` |
 | `clipboard` | `db.clipboard.get/set` |
 | `media` | `db.media.save` 存入图库、`db.media.list` / `remove` |
-| `mcp` | `db.mcp.tool` 注册 AI 工具 |
+| `ai` | `db.ai.tool` 提供 AI 工具、`db.ai.guide` 使用说明（旧名 `mcp`，两者等价） |
+| `ai.call` | `db.ai.tools` / `db.ai.call` 使用其他插件的 AI 工具 |
 
 `hasApp` 例外：`match.apps` 过滤由主进程内部完成，不需要权限。
 
@@ -100,7 +101,7 @@
 | `metric` | `{id, serial}` | 调用指标函数 `fn(dev)`，返回数字或 null |
 | `web` | `{name, args, serial}` | 调用 `db.web.handle(name, fn)` 注册的 `fn(dev_or_nil, args)`，返回值 |
 | `export` | `{name, args, from}` | 调用 `db.export(name, fn)` 注册的 `fn(args, from)`（from 为调用方插件 id），返回值 |
-| `mcp` | `{name, args, serial}` | 调用 `db.mcp.tool` 注册的 `fn(dev, args)`；返回字符串或表（主进程转成文本） |
+| `mcp` | `{name, args, serial}` | 调用 `db.ai.tool` 注册的 `fn(dev, args)`；返回字符串或表（MCP 调用时主进程转成文本，`ai.call` 原样返回） |
 | `event` | `{name, args:[...]}` | 依次调用 `db.on(name, fn)` 的所有监听者（各自独立协程，不等待完成），立即返回 `true`。`args` 中的设备以 `{"serial":..}` 形式给出，宿主转成 dev 对象 |
 | `settings` | `{values}` | 更新 `db.settings`，然后触发 `settings.changed` 事件，返回 `true` |
 | `logline` | `{sub, line}` | 调用 `db.logcat.watch` 的回调 `fn(line)`；line = `{time, pid, tid, level, tag, msg, raw}` |
@@ -119,7 +120,8 @@
   - `status`: `{id, text, kind?, tip?, clickable}`；kind ∈ `info | ok | warn | error`
   - `metric`: `{id, label, unit?, filter?}`
   - `loghl`: `{id, text, tag?, kind?, label?}`（不区分大小写的子串匹配）
-  - `mcp`: `{name, description, params}`；params = JSON Schema `properties`，`required` 单独字段 `{..., "required":[..]}`
+  - `mcp`: `{name, description, params, readOnly?}`；params = JSON Schema `properties`，`required` 单独字段 `{..., "required":[..]}`；需要 `ai` 权限
+  - `aiguide`: `{text}`（插件给 AI 的使用说明，最多 16 KB，再次注册替换；需要 `ai` 权限）
   - `event`: `{name}`（订阅事件，主进程据此决定是否轮询前台应用等）
   - `export`: `{name}`（提供给其他插件调用的函数）
 - `badge` `{serial, text|null, kind?, tip?}`
@@ -160,6 +162,7 @@
 这台电脑：
 - `adb.connect` `{addr}` → 设备标识；`adb.pair` `{addr, code, connect?}` → `{serial|null, host}`；`adb.disconnect` `{addr}`；`adb.discover` `{}` → `[{name, kind, addr}]`
 - `mirrors` `{}` → `[{serial, viewers, controller}]`；`computers` `{}` → `[{id, name, addr}]`
+- `ai.tools` `{}` → `{tools:[{name, plugin, tool, description, inputSchema, readOnly}], guides:[{plugin, name, text}]}`：其他运行中插件的 AI 工具和使用说明（不含调用方自己）；`ai.call` `{name, args, serial?}` → 目标插件 `mcp` 请求的原始返回值（120 秒超时，serial 需在调用方 match 范围内，记审计）。两者需要 `ai.call` 权限
 - `plugins` `{}` → `[{id, name, version, state, exports}]`；`plugin.call` `{plugin, name, args}` → 目标插件 `export` 请求的返回值（目标未运行或未 export 该名字时报错，120 秒超时）
 
 主进程对每个 call：检查权限（表 1），检查设备在插件 match 范围内，记录审计（会改变设备或运行程序的操作），执行。
@@ -202,6 +205,7 @@
 - 限流：重型设备 I/O（`install`/`uninstall`/`push`/`pull`/`ui`/`screenshot`）每个插件同时最多 4 个，其余轻量设备操作最多 64 个；每台设备同时最多 4 个慢速插件操作（本机投屏直通 `input`/`cmd`/`setClipboard` 免占信号量）；每个插件每秒最多 500 次 call，超出则排队等待。
 - 控制台：每个插件保留最近 1000 条 `{time, level, msg, src}`；新条目通过 ws 广播 `console`。
 - 事件：维护设备列表（每 2 秒 `adb devices`），变化时向订阅了 `device.connected` / `device.disconnected` 的插件发 `event`。有插件订阅 `app.foreground` 时，每 2 秒查一次这些设备的前台应用，变化才发。有拥有 `device.observe` 权限的插件订阅 `device.action` 或 `device.input` 时，旁路捕获人工在投屏窗口（含本机 `Mirror::handle_text` 与远程 `peers::proxy_ws_with_ctl`）发送的控制帧，合成为语义动作 `device.action` 与 60Hz 节流控制流 `device.input`（插件注入的控制帧不经过此入口，杜绝回环）。DroidBridge 自身完成安装（文件管理器、拖放、插件 install）后发 `app.installed` `{dev, package}`（能拿到包名时）；应用管理或插件卸载后发 `app.uninstalled` `{dev, package}`；截图、录屏存入图库后发 `media.saved` `{item}`。插件启动完成（ready）后对每台在线设备补发一次 `device.connected`。
+- AI 工具：插件用 `db.ai.tool` 注册，其他插件经 `ai.tools` / `ai.call` 使用（不经过 MCP），MCP 客户端也能用。`readOnly` 在 MCP 里给出 `annotations.readOnlyHint`。
 - MCP：`mcp.rs` 的工具列表追加本机所有运行中插件注册的工具，名字 `<pluginid>__<name>`（非法字符替换为 `_`，截断到 64）。调用时路由到对应插件 `mcp` 请求（120 秒超时）。远程电脑：`list_tools` 同时向各远程电脑 `GET /api/plugins/mcp` 合并（按名字去重）；调用远程设备时经 `/api/agent/exec` 转发，`agent::exec` 遇到含 `__` 的工具名交给 `plugins::mcp_call`。
 
 ### 4.1 HTTP 接口（全部经过现有 auth 中间件；带 `?peer=` 时转发给远程电脑）
@@ -299,7 +303,8 @@ db.notify(text, {kind})
 db.overlay(dev, shapes, size) ; db.overlay(dev, nil)
 db.repaint(panelId)
 db.perf.metric(id, {label, unit, filter}, fn(dev) -> number)
-db.mcp.tool(name, {description, params={x={type,description}}, required={..}}, fn(dev, args))
+db.ai.tool(name, {description, params={x={type,description}}, required={..}, readOnly}, fn(dev, args))   -- 旧名 db.mcp.tool
+db.ai.guide(text) ; db.ai.tools() -> {tools, guides} ; db.ai.call(name, args, dev?)
 
 db.ui.confirm(title, message) -> bool
 db.ui.prompt(title, message, default) -> string|nil

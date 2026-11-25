@@ -149,7 +149,8 @@ end)
 | `net` | `db.http.request` / `db.http.download` |
 | `clipboard` | `db.clipboard.get` / `set` |
 | `media` | `db.media.save` 存入相册，`db.media.list` / `remove` |
-| `mcp` | `db.mcp.tool` 注册 AI 工具 |
+| `ai` | `db.ai.tool` 提供 AI 工具、`db.ai.guide` 使用说明（旧名 `mcp`，两者等价） |
+| `ai.call` | `db.ai.tools` / `db.ai.call` 使用其他插件的 AI 工具 |
 
 清单里出现新权限时，插件会变成“需要权限确认”并停止运行，直到用户再次确认。启用时确认的权限会被记录下来，之后清单里只增加权限、不减少，也会再次要求确认。
 
@@ -471,21 +472,38 @@ db.media.remove(name)                 -- 删除相册里的一个文件
 
 相对路径相对于 `dataDir`（插件的数据目录）；`plugin://x` 表示插件目录内的文件（只读）。
 
-### 4.9 AI（MCP）工具
+### 4.9 AI 工具
 
 ```lua
-db.mcp.tool("restart_game", {
+db.ai.tool("restart_game", {
   description = "重启游戏并回到主界面",
   params = { package = { type = "string", description = "包名，默认 com.my.game" } },
   required = { "package" },
+  readOnly = false,   -- true 表示不改变设备和电脑的状态；AI 助手据此决定是否先请用户确认
 }, function(dev, args)
   dev:shell("am force-stop " .. (args.package or "com.my.game"))
   dev:launch(args.package or "com.my.game")
   return "已重启"
 end)
+
+-- 告诉 AI 什么时候用、怎么组合这些工具（可以随设置更新，再次调用会替换）
+db.ai.guide([[
+- 游戏里的界面用 ui_find 找控件，不要用 Android 控件树
+- 改完 Lua 先 sync_lua 再 hot_reload
+]])
 ```
 
-需要 `mcp` 权限。工具名在 AI 那边会变成 `<插件id>__<名字>`，例如 `game-dev__restart_game`。参数是 JSON Schema 的 `properties` 部分，`required` 单独给出。
+需要 `ai` 权限（旧名 `mcp`，`db.mcp.tool` 仍然可用）。工具同时提供给其他插件（如 AI 助手）和 MCP 客户端（Claude Code、Cursor 等），名字是 `<插件id>__<名字>`，例如 `game-dev__restart_game`。参数是 JSON Schema 的 `properties` 部分，`required` 单独给出。返回字符串或表。
+
+使用方（需要 `ai.call` 权限）：
+
+```lua
+local r = db.ai.tools()     -- {tools = {{name, plugin, tool, description, inputSchema, readOnly}}, guides = {{plugin, name, text}}}，不含自己
+local out = db.ai.call("game-dev__restart_game", { package = "com.my.game" }, dev)   -- 返回对方处理函数的返回值，出错时报错
+```
+
+- 工具以提供方插件的权限运行；单次调用最长 120 秒
+- 只列出运行中的插件；插件启停后重新调用 `db.ai.tools()` 即可拿到最新清单
 
 ### 4.10 事件
 

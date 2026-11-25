@@ -190,7 +190,8 @@ pub fn device_matches(m: &MatchRules, model: &str, serial: &str, has_app: bool) 
 
 /// 是否已授予某项权限（`fs` 包含 `fs.read`）
 pub fn has_perm(granted: &[String], need: &str) -> bool {
-    granted.iter().any(|g| g == need) || (need == "fs.read" && granted.iter().any(|g| g == "fs"))
+    let has = |p: &str| granted.iter().any(|g| g == p);
+    has(need) || (need == "fs.read" && has("fs")) || (need == "ai" && has("mcp")) || (need == "mcp" && has("ai"))
 }
 
 /// 清单里有 granted 中没有的权限 → 需要用户重新确认（needs_grant）
@@ -356,6 +357,11 @@ mod tests {
         // fs 已覆盖 fs.read
         let perms = vec!["fs.read".to_string()];
         assert!(!needs_grant(&perms, &granted));
+        // mcp 是 ai 的旧名，互相等价；ai.call 要单独授予
+        let old = vec!["mcp".to_string()];
+        assert!(has_perm(&old, "ai"));
+        assert!(!needs_grant(&["ai".to_string()], &old));
+        assert!(!has_perm(&old, "ai.call"));
         // 空清单
         assert!(!needs_grant(&[], &[]));
     }

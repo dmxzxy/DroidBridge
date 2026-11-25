@@ -68,7 +68,10 @@ pub(crate) struct Contribs {
     status: Vec<Value>,
     metrics: Vec<Value>,
     loghl: Vec<Value>,
+    /// AI 工具（db.ai.tool / 旧名 db.mcp.tool）
     mcps: Vec<Value>,
+    /// db.ai.guide 给 AI 的使用说明
+    ai_guide: String,
     events: BTreeSet<String>,
     /// db.export 提供给其他插件调用的函数名
     exports: BTreeSet<String>,
@@ -1676,11 +1679,26 @@ async fn cleanup_tmp(root: &Path) {
 
 // ---------------------------------------------------------------- MCP
 
-/// 本机所有运行中插件注册的 MCP 工具（名字为 `<插件id>__<名称>`）
+/// 本机所有运行中插件注册的 AI 工具，给 MCP 用（名字为 `<插件id>__<名称>`）
 pub fn mcp_tools(st: &AppState) -> Vec<Value> {
+    ai_tools(st, None)
+        .into_iter()
+        .map(|t| {
+            let mut v = json!({"name": t["name"], "description": t["description"], "inputSchema": t["inputSchema"]});
+            if t["readOnly"] == json!(true) {
+                v["annotations"] = json!({"readOnlyHint": true});
+            }
+            v
+        })
+        .collect()
+}
+
+/// 本机所有运行中插件注册的 AI 工具：`{name, plugin, tool, description, inputSchema, readOnly}`；
+/// `skip` 为调用方插件 id（不列出自己的工具）
+pub fn ai_tools(st: &AppState, skip: Option<&str>) -> Vec<Value> {
     let mut out = Vec::new();
     for ph in st.plugins.plugins() {
-        if ph.state() != PluginState::Running {
+        if ph.state() != PluginState::Running || Some(ph.id.as_str()) == skip {
             continue;
         }
         for t in ph.contributions.lock().unwrap().mcps.iter() {
@@ -1691,12 +1709,15 @@ pub fn mcp_tools(st: &AppState) -> Vec<Value> {
             }
             out.push(json!({
                 "name": manifest::tool_name(&ph.id, name),
+                "plugin": ph.id,
+                "tool": name,
                 "description": t.get("description").cloned().unwrap_or(json!("")),
                 "inputSchema": {
                     "type": "object",
                     "properties": t.get("params").cloned().unwrap_or(json!({})),
                     "required": required,
                 },
+                "readOnly": t.get("readOnly").and_then(|v| v.as_bool()).unwrap_or(false),
             }));
         }
     }
@@ -1704,37 +1725,54 @@ pub fn mcp_tools(st: &AppState) -> Vec<Value> {
     out
 }
 
-/// 是否为本机插件工具（名字里带 `__`）
-pub fn is_plugin_tool(st: &AppState, tool: &str) -> bool {
-    st.plugins.plugins().iter().any(|ph| {
-        ph.contributions
-            .lock()
-            .unwrap()
-            .mcps
-            .iter()
-            .any(|t| manifest::tool_name(&ph.id, t.get("name").and_then(|v| v.as_str()).unwrap_or("")) == tool)
-    })
+/// 运行中插件的 AI 使用说明：`[{plugin, name, text}]`
+pub fn ai_guides(st: &AppState, skip: Option<&str>) -> Vec<Value> {
+    let mut out = Vec::new();
+    for ph in st.plugins.plugins() {
+        if ph.state() != PluginState::Running || Some(ph.id.as_str()) == skip {
+            continue;
+        }
+        let text = ph.contributions.lock().unwrap().ai_guide.clone();
+        if !text.trim().is_empty() {
+            out.push(json!({"plugin": ph.id, "name": ph.manifest().name, "text": text}));
+        }
+    }
+    out
 }
 
-/// 调用插件的 MCP 工具（SPEC 4 节：120 秒超时，结果转成 MCP text content）
-pub async fn mcp_call(st: &AppState, tool: &str, args: &Value) -> Result<Vec<Value>, String> {
-    let mut found = None;
+/// 是否为本机插件工具（名字里带 `__`）
+pub fn is_plugin_tool(st: &AppState, tool: &str) -> bool {
+    find_tool(st, tool).is_some()
+}
+
+/// 按 `<插件id>__<名称>` 找到提供工具的插件和原名
+fn find_tool(st: &AppState, tool: &str) -> Option<(Arc<Plugin>, String)> {
     for ph in st.plugins.plugins() {
         for t in ph.contributions.lock().unwrap().mcps.iter() {
-            let name = t.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
-            if manifest::tool_name(&ph.id, &name) == tool {
-                found = Some((ph.clone(), name));
+            let name = t.get("name").and_then(|v| v.as_str()).unwrap_or("");
+            if manifest::tool_name(&ph.id, name) == tool {
+                return Some((ph.clone(), name.to_string()));
             }
         }
     }
-    let Some((ph, name)) = found else {
+    None
+}
+
+/// 调用插件的 AI 工具，返回处理函数的原始返回值（120 秒超时）
+pub async fn ai_call(st: &AppState, tool: &str, args: &Value, serial: Option<&str>) -> Result<Value, String> {
+    let Some((ph, name)) = find_tool(st, tool) else {
         return Err(tr!("未知工具：{tool}", "Unknown tool: {tool}"));
     };
-    let Some(h) = ph.host() else {
+    let Some(h) = ph.host().filter(|_| ph.state() == PluginState::Running) else {
         return Err(tr!("插件 {tool} 没有运行", "The plugin for {tool} is not running"));
     };
-    let p = json!({"name": name, "args": args, "serial": args.get("serial").cloned().unwrap_or(Value::Null)});
-    let r = h.request("mcp", p, Duration::from_secs(120)).await?;
+    let p = json!({"name": name, "args": args, "serial": serial});
+    h.request("mcp", p, Duration::from_secs(120)).await
+}
+
+/// MCP 调用插件工具（SPEC 4 节：结果转成 MCP text content）
+pub async fn mcp_call(st: &AppState, tool: &str, args: &Value) -> Result<Vec<Value>, String> {
+    let r = ai_call(st, tool, args, args.get("serial").and_then(|v| v.as_str())).await?;
     Ok(vec![json!({"type": "text", "text": tool_text(&r)})])
 }
 

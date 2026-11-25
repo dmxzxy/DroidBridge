@@ -88,9 +88,10 @@ impl Ctl {
         self.emit(v);
     }
 
-    /// 权限检查（`fs` 隐含 `fs.read`）
+    /// 权限检查（`fs` 隐含 `fs.read`；`mcp` 是 `ai` 的旧名）
     pub fn has_perm(&self, p: &str) -> bool {
-        self.granted.contains(p) || (p == "fs.read" && self.granted.contains("fs"))
+        let has = |x: &str| self.granted.contains(x);
+        has(p) || (p == "fs.read" && has("fs")) || (p == "ai" && has("mcp")) || (p == "mcp" && has("ai"))
     }
 
     /// 下一个宿主内的唯一编号

@@ -57,7 +57,7 @@ impl Harness {
                 "dataDir": data.to_string_lossy(),
                 "main": "main.lua",
             },
-            "granted": ["exec", "net", "clipboard", "device.logs", "device.screen", "fs"],
+            "granted": ["exec", "net", "clipboard", "device.logs", "device.screen", "fs", "mcp"],
             "settings": {"luaDir": "D:/x"},
             "lang": "zh",
             "node": "PC",
@@ -127,7 +127,7 @@ impl Harness {
                         {"text": "", "desc": "用户名", "id": "com.x:id/user", "class": "EditText", "x": 540, "y": 1250},
                     ]}),
                     "media.item" => json!({"name": c["p"]["name"], "path": "D:/media/x.png", "kind": "shot"}),
-                    "plugin.call" => json!({"echo": c["p"]}),
+                    "plugin.call" | "ai.call" => json!({"echo": c["p"]}),
                     _ => J::Bool(true),
                 };
                 self.driver.on_line(&json!({"t": "ret", "id": id, "ok": ok}).to_string());
@@ -582,6 +582,30 @@ db.menu("tools", "Call", function() return db.plugins.call("other", "x", { n = 1
     assert!(res["err"].is_string());
     let res = h.req("menu", json!({"id": "tools:Call", "ctx": {}}));
     assert_eq!(res["ok"]["echo"], json!({"plugin": "other", "name": "x", "args": {"n": 1}}));
+}
+
+#[test]
+fn ai_tools_register_and_call() {
+    // 授予的是旧名 mcp：db.ai.tool / guide 可用，db.ai.call 需要单独的 ai.call
+    let mut h = Harness::new(
+        "ai",
+        r#"
+db.ai.tool("look", { description = "看", readOnly = true }, function(dev, args) return dev.serial .. ":" .. tostring(args.q) end)
+db.mcp.tool("old", { description = "旧名" }, function() return "ok" end)
+db.ai.guide("先 look")
+db.menu("tools", "Use", function() return db.ai.call("x__y", { n = 1 }, "emulator-5554") end)
+"#,
+        HostConfig::default(),
+    );
+    let all = h.take();
+    let reg = |kind: &str, name: &str| all.iter().find(|v| v["m"] == "register" && v["p"]["kind"] == kind && v["p"]["def"]["name"] == name).cloned();
+    assert_eq!(reg("mcp", "look").expect("look")["p"]["def"]["readOnly"], json!(true));
+    assert_eq!(reg("mcp", "old").expect("old")["p"]["def"]["readOnly"], json!(false));
+    assert!(all.iter().any(|v| v["m"] == "register" && v["p"]["kind"] == "aiguide" && v["p"]["def"]["text"] == "先 look"), "{all:?}");
+    let res = h.req("mcp", json!({"name": "look", "args": {"q": 2}, "serial": "emulator-5554"}));
+    assert_eq!(res["ok"], json!("emulator-5554:2"));
+    let res = h.req("menu", json!({"id": "tools:Use", "ctx": {}}));
+    assert!(res["err"].as_str().unwrap_or("").contains("ai.call"), "{res:?}");
 }
 
 #[test]
