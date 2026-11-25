@@ -15,16 +15,16 @@
   <button class="ib gear" id="mGear"></button>
 </div>
 <aside id="sidebar">
-  <div class="brand"><button class="ib" id="sideCollapse"></button><span class="logo" id="logo"></span>DroidBridge<button class="ib" id="batch"></button><button class="ib" id="gallery"></button><button class="ib" id="gear"></button></div>
-  <div id="sideSearch"></div>
+  <div class="brand"><button class="logo side-tog" id="logo" type="button"></button>DroidBridge<button class="ib" id="batch"></button><button class="ib" id="gallery"></button><button class="ib" id="gear"></button></div>
+  <div id="sideSearch" hidden></div>
   <div id="noticeSide"></div>
   <div class="lists" id="lists"></div>
   <div class="side-foot" id="sideFoot"></div>
   <div class="side-resizer" id="sideResizer"></div>
 </aside>
 <main>
+  <button class="side-peek side-tog" id="sidePeek" type="button"></button>
   <div id="stageBar" class="stage-bar" hidden></div>
-  <div id="syncBanner" class="sync-banner" hidden></div>
   <div id="notice"></div>
   <div class="grid" id="grid"></div>
   <div class="placeholder" id="placeholder"></div>
@@ -62,7 +62,6 @@ $('#mBack').innerHTML = svg('chevLeft');
 $('#mBack').onclick = () => document.body.classList.remove('viewing');
 setupTitlebar();
 initSidebarLayout();
-initStageBar();
 $('#placeholder').append(h('span', { html: svg('phone') }).firstChild, h('div', {}, t('选择设备开始投屏')), t('设备需开启 USB 调试并连接到电脑'));
 addEventListener('resize', () => { for (const v of viewers.values()) v.fit(); });
 addEventListener('dragover', e => e.preventDefault());

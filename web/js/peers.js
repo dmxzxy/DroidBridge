@@ -524,16 +524,18 @@ function appsDialog(hst, dev) {
     if (!shown.length) { list.replaceChildren(h('div', { class: 'apps-empty' }, q ? t('没有匹配的应用') : t('没有应用'))); return; }
     list.replaceChildren(...shown.map(a => {
       const isPin = pinned.has(a.pkg);
-      return ctxMenu(h('div', { class: 'app' },
-        ib('star', isPin ? t('取消置顶') : t('置顶应用'), () => togglePin(a.pkg), 'pin' + (isPin ? ' on' : '')),
-        h('div', { class: 't' }, h('b', {}, h('span', {}, a.name || a.pkg), a.running ? h('span', { class: 'run', title: t('正在运行') }, '● ' + t('运行中')) : null), a.name ? h('small', {}, a.pkg) : null),
+      const pin = { icon: 'star', label: isPin ? t('取消置顶') : t('置顶'), fn: () => togglePin(a.pkg) };
+      return ctxMenu(h('div', { class: 'app' + (isPin ? ' pinned' : '') },
+        h('div', { class: 't' }, h('b', {}, h('span', {}, a.name || a.pkg),
+          isPin ? h('span', { class: 'pin', html: svg('star') }) : null,
+          a.running ? h('span', { class: 'run', title: t('正在运行') }) : null), a.name ? h('small', {}, a.pkg) : null),
         h('div', { class: 'acts' },
           ib('play', t('启动'), () => call(a, 'launch', t('正在启动'))),
-          a.running ? ib('stop', t('强制停止'), () => call(a, 'stop', t('正在停止'))) : null,
-          ib('refresh', t('清数据并重启'), () => clearAndRelaunch(a)),
-          ib('more', t('更多'), e => more(e.currentTarget, a)))), () => [
-        { icon: 'star', label: isPin ? t('取消置顶') : t('置顶应用'), fn: () => togglePin(a.pkg) },
+          ib('star', pin.label, pin.fn, isPin ? 'on' : ''),
+          ib('more', t('更多'), e => more(e.currentTarget, a))))
+      , () => [
         { icon: 'play', label: t('启动'), fn: () => call(a, 'launch', t('正在启动')) },
+        pin,
         ...moreItems(a),
         '-',
         { icon: 'copy', label: t('复制包名'), fn: () => copyText(a.pkg) },

@@ -93,6 +93,11 @@ const P = {
   search: '<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>',
   star: '<polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>',
   columns: '<rect x="3" y="4" width="7" height="16" rx="1.5"/><rect x="14" y="4" width="7" height="16" rx="1.5"/>',
+  lrows: '<rect x="3" y="3" width="4.5" height="7.5" rx="1"/><rect x="9.75" y="3" width="4.5" height="7.5" rx="1"/><rect x="16.5" y="3" width="4.5" height="7.5" rx="1"/><rect x="3" y="13.5" width="4.5" height="7.5" rx="1"/><rect x="9.75" y="13.5" width="4.5" height="7.5" rx="1"/><rect x="16.5" y="13.5" width="4.5" height="7.5" rx="1"/>',
+  lwall: '<path d="M4 4h.01M9.33 4h.01M14.67 4h.01M20 4h.01M4 9.33h.01M9.33 9.33h.01M14.67 9.33h.01M20 9.33h.01M4 14.67h.01M9.33 14.67h.01M14.67 14.67h.01M20 14.67h.01M4 20h.01M9.33 20h.01M14.67 20h.01M20 20h.01" stroke-width="3.2"/>',
+  frame: '<rect x="3" y="3" width="18" height="18" rx="2.5" stroke-dasharray="2.5 3"/><rect x="7.5" y="7.5" width="9" height="9" rx="1.5"/>',
+  playAll: '<rect x="3" y="6" width="11" height="15" rx="2"/><path d="M7.5 3H18a2 2 0 0 1 2 2v12"/><path d="m7.5 11 3.5 2.5-3.5 2.5z"/>',
+  closeAll: '<rect x="3" y="6" width="11" height="15" rx="2"/><path d="M7.5 3H18a2 2 0 0 1 2 2v12"/><path d="m6.5 11.5 4 4m0-4-4 4"/>',
 };
 /** 应用图标（与 src/icon.rs 绘制的三段曲线一致） */
 const LOGO_SVG = '<svg viewBox="0 0 64 64"><rect x="2" y="2" width="60" height="60" rx="13.5" fill="currentColor" stroke="none"/><g fill="none" stroke="var(--logo-fg,#fff)" stroke-linecap="round"><rect x="16.5" y="17.5" width="14" height="29" rx="4.5" stroke-width="4.8"/><path d="M32.3 14.22A12.6 12.6 0 0 1 39.5 25.6V38.4A12.6 12.6 0 0 1 32.3 49.78" stroke-width="4"/><path d="M39.75 12.3A20.7 20.7 0 0 1 48.5 29.2V34.8A20.7 20.7 0 0 1 39.75 51.7" stroke-width="3.3"/></g></svg>';

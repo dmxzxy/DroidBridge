@@ -17,15 +17,18 @@ function avcCodecString(data) {
 const KEYMAP = { Enter: 66, Backspace: 67, Delete: 112, Tab: 61, ArrowUp: 19, ArrowDown: 20, ArrowLeft: 21, ArrowRight: 22, Home: 122, End: 123, PageUp: 92, PageDown: 93, Insert: 124 };
 const AKEY = { BACK: 4, HOME: 3, APP_SWITCH: 187, POWER: 26, VOLUME_UP: 24, VOLUME_DOWN: 25 };
 
-// 主舞台布局与密度状态（fit: 标准高度自适应 | rows: 双排紧凑 | wall: 多机矩阵墙）
+// 多台设备的排布：fit 按高度自适应（可缩放）| rows 双排 | wall 矩阵墙
 const STAGE = {
   mode: pref.get('stage_mode', 'fit'),
   scale: Math.max(40, Math.min(100, parseInt(pref.get('stage_scale', '100'), 10) || 100)),
   compact: pref.get('stage_compact', '0') === '1',
 };
+// 只有一台投屏时总是标准排布、不缩放
+const stageMode = () => viewers.size >= 2 ? STAGE.mode : 'fit';
+const stageScale = () => viewers.size >= 2 ? STAGE.scale : 100;
+const stageCompact = () => viewers.size >= 2 && (STAGE.compact || STAGE.mode !== 'fit') && !isMobile();
 function fitAllViewers() {
-  const g = $('#grid');
-  if (g) g.classList.toggle('mode-wall', STAGE.mode === 'wall');
+  $('#grid').classList.toggle('mode-wall', stageMode() === 'wall');
   for (const v of viewers.values()) v.fit();
 }
 function allReadyDevices() {
@@ -36,84 +39,71 @@ function allReadyDevices() {
   }
   return out;
 }
-function initStageBar() {
+function setStage(k, v) {
+  STAGE[k] = v;
+  pref.set('stage_' + k, typeof v === 'boolean' ? (v ? '1' : '0') : String(v));
   renderStageBar();
-  renderSyncBanner();
+  fitAllViewers();
 }
+
+let stageSig = '';
+/** 舞台工具条：多台设备时出现，只用图标；群控状态在左侧 */
 function renderStageBar() {
   const bar = $('#stageBar');
-  if (!bar) return;
   const ready = allReadyDevices();
-  const collapsed = document.body.classList.contains('side-collapsed') && !isMobile();
-  if (!ready.length && !viewers.size && !collapsed) { bar.hidden = true; return; }
-  bar.hidden = false;
+  const all = [...viewers.values()];
+  const synced = all.filter(v => v.sync);
+  const ratios = synced.filter(v => v.vw > 0 && v.vh > 0).map(v => v.vw / v.vh);
+  const skew = ratios.length >= 2 && Math.max(...ratios) / Math.min(...ratios) > 1.08;
+  const unopened = ready.filter(({ hst, d }) => !findViewer(hst, d)).length;
+  const multi = all.length >= 2;
+  const canOpenAll = unopened > 0 && ready.length >= 2;
+  const show = !isMobile() && (multi || canOpenAll);
+  // 状态没变就不重建，避免拖动缩放滑块时被定时刷新打断
+  const sig = [show, multi, canOpenAll, STAGE.mode, STAGE.compact, all.length, synced.length, skew, unopened, LANG].join();
+  if (sig === stageSig) return;
+  stageSig = sig;
+  const wasHidden = bar.hidden;
+  bar.hidden = !show;
+  if (wasHidden !== bar.hidden) setTimeout(fitAllViewers);
+  if (!show) { bar.replaceChildren(); return; }
 
-  const modeBtn = (m, label) => h('button', {
-    type: 'button', class: STAGE.mode === m ? 'on' : '',
-    onclick: () => { STAGE.mode = m; pref.set('stage_mode', m); renderStageBar(); fitAllViewers(); },
-  }, label);
-  const scaleTxt = h('span', {}, STAGE.scale + '%');
-  const scaleRng = h('input', {
-    type: 'range', min: '40', max: '100', step: '5', value: String(STAGE.scale),
+  const mode = (m, icon, tip) => ib(icon, tip, () => setStage('mode', m), STAGE.mode === m ? 'on' : '');
+  const range = h('input', {
+    type: 'range', class: 'stage-range', min: '40', max: '100', step: '5', value: String(STAGE.scale),
+    title: t('画面缩放') + ' ' + STAGE.scale + '%',
     oninput: () => {
-      STAGE.scale = +scaleRng.value;
-      scaleTxt.textContent = STAGE.scale + '%';
+      STAGE.scale = +range.value;
+      range.title = t('画面缩放') + ' ' + STAGE.scale + '%';
       pref.set('stage_scale', String(STAGE.scale));
       fitAllViewers();
     },
   });
-  const isCompact = STAGE.compact || STAGE.mode === 'wall';
-  const compactBtn = h('button', {
-    type: 'button', class: 'btn sm' + (isCompact ? ' primary' : ''),
-    title: t('紧凑模式：隐藏工具栏与导航栏，悬停卡片时显示'),
-    onclick: () => {
-      STAGE.compact = !isCompact;
-      if (STAGE.mode === 'wall' && !STAGE.compact) STAGE.mode = 'rows';
-      pref.set('stage_compact', STAGE.compact ? '1' : '0');
-      pref.set('stage_mode', STAGE.mode);
-      renderStageBar(); fitAllViewers();
-    },
-  }, t('紧凑边框'));
+  const fit = STAGE.mode === 'fit';
+  const sync = synced.length ? h('div', { class: 'stage-sync', title: t('群控同步中 · 已选 {0}/{1} 台', synced.length, all.length) },
+    h('span', { class: 'ico', html: svg('link') }),
+    h('b', {}, synced.length + '/' + all.length),
+    skew ? h('span', { class: 'ico warn', title: t('设备屏幕比例不一致，边缘点击可能偏移'), html: svg('alert') }) : null,
+    synced.length < all.length ? ib('plus', t('全部加入群控'), () => { for (const v of all) if (!v.sync) v.toggleSync(true, true); }) : null,
+    ib('x', t('退出群控'), () => { for (const v of all) if (v.sync) v.toggleSync(false); })) : null;
+  const openAll = canOpenAll ? h('button', {
+    class: 'ib', type: 'button', title: t('全部投屏'), 'aria-label': t('全部投屏'),
+    onclick: () => { for (const { hst, d } of allReadyDevices()) if (!findViewer(hst, d)) openViewer(hst, d); },
+  }, h('span', { html: svg('playAll') }).firstChild, h('i', { class: 'badge' }, String(unopened))) : null;
+  const closeAll = multi ? ib('closeAll', t('全部关闭'), () => { for (const v of [...viewers.values()]) v.close(); }) : null;
 
-  bar.replaceChildren(
-    collapsed ? ib('sidebar', t('展开侧栏 (Ctrl+B)'), () => toggleSidebar(false)) : null,
-    h('div', { class: 'seg' }, modeBtn('fit', t('标准')), modeBtn('rows', t('双排')), modeBtn('wall', t('矩阵墙'))),
-    STAGE.mode === 'fit' ? h('label', { class: 'stage-scale', title: t('画面缩放') }, t('画面缩放'), scaleRng, scaleTxt) : null,
-    compactBtn,
+  bar.replaceChildren(...[
+    sync,
     h('div', { class: 'stage-grow' }),
-    ready.length > viewers.size ? h('button', {
-      type: 'button', class: 'btn sm',
-      onclick: () => { for (const { hst, d } of ready) openViewer(hst, d); },
-    }, t('全部投屏') + ` (${ready.length})`) : null,
-    viewers.size > 1 ? h('button', {
-      type: 'button', class: 'btn sm',
-      onclick: () => { for (const v of [...viewers.values()]) v.close(); },
-    }, t('全部关闭')) : null,
-  );
-}
-
-function renderSyncBanner() {
-  const banner = $('#syncBanner');
-  if (!banner) return;
-  const synced = [...viewers.values()].filter(v => v.sync);
-  if (!synced.length || viewers.size < 2) { banner.hidden = true; return; }
-  banner.hidden = false;
-  const ratios = synced.filter(v => v.vw > 0 && v.vh > 0).map(v => v.vw / v.vh);
-  const ratioDiff = ratios.length >= 2 && (Math.max(...ratios) / Math.min(...ratios) > 1.08);
-  banner.replaceChildren(
-    h('span', { html: svg('link') }).firstChild,
-    h('b', {}, t('群控同步中 · 已选 {0}/{1} 台', synced.length, viewers.size)),
-    ratioDiff ? h('span', { class: 'sync-warn' }, '⚠ ' + t('设备屏幕比例不一致，边缘点击可能偏移')) : null,
-    h('div', { class: 'acts' },
-      synced.length < viewers.size ? h('button', {
-        type: 'button', class: 'btn sm',
-        onclick: () => { for (const v of viewers.values()) if (!v.sync) v.toggleSync(true); },
-      }, t('全选画面')) : null,
-      h('button', {
-        type: 'button', class: 'btn sm danger',
-        onclick: () => { for (const v of viewers.values()) if (v.sync) v.toggleSync(false); },
-      }, t('退出群控'))),
-  );
+    openAll, closeAll,
+    ...(multi ? [
+      h('span', { class: 'stage-sep' }),
+      // 缩放和紧凑边框只在标准排布下有意义；双排和矩阵墙总是紧凑
+      fit ? range : null,
+      fit ? ib('frame', t('紧凑边框：悬停时显示工具栏'), () => setStage('compact', !STAGE.compact), STAGE.compact ? 'on' : '') : null,
+      h('div', { class: 'stage-seg' }, mode('fit', 'columns', t('标准')), mode('rows', 'lrows', t('双排')), mode('wall', 'lwall', t('矩阵墙'))),
+    ] : []),
+  ].filter(Boolean));
 }
 
 /** 观看者 id：随机 12 位 base36，同一 Viewer 重连时保持不变 */
@@ -186,17 +176,16 @@ class Viewer {
     this.aiBar = h('div', { class: 'aibar', hidden: true }, h('span', { class: 'ai-dot' }), h('b', {}, 'AI'), this.aiLabel, this.aiBtn);
     this.syncBtn = ib('link', t('群控：在这台设备上的操作同步到其他群控设备'), () => this.toggleSync());
     this.syncBtn.hidden = viewers.size < 1;
-    // 可拖拽宽度多页签停靠坞（日志 / 文件 / 插件切换不销毁实例，保留上下文）
+    // 右侧面板：日志 / 文件 / 插件可同时开着，切换时保留各自状态；宽度可拖动
     this.dockW = parseInt(pref.get('dock_w', '0'), 10) || 0;
     this.activeDock = null;
     this.dockHidden = false;
     this.logWrap = h('div', { class: 'vdock-pane', hidden: true });
     this.filesWrap = h('div', { class: 'vdock-pane', hidden: true });
     this.plugWrap = h('div', { class: 'vdock-pane', hidden: true });
-    this.dockTabs = h('div', { class: 'vdock-tabs' });
     this.dockBody = h('div', { class: 'vdock-body' }, this.logWrap, this.filesWrap, this.plugWrap);
     this.dockResizer = h('div', { class: 'vlog-resizer', title: t('拖拽调整侧栏宽度（双击重置）') });
-    this.vlog = h('div', { class: 'vlog' }, this.dockResizer, this.dockTabs, this.dockBody);
+    this.vlog = h('div', { class: 'vlog' }, this.dockResizer, this.dockBody);
     this.bindDockResizer();
     this.root = h('div', { class: 'viewer' },
       ctxMenu(h('div', { class: 'vhead' }, this.dot, this.nameEl, this.recEl, h('span', { class: 'sub' }, this.host.remote ? this.host.name : ''), this.statEl, this.eyeEl,
@@ -245,7 +234,7 @@ class Viewer {
   wsUrl() {
     let maxSize = +q('size'), bitRate = +q('rate'), maxFps = +q('fps');
     // 矩阵缩略墙或高密度小尺寸同屏时自动降档流参数，减轻多路解码负载
-    if (!this.forceNext && (STAGE.mode === 'wall' || (viewers.size >= 4 && STAGE.scale <= 60))) {
+    if (!this.forceNext && (stageMode() === 'wall' || (viewers.size >= 4 && stageScale() <= 60))) {
       maxSize = maxSize > 0 ? Math.min(maxSize, 640) : 640;
       bitRate = Math.min(bitRate || 8000000, 1500000);
       maxFps = Math.min(maxFps || 60, 20);
@@ -387,22 +376,11 @@ class Viewer {
     this.logWrap.hidden = !(open && this.activeDock === 'log');
     this.filesWrap.hidden = !(open && this.activeDock === 'files');
     this.plugWrap.hidden = !(open && this.activeDock === 'plug');
-    this.logBtn.classList.toggle('on', open && this.activeDock === 'log');
-    this.filesBtn.classList.toggle('on', open && this.activeDock === 'files');
-    this.plugBtn.classList.toggle('on', open && this.activeDock === 'plug');
-
-    const tabs = [];
-    const mkTab = (k, icon, label) => h('button', {
-      type: 'button', class: 'vdock-tab' + (this.activeDock === k ? ' on' : ''),
-      onclick: () => this.activateDock(k),
-    }, h('span', { html: svg(icon) }).firstChild, label,
-      h('span', { class: 'x', title: t('关闭'), html: svg('x'), onclick: e => { e.stopPropagation(); this.closeDockTab(k); } }));
-
-    if (this.log) tabs.push(mkTab('log', 'logs', t('日志')));
-    if (this.files) tabs.push(mkTab('files', 'folder', t('文件')));
-    if (this.plugDock) tabs.push(mkTab('plug', 'puzzle', t('插件')));
-    tabs.push(ib('chevRight', t('收起侧边面板'), () => { this.dockHidden = true; this.syncDockUI(); this.fit(); }));
-    this.dockTabs.replaceChildren(...tabs);
+    // 工具列的按钮就是页签：当前面板高亮，后台开着的面板带圆点
+    for (const [btn, k, alive] of [[this.logBtn, 'log', this.log], [this.filesBtn, 'files', this.files], [this.plugBtn, 'plug', this.plugDock]]) {
+      btn.classList.toggle('on', open && this.activeDock === k);
+      btn.classList.toggle('bg', !!alive && !(open && this.activeDock === k));
+    }
   }
 
   activateDock(kind) {
@@ -465,7 +443,7 @@ class Viewer {
   // 桌面端布局：支持标准比例 / 双排紧凑 / 多机矩阵墙 + 自由缩放 + 侧栏自定义拖拽宽度
   fit() {
     const r = this.root;
-    const compact = (STAGE.compact || STAGE.mode === 'wall') && !isMobile();
+    const compact = stageCompact();
     r.classList.toggle('compact-chrome', compact);
     const chromeW = compact ? 2 : 46;
     if (this.pov) pluginOverlayFit(this);
@@ -476,28 +454,30 @@ class Viewer {
     const avail = Math.max(240, $('main').clientWidth - 32);
     const sb = document.body.classList.contains('has-sb') ? 24 : 0;
     const tb = hasTitlebar() ? 36 : 0;
-    const barH = ($('#stageBar') && !$('#stageBar').hidden ? 46 : 0) + ($('#syncBanner') && !$('#syncBanner').hidden ? 46 : 0);
+    const bar = $('#stageBar');
+    const barH = bar.hidden ? 0 : bar.offsetHeight + 8;
     const fullH = Math.max(180, innerHeight - 150 - sb - tb - barH);
 
     let maxH = fullH;
     let cw;
-    if (STAGE.mode === 'wall') {
+    const mode = stageMode();
+    if (mode === 'wall') {
       const cols = avail >= 1560 ? 6 : avail >= 1240 ? 5 : avail >= 920 ? 4 : 3;
       const cellW = Math.floor((avail - (cols - 1) * 10) / cols) - chromeW;
       cw = Math.max(140, cellW);
       maxH = Math.round(cw * this.vh / this.vw);
-    } else if (STAGE.mode === 'rows') {
+    } else if (mode === 'rows') {
       maxH = Math.max(220, Math.floor((innerHeight - 130 - sb - tb - barH) / 2) - 48);
       cw = Math.min(this.vw, maxH * this.vw / this.vh);
     } else {
-      maxH = Math.round(fullH * (STAGE.scale / 100));
+      maxH = Math.round(fullH * (stageScale() / 100));
       cw = Math.min(this.vw, maxH * this.vw / this.vh);
     }
     this.canvas.style.maxHeight = maxH + 'px';
 
     if (!this.hasOpenDock()) {
       r.classList.remove('log-bottom');
-      const minCardW = compact ? 150 : 240;
+      const minCardW = compact ? 120 : 240;
       r.style.width = Math.round(Math.max(minCardW, Math.min(cw + chromeW, avail))) + 'px';
       return;
     }
@@ -526,7 +506,7 @@ class Viewer {
         this.vw = m.width; this.vh = m.height;
         if (this.canvas.width !== m.width || this.canvas.height !== m.height) { this.canvas.width = m.width; this.canvas.height = m.height; }
         this.fit();
-        if (this.sync) renderSyncBanner();
+        if (this.sync) renderStageBar();
         break;
       case 'error': this.lastError = m.msg; break;
       case 'audio':
@@ -660,15 +640,12 @@ class Viewer {
     this.canvas.parentElement.append(el);
     setTimeout(() => el.remove(), 600);
   }
-  toggleSync(on = !this.sync) {
+  toggleSync(on = !this.sync, quiet = false) {
     this.sync = on;
     this.root.classList.toggle('synced', on);
     this.syncBtn.classList.toggle('on', on);
-    renderSyncBanner();
-    fitAllViewers();
-    if (!on) return;
-    const n = [...viewers.values()].filter(v => v.sync).length;
-    toast(n < 2 ? t('再给至少一台设备打开群控') : t('群控：{0} 台设备同步操作', n));
+    renderStageBar();
+    if (on && !quiet && [...viewers.values()].filter(v => v.sync).length < 2) toast(t('再给至少一台设备打开群控'));
   }
 
   // ---- AI Agent 操作提示 ----
@@ -1041,8 +1018,6 @@ function afterViewersChange() {
   $('#placeholder').style.display = viewers.size ? 'none' : '';
   if (!viewers.size) { document.body.classList.remove('viewing'); history.replaceState(null, '', location.pathname + location.search); }
   renderSide();
-  renderStageBar();
-  renderSyncBanner();
   fitAllViewers();
 }
 

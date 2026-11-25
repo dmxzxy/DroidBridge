@@ -45,17 +45,25 @@ body.resizing-side aside{transition:none}
 body.side-collapsed aside{width:0 !important;min-width:0;border-right:0;overflow:hidden}
 .side-resizer{position:absolute;top:0;right:-3px;bottom:0;width:6px;cursor:col-resize;z-index:15}
 .side-resizer:hover,.resizing-side .side-resizer{background:var(--accent);opacity:.45}
-.side-search{padding:6px 8px 4px;display:grid;gap:6px;border-bottom:1px solid var(--line)}
-.side-search-box{position:relative;display:flex;align-items:center}
-.side-search-box svg{position:absolute;left:8px;width:13px;height:13px;color:var(--faint);pointer-events:none}
-.side-search-box .input{height:28px;padding:0 24px 0 26px;font-size:12px}
-.side-search-box .ib{position:absolute;right:2px;width:22px;height:22px}
-.side-search-box .ib svg{position:static;width:12px;height:12px}
-.side-chips{display:flex;gap:4px;overflow-x:auto;scrollbar-width:none}
-.side-chips::-webkit-scrollbar{display:none}
-.side-chip{height:21px;padding:0 8px;border-radius:11px;border:1px solid var(--line);background:none;color:var(--sub);font-size:11px;white-space:nowrap;flex:none}
-.side-chip:hover{background:var(--hover);color:var(--text)}
-.side-chip.on{background:var(--active);border-color:rgba(91,141,239,.35);color:var(--accent);font-weight:600}
+.side-search{position:relative;display:flex;align-items:center;padding:2px 8px 6px}
+.side-search[hidden]{display:none}
+.side-search>span{position:absolute;left:17px;display:flex;color:var(--faint);pointer-events:none}
+.side-search svg{width:13px;height:13px}
+.side-search .input{height:28px;padding:0 8px 0 27px;font-size:12px;background:transparent;border-color:var(--line)}
+.side-search .input:focus{border-color:var(--accent);background:var(--bg)}
+/* logo 悬停变成收起按钮；收起后左边缘留一个展开把手 */
+button.logo.side-tog{display:grid;place-items:center;width:24px;height:24px;margin:0 -3px;padding:0;border:0;border-radius:6px;background:none;color:var(--accent)}
+button.logo.side-tog>*{grid-area:1/1}
+button.logo.side-tog .tog{display:flex;opacity:0;color:var(--sub)}
+button.logo.side-tog .tog svg{width:16px;height:16px}
+button.logo.side-tog:hover{background:var(--hover)}
+button.logo.side-tog:hover>svg{opacity:0}
+button.logo.side-tog:hover .tog{opacity:1}
+.side-peek{display:none;position:fixed;left:0;top:50%;z-index:30;width:14px;height:44px;margin-top:-22px;padding:0;place-items:center;border:1px solid var(--line2);border-left:0;border-radius:0 8px 8px 0;background:var(--raised);color:var(--faint)}
+.side-peek svg{width:12px;height:12px}
+.side-peek:hover{width:18px;color:var(--accent)}
+body.side-collapsed:not(.has-tb) .side-peek{display:grid}
+@media (max-width:720px){.side-peek{display:none !important}}
 .dev .meta-tag{flex:none;font:10px Consolas,"SF Mono",monospace;color:var(--faint);padding:1px 5px;border-radius:4px;background:var(--hover)}
 .brand{display:flex;align-items:center;gap:8px;height:52px;padding:0 10px 0 16px;font-weight:600;font-size:14px}
 .brand .logo{color:var(--accent)}
@@ -107,19 +115,25 @@ body.side-collapsed aside{width:0 !important;min-width:0;border-right:0;overflow
 
 /* 主区域 */
 main{flex:1;min-width:0;min-height:calc(100vh - var(--sb-h));padding:12px 16px 16px;display:flex;flex-direction:column}
-.stage-bar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;min-height:36px;padding:4px 8px;margin-bottom:10px;border:1px solid var(--line);border-radius:9px;background:var(--surface)}
-.stage-bar[hidden],.sync-banner[hidden]{display:none}
-.stage-bar .seg{height:28px;padding:2px}
-.stage-bar .seg button{height:22px;padding:0 10px;font-size:12px;flex:none}
-.stage-scale{display:inline-flex;align-items:center;gap:6px;color:var(--sub);font-size:12px;padding:0 4px}
-.stage-scale input[type=range]{width:84px;accent-color:var(--accent);cursor:pointer}
-.stage-scale span{min-width:34px;font-variant-numeric:tabular-nums;color:var(--faint);font-size:11px}
+/* 舞台工具条：多台设备时出现，只有图标 */
+.stage-bar{display:flex;align-items:center;gap:2px;height:30px;margin:-4px 0 8px}
+.stage-bar[hidden]{display:none}
 .stage-grow{flex:1}
-.sync-banner{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:7px 12px;margin-bottom:12px;border:1px solid rgba(91,141,239,.45);border-radius:9px;background:var(--active);color:var(--text);font-size:12px}
-.sync-banner svg{width:15px;height:15px;color:var(--accent);flex:none}
-.sync-banner b{font-weight:600}
-.sync-warn{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:99px;background:rgba(214,160,60,.16);color:var(--warn);font-size:11px}
-.sync-banner .acts{margin-left:auto;display:flex;gap:6px}
+.stage-sep{width:1px;height:16px;margin:0 6px;background:var(--line2)}
+.stage-seg{display:flex;gap:1px;padding:1px;border-radius:7px;background:var(--hover)}
+.stage-seg .ib{width:26px;height:24px}
+.stage-seg .ib.on{background:var(--raised);color:var(--text);box-shadow:0 1px 2px rgba(0,0,0,.2)}
+.stage-bar .ib svg{width:15px;height:15px}
+.stage-bar>.ib{position:relative}
+.stage-bar .badge{position:absolute;top:1px;right:0;min-width:13px;height:13px;padding:0 3px;border-radius:7px;background:var(--accent);color:#fff;font:600 9px/13px -apple-system,"Segoe UI",sans-serif;font-style:normal;text-align:center;font-variant-numeric:tabular-nums}
+.stage-range{width:76px;margin:0 8px 0 4px;accent-color:var(--accent);cursor:pointer}
+.stage-sync{display:flex;align-items:center;gap:4px;height:26px;padding:0 2px 0 9px;border-radius:13px;background:var(--active);color:var(--accent)}
+.stage-sync .ico{display:flex}
+.stage-sync .ico svg{width:14px;height:14px}
+.stage-sync .ico.warn{color:var(--warn)}
+.stage-sync b{font-size:12px;font-weight:600;font-variant-numeric:tabular-nums;margin-right:2px}
+.stage-sync .ib{width:22px;height:22px;border-radius:11px;color:var(--accent)}
+.stage-sync .ib svg{width:13px;height:13px}
 .grid{display:flex;flex-wrap:wrap;gap:16px;align-items:flex-start}
 .grid.mode-wall{gap:10px}
 /* 紧凑边框模式（矩阵墙自动启用或手动开启）：收起重复工具栏与底部导航栏，悬停聚焦时浮现 */
@@ -164,16 +178,8 @@ main{flex:1;min-width:0;min-height:calc(100vh - var(--sb-h));padding:12px 16px 1
 .vlog-resizer{position:absolute;left:-3px;top:0;bottom:0;width:6px;cursor:col-resize;z-index:6}
 .vlog-resizer:hover,.viewer.resizing-dock .vlog-resizer{background:var(--accent);opacity:.45}
 .viewer.log-bottom .vlog-resizer{display:none}
-.vdock-tabs{display:flex;align-items:center;gap:2px;height:34px;padding:0 6px;border-bottom:1px solid var(--line);background:var(--side);flex:none;overflow-x:auto;scrollbar-width:none}
-.vdock-tabs::-webkit-scrollbar{display:none}
-.vdock-tab{display:inline-flex;align-items:center;gap:5px;height:24px;padding:0 4px 0 8px;border-radius:6px;border:0;background:none;color:var(--sub);font-size:12px;white-space:nowrap;flex:none}
-.vdock-tab:hover{background:var(--hover);color:var(--text)}
-.vdock-tab.on{background:var(--surface);color:var(--accent);font-weight:600;box-shadow:0 1px 2px rgba(0,0,0,.15)}
-.vdock-tab svg{width:13px;height:13px}
-.vdock-tab .x{display:inline-grid;place-items:center;width:16px;height:16px;border-radius:4px;color:var(--faint);margin-left:1px}
-.vdock-tab .x:hover{background:var(--hover);color:var(--bad)}
-.vdock-tab .x svg{width:11px;height:11px}
-.vdock-tabs>.ib{margin-left:auto;width:24px;height:24px}
+.vtools .ib.bg{position:relative}
+.vtools .ib.bg::after{content:"";position:absolute;right:4px;top:4px;width:5px;height:5px;border-radius:50%;background:var(--accent)}
 .vdock-body{position:relative;flex:1;min-height:0}
 .vdock-pane{position:absolute;inset:0;display:flex;flex-direction:column}
 .vdock-pane[hidden]{display:none}
@@ -387,12 +393,13 @@ dialog.apps{width:min(600px,calc(100vw - 32px))}
 .app .t{flex:1;min-width:0}
 .app b{display:flex;align-items:center;gap:6px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .app small{display:block;color:var(--faint);font:11px Consolas,"SF Mono",monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.app .run{flex:none;font-size:11px;font-weight:400;color:var(--ok)}
-.app .acts{display:flex;gap:2px;flex:none;opacity:.88}
+.app .run{flex:none;width:6px;height:6px;border-radius:50%;background:var(--ok)}
+.app .acts{display:flex;gap:2px;flex:none;opacity:0}
 .app:hover .acts,.app .acts:focus-within,.app:has(.ib[aria-expanded=true]) .acts{opacity:1}
-.app .ib.pin{color:var(--faint)}
-.app .ib.pin.on{color:var(--warn)}
-.app .ib.pin.on svg{fill:currentColor}
+.app .pin{display:flex;flex:none;color:var(--warn)}
+.app .pin svg{width:12px;height:12px;fill:currentColor}
+.app .ib.on{color:var(--warn);background:none}
+.app .ib.on svg{fill:currentColor}
 @media (hover:none){.app .acts{opacity:1}}
 .apps-empty{padding:40px 0;text-align:center;color:var(--faint);display:grid;gap:12px;justify-items:center}
 .apps-n{margin-right:auto;align-self:center;color:var(--faint);font-size:12px}
@@ -871,3 +878,10 @@ dialog.settings .dlg-b{flex:1;min-height:0;max-height:none;overflow:hidden;paddi
   dialog.plug-win{width:100vw;height:100dvh;max-width:none;border:0;border-radius:0}
   .plug-badges{display:none}
 }
+.stage-range{-webkit-appearance:none;appearance:none;height:16px;background:none}
+.stage-range::-webkit-slider-runnable-track{height:3px;border-radius:2px;background:var(--line2)}
+.stage-range::-webkit-slider-thumb{-webkit-appearance:none;width:12px;height:12px;margin-top:-4.5px;border-radius:50%;background:var(--sub);border:0;transition:background .12s}
+.stage-range:hover::-webkit-slider-thumb{background:var(--accent)}
+.stage-range::-moz-range-track{height:3px;border-radius:2px;background:var(--line2)}
+.stage-range::-moz-range-thumb{width:12px;height:12px;border-radius:50%;background:var(--sub);border:0}
+.viewer.compact-chrome:not(:hover) .vhead .ib:not(.on){display:none}
