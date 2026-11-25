@@ -18,7 +18,7 @@ function setupTitlebar() {
   tbUpd = h('button', { class: 'tb-upd', type: 'button', hidden: true, onclick: () => updateDialog() });
   const tools = h('div', { class: 'tb-tools' },
     ib('package', t('批量安装 APK'), () => batchInstallDialog()),
-    ib('images', t('相册'), () => openGallery()),
+    ib('images', t('相册'), () => openGallery(), 'gal-btn'),
     Object.assign(ib('gear', t('设置'), settingsDialog), { id: 'tbGear' }));
   const win = [];
   if (CHROME !== 'mac') {

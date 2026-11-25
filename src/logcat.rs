@@ -87,8 +87,8 @@ pub async fn run(st: Arc<AppState>, serial: String, socket: WebSocket) {
 }
 
 async fn stream_logcat(adb_path: PathBuf, serial: String, out: Out) {
-    // 先带 -T 取最近 500 行；个别旧系统不支持 -T 时退回普通模式
-    let variants: [&[&str]; 2] = [&["logcat", "-v", "threadtime", "-T", "500"], &["logcat", "-v", "threadtime"]];
+    // 先带 -T 取缓冲区里最近 20000 行（与网页端保留的行数一致）；个别旧系统不支持 -T 时退回普通模式（同样先输出整个缓冲区）
+    let variants: [&[&str]; 2] = [&["logcat", "-v", "threadtime", "-T", "20000"], &["logcat", "-v", "threadtime"]];
     for (i, args) in variants.iter().enumerate() {
         let mut child = match adb::command(&adb_path)
             .arg("-s")

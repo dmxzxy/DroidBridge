@@ -14,6 +14,7 @@ mod manifest;
 mod sources;
 
 pub use devop::plugins_devop;
+pub(crate) use calls::file_op;
 pub use http::{
     plugin_web_file, plugin_web_sdk, plugins_console, plugins_contrib, plugins_dialog, plugins_get, plugins_invoke, plugins_manage,
     plugins_mcp_list, plugins_metrics, plugins_panel, plugins_upload, plugins_web, plugins_ws,
@@ -1400,6 +1401,7 @@ pub fn on_uninstalled(st: &AppState, serial: &str, package: &str) {
 /// 截图或录屏存入图库后调用
 pub fn on_media_saved(st: &AppState, name: &str) {
     let _ = st.plugins.events.send(AppEvent::Media { name: name.to_string() });
+    st.plugins.emit(None, json!({"type": "media", "name": name}));
 }
 
 /// 远程电脑上的设备：`GET /api/devices`（单台 3 秒超时，失败时返回空）
@@ -1558,6 +1560,12 @@ async fn poll_devices(st: &Arc<AppState>) {
     for id in prev.iter().filter(|id| !now.contains(id)) {
         fire(st, &subs, "device.disconnected", vec![json!({"serial": id})]).await;
         st.plugins.foreground.lock().unwrap().remove(id);
+        // 设备断开后清掉画在它上面的覆盖层，免得重连后又出现旧画面
+        for ph in st.plugins.plugins() {
+            if ph.contributions.lock().unwrap().overlays.remove(id).is_some() {
+                st.plugins.emit(None, json!({"type": "overlay", "plugin": ph.id, "serial": id, "shapes": null, "size": null}));
+            }
+        }
     }
 }
 

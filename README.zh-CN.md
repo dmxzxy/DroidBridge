@@ -189,7 +189,7 @@ claude mcp add --transport http droidbridge http://127.0.0.1:8730/mcp
 
 同一台电脑上的 AI 工具不需要令牌。其他电脑上的 AI 工具，请在“设置 → 安全 → 已授权的电脑和浏览器 → 生成访问令牌”中生成令牌，用请求头 `Authorization: Bearer <令牌>` 传入（或在地址后加 `?token=<令牌>`）。
 
-工具：`list_devices`、`read_screen`（界面元素的文字、id 和坐标，省 token 且准确）、`screenshot`、`tap`（按元素编号或坐标）、`swipe`、`type_text`（支持中文）、`press_key`、`list_apps`、`launch_app`、`stop_app`、`logcat`、`perf`、`shell`（只允许只读查询）、`wait`。
+工具：`list_devices`、`read_screen`（界面元素的文字、id 和坐标，省 token 且准确）、`screenshot`、`tap`（按元素编号或坐标）、`swipe`、`type_text`（支持中文）、`press_key`、`list_apps`、`launch_app`、`stop_app`、`clear_app_data`（清除应用数据）、`install_apk`（安装 APK）、`push_file` / `pull_file`（与运行 DroidBridge 的电脑互传文件）、`logcat`、`perf`、`shell`（只允许只读查询）、`wait`。
 
 AI 操作设备时，投屏窗口底部会显示当前操作，每次点击和滑动的位置都会标出来。点 **暂停** 后 AI 不能再改变设备（仍可读取画面），点 **继续** 恢复。
 

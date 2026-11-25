@@ -35,7 +35,7 @@ fn tools() -> Value {
             "name": name,
             "description": desc,
             "inputSchema": {"type": "object", "properties": p, "required": required},
-            "annotations": {"readOnlyHint": read_only, "destructiveHint": !read_only && matches!(name, "stop_app")},
+            "annotations": {"readOnlyHint": read_only, "destructiveHint": !read_only && matches!(name, "stop_app" | "clear_app_data" | "install_apk" | "push_file" | "pull_file")},
         })
     };
     json!([
@@ -66,6 +66,20 @@ fn tools() -> Value {
         }), &[], true),
         t("launch_app", "Launch an app by package name (opens its launcher activity).", json!({"package": {"type": "string"}}), &["package"], false),
         t("stop_app", "Force-stop an app by package name.", json!({"package": {"type": "string"}}), &["package"], false),
+        t("clear_app_data", "Clear all data and cache of an app (like a fresh install). Cannot be undone.", json!({"package": {"type": "string"}}), &["package"], false),
+        t("install_apk", "Install an APK file from this computer onto the device. Replaces an existing install, keeping its data.", json!({
+            "path": {"type": "string", "description": "Absolute path of the .apk on this computer"},
+            "grant": {"type": "boolean", "description": "Grant all runtime permissions"},
+            "downgrade": {"type": "boolean", "description": "Allow installing an older version"}
+        }), &["path"], false),
+        t("push_file", "Copy a file or folder from this computer to the device.", json!({
+            "local": {"type": "string", "description": "Absolute path on this computer"},
+            "remote": {"type": "string", "description": "Destination path on the device, e.g. /sdcard/Download/"}
+        }), &["local", "remote"], false),
+        t("pull_file", "Copy a file from the device to this computer (overwrites the local file).", json!({
+            "remote": {"type": "string", "description": "Path on the device"},
+            "local": {"type": "string", "description": "Absolute destination path on this computer"}
+        }), &["remote", "local"], false),
         t("logcat", "Read recent device logs (newest last).", json!({
             "lines": {"type": "integer", "description": "Default 200, max 2000"},
             "level": {"type": "string", "enum": ["V", "D", "I", "W", "E", "F"], "description": "Minimum level"},
@@ -239,6 +253,52 @@ async fn call(st: &AppState, name: &str, mut args: Value) -> Value {
         Err(e) => return err(e),
     };
     args["serial"] = json!(serial);
+    if matches!(name, "install_apk" | "push_file" | "pull_file") {
+        return file_tool(st, peer, &serial, name, &args).await;
+    }
+    run_on(st, peer, name, &args).await
+}
+
+/// 安装 / 传文件：文件在这台电脑上，由这里直接传给设备（远程设备经对方电脑转发）
+async fn file_tool(st: &AppState, peer: Option<String>, serial: &str, name: &str, args: &Value) -> Value {
+    let err = |msg: String| json!({"content": [{"type": "text", "text": msg}], "isError": true});
+    let s = |k: &str| args.get(k).and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+    let file = |p: &str| std::path::Path::new(p).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+    let (op, label, q) = match name {
+        "install_apk" => (
+            "install",
+            tr!("安装 {0}", "Install {0}", file(&s("path"))),
+            json!({"path": s("path"), "replace": true, "grant": args["grant"].as_bool().unwrap_or(false), "downgrade": args["downgrade"].as_bool().unwrap_or(false)}),
+        ),
+        "push_file" => ("push", tr!("传到手机：{0}", "Send to device: {0}", file(&s("local"))), json!({"local": s("local"), "remote": s("remote")})),
+        _ => ("pull", tr!("从手机取出：{0}", "Copy from device: {0}", file(&s("remote"))), json!({"local": s("local"), "remote": s("remote")})),
+    };
+    // 设备所在电脑检查暂停并在投屏窗口提示（旧版远程电脑没有这个工具，跳过）
+    let a = run_on(st, peer.clone(), "announce", &json!({"serial": serial, "label": label})).await;
+    if a["isError"] == true {
+        let msg = a["content"][0]["text"].as_str().unwrap_or("");
+        if !(msg.contains("announce") && (msg.starts_with("Unknown tool") || msg.starts_with("未知工具"))) {
+            return a;
+        }
+    }
+    let id = match &peer {
+        Some(p) => format!("{p}/{serial}"),
+        None => serial.to_string(),
+    };
+    let r = crate::plugins::file_op(st, &id, op, &q).await;
+    match (name, r) {
+        (_, Err(e)) => err(e),
+        ("install_apk", Ok(Value::String(pkg))) => json!({"content": [{"type": "text", "text": format!("Installed {pkg}")}]}),
+        ("install_apk", Ok(_)) => json!({"content": [{"type": "text", "text": "Installed (updated an existing app)"}]}),
+        ("push_file", Ok(_)) => json!({"content": [{"type": "text", "text": format!("Copied to {}", s("remote"))}]}),
+        (_, Ok(_)) => json!({"content": [{"type": "text", "text": format!("Saved to {}", s("local"))}]}),
+    }
+}
+
+/// 在设备所在的电脑上执行一个 Agent 工具
+async fn run_on(st: &AppState, peer: Option<String>, name: &str, args: &Value) -> Value {
+    let err = |msg: String| json!({"content": [{"type": "text", "text": msg}], "isError": true});
+    let args = args.clone();
     match peer {
         None => match agent::exec(st, name, &args).await {
             Ok(content) => json!({"content": content}),

@@ -587,6 +587,42 @@ async fn device_op(app: &Arc<AppState>, ph: &Arc<Plugin>, m: &str, p: &Value, id
     }
 }
 
+/// 在设备上安装 APK、推送或拉取文件（本机路径都在这台电脑上，远程设备经 devop 传输），供 MCP 使用。
+/// install 返回新装的包名（替换安装时为 null）。
+pub(crate) async fn file_op(app: &AppState, id: &str, m: &str, q: &Value) -> Result<Value, String> {
+    for k in ["remote", "local", "path"] {
+        if let Some(v) = arg_str(q, k) {
+            not_option(v)?;
+            if k != "remote" && !std::path::Path::new(v).is_absolute() {
+                return Err(tr!("电脑上的路径必须是绝对路径：{v}", "Computer paths must be absolute: {v}"));
+            }
+        }
+    }
+    let out = match split_dev(id) {
+        Some((peer_id, raw)) => {
+            let peer = app.peers.get(peer_id).await.ok_or_else(|| tr!("远程电脑不存在", "Remote computer not found"))?;
+            remote_op(&peer, raw, m, q).await?
+        }
+        None => exec_local(app, m, q, id).await?,
+    };
+    match (m, out) {
+        ("pull", DevOut::Bytes(data)) => {
+            let local = arg_str(q, "local").unwrap_or("").to_string();
+            tokio::fs::write(&local, &data).await.map_err(|e| tr!("无法写入 {local}：{e}", "Cannot write {local}: {e}"))?;
+            Ok(json!(true))
+        }
+        ("install", DevOut::Json(v)) => {
+            let pkg = v.get("package").and_then(|v| v.as_str()).filter(|p| !p.is_empty()).map(String::from);
+            if let Some(p) = &pkg {
+                on_installed(app, id, p);
+            }
+            Ok(json!(pkg))
+        }
+        (_, DevOut::Json(v)) => Ok(v),
+        (_, DevOut::Bytes(b)) => Ok(json!(b.len())),
+    }
+}
+
 /// 远程设备：经 B 的 `/api/plugins/devop` 执行（SPEC 7.2）
 async fn remote_op(peer: &crate::peers::Peer, raw: &str, m: &str, q: &Value) -> Result<DevOut, String> {
     let timeout = match m {

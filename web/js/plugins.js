@@ -184,8 +184,9 @@ function pluginContrib(devId, force) {
 /** 电脑级贡献到达：覆盖层、投屏工具栏按钮、侧栏 */
 function pluginApplyHostContrib(data) {
   const ov = data.overlays || {};
+  pluginOverlayMaps.clear();
   for (const devId of Object.keys(ov)) pluginOverlayMaps.set(devId, ov[devId] || []);
-  for (const v of viewers.values()) pluginViewerUpdate(v);
+  for (const v of viewers.values()) { pluginViewerUpdate(v); pluginOverlayPaint(v); }
   pluginRefreshFoot();
 }
 
@@ -1538,12 +1539,21 @@ function pluginOnEvent(m) {
       if (hit) openViewer(hit.hst, hit.dev);
       break;
     }
+    case 'media': {
+      // 截图 / 录屏存进了相册（含插件保存的）：相册入口亮起小点
+      if (!document.querySelector('dialog.gallery')) galleryMarkNew(true);
+      break;
+    }
     case 'toast': {
       const kind = m.kind === 'error' ? 'bad' : m.kind === 'warn' ? 'warn' : m.kind === 'ok' ? 'ok' : undefined;
       toast(pluginTxt(m.text), { kind, ms: 5000 });
       break;
     }
     case 'state': {
+      // 插件停止后收起它没来得及结束的进度提示
+      if (m.state !== 'running' && m.state !== 'starting') {
+        for (const [key, tt] of pluginProgress) if (key.startsWith(pluginTxt(m.plugin) + '|')) { tt.close(); pluginProgress.delete(key); }
+      }
       if (pluginList && pluginList.list) {
         const p = pluginList.list.find((x) => x.id === m.plugin);
         // 已启用的插件升级后申请了新权限：提示一次，点提示直接去授权

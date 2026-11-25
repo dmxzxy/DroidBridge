@@ -28,8 +28,35 @@ async function copyMedia(item) {
   } catch (e) { toast(t('复制失败：') + e.message, { kind: 'bad', ms: 4000 }); }
 }
 
-// 截图 / 录屏完成后的提示：带“复制”“查看”按钮
-function galleryHint(item) {
+// 相册入口上的“有新内容”小点，打开相册后消失
+function galleryMarkNew(on) {
+  for (const b of document.querySelectorAll('.gal-btn')) b.classList.toggle('new', on);
+}
+
+// 截图缩略图从画面飞向相册入口
+function galleryFly(blob, from) {
+  const to = [...document.querySelectorAll('.gal-btn')].find(b => b.offsetParent);
+  if (!blob || !from || !to || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  const a = from.getBoundingClientRect(), b = to.getBoundingClientRect();
+  if (!a.width || !b.width) return;
+  const url = URL.createObjectURL(blob);
+  const img = h('img', { class: 'gal-fly', src: url, style: `left:${a.left}px;top:${a.top}px;width:${a.width}px;height:${a.height}px` });
+  document.body.append(img);
+  const dx = b.left + b.width / 2 - (a.left + a.width / 2), dy = b.top + b.height / 2 - (a.top + a.height / 2);
+  const k = Math.max(0.04, Math.min(b.width / a.width, b.height / a.height));
+  const anim = img.animate([
+    { transform: 'none', opacity: 1 },
+    { transform: 'scale(.92)', opacity: 1, offset: 0.2 },
+    { transform: `translate(${dx}px,${dy}px) scale(${k})`, opacity: 0.4 },
+  ], { duration: 650, easing: 'cubic-bezier(.5,0,.75,0)' });
+  const done = () => { img.remove(); URL.revokeObjectURL(url); };
+  anim.onfinish = done; anim.oncancel = done;
+}
+
+// 截图 / 录屏完成后的提示：带“复制”“查看”按钮；from/blob 给出时播放飞入相册的动画
+function galleryHint(item, from, blob) {
+  galleryMarkNew(true);
+  galleryFly(blob, from);
   const msg = item.kind === 'rec' ? t('录屏已保存') : t('已保存到相册');
   toast(msg, { kind: 'ok', sticky: true });
   const el = $('#toasts').lastElementChild;
@@ -42,6 +69,7 @@ function galleryHint(item) {
 
 async function openGallery(locate) {
   if (document.querySelector('dialog.gallery')) return;
+  galleryMarkNew(false);
   const dlg = h('dialog', { class: 'gallery' });
   let items = [];
   let dir = '';

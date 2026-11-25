@@ -156,6 +156,17 @@ async fn run_tool(st: &AppState, s: &str, serial: &str, tool: &str, args: &Value
             let r = apps::action(st, apps::ActionReq { serial: serial.clone(), pkg, action: action.into() }).await?;
             Ok(vec![text(r["msg"].as_str().unwrap_or("OK"))])
         }
+        "clear_app_data" => {
+            let pkg = arg_str(args, "package").ok_or_else(|| tr!("缺少 package", "Missing package"))?.to_string();
+            st.agent.emit(s, json!({"action": "app", "label": tr!("清除 {pkg} 的数据", "Clear data of {pkg}")}));
+            let r = apps::action(st, apps::ActionReq { serial: serial.clone(), pkg, action: "clear".into() }).await?;
+            Ok(vec![text(r["msg"].as_str().unwrap_or("OK"))])
+        }
+        // 文件类工具在 MCP 所在电脑上执行，执行前经这里检查暂停并在投屏窗口提示
+        "announce" => {
+            st.agent.emit(s, json!({"action": "app", "label": arg_str(args, "label").unwrap_or("")}));
+            Ok(vec![text("OK")])
+        }
         "list_apps" => list_apps(st, s, args).await,
         "logcat" => logcat(st, s, args).await,
         "perf" => {

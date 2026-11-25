@@ -189,7 +189,7 @@ claude mcp add --transport http droidbridge http://127.0.0.1:8730/mcp
 
 Clients on the same computer need no token. For an MCP client on another computer, create a token in **Settings → Security → Authorized computers and browsers → Create access token** and send it as `Authorization: Bearer <token>` (or append `?token=<token>` to the URL).
 
-Tools: `list_devices`, `read_screen` (UI elements with text, ids and coordinates — cheap and precise), `screenshot`, `tap` (by element index or coordinates), `swipe`, `type_text` (any language), `press_key`, `list_apps`, `launch_app`, `stop_app`, `logcat`, `perf`, `shell` (read-only queries only), `wait`.
+Tools: `list_devices`, `read_screen` (UI elements with text, ids and coordinates — cheap and precise), `screenshot`, `tap` (by element index or coordinates), `swipe`, `type_text` (any language), `press_key`, `list_apps`, `launch_app`, `stop_app`, `clear_app_data`, `install_apk`, `push_file` / `pull_file` (paths on the computer running DroidBridge), `logcat`, `perf`, `shell` (read-only queries only), `wait`.
 
 While an AI operates a device, its window shows a bar with the current action and marks each tap and swipe. Click **Pause** to stop the AI from changing the device (it can still read the screen) and **Resume** to continue.
 

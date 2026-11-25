@@ -727,7 +727,7 @@ class Viewer {
         const device = this.dev.model || this.dev.serial;
         const item = await api('/api/media/shot?device=' + encodeURIComponent(device), { method: 'POST', headers: { 'content-type': 'image/png' }, body: b });
         // 只保留一条带“查看”按钮的提示
-        galleryHint(item);
+        galleryHint(item, this.canvas, b);
       } catch (e) { toast(t('截图失败：') + e.message, { kind: 'bad', ms: 4000 }); }
     }, 'image/png');
   }

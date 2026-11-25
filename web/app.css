@@ -539,6 +539,10 @@ dialog.gallery .dlg-d{flex:none}
 .toasts{position:fixed;left:50%;bottom:calc(20px + var(--sb-h, 0px));transform:translateX(-50%);z-index:60;display:grid;gap:8px;justify-items:center;pointer-events:none}
 .toast{display:flex;align-items:center;gap:8px;max-width:min(480px,calc(100vw - 32px));padding:8px 14px;border:1px solid var(--line);border-radius:8px;background:var(--raised);box-shadow:var(--shadow);font-size:12px}
 .toast .dot{width:6px;height:6px}
+.toast button{pointer-events:auto}
+.gal-btn{position:relative}
+.gal-btn.new::after{content:'';position:absolute;top:4px;right:4px;width:7px;height:7px;border-radius:50%;background:var(--accent);box-shadow:0 0 0 2px var(--side)}
+.gal-fly{position:fixed;z-index:70;object-fit:contain;border-radius:8px;box-shadow:var(--shadow);pointer-events:none;transform-origin:center}
 
 /* 顶栏（仅窄屏） */
 .topbar{display:none}
