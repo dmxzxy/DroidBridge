@@ -469,6 +469,13 @@ function settingsDialog(tab) {
 function appsDialog(hst, dev) {
   const peer = hst.id, serial = dev.serial;
   let apps = [], kind = 'user';
+  const loadPinned = () => { try { return new Set(JSON.parse(pref.get('pinned_apps', '[]'))); } catch { return new Set(); } };
+  let pinned = loadPinned();
+  const togglePin = (pkg) => {
+    if (pinned.has(pkg)) pinned.delete(pkg); else pinned.add(pkg);
+    pref.set('pinned_apps', JSON.stringify([...pinned]));
+    render();
+  };
   const search = h('input', { class: 'input', type: 'search', placeholder: t('搜索名称或包名'), spellcheck: 'false', oninput: () => render() });
   const segBtn = (k, label) => h('button', { type: 'button', class: k === kind ? 'on' : '', onclick: e => { kind = k; [...seg.children].forEach(b => b.classList.toggle('on', b === e.currentTarget)); render(); } }, label);
   const seg = h('div', { class: 'seg sm' }, segBtn('user', t('用户应用')), segBtn('system', t('系统应用')));
@@ -484,6 +491,17 @@ function appsDialog(hst, dev) {
       render();
     } catch (e) { tt.set(e.message, 'bad'); tt.close(7000); }
   };
+  const clearAndRelaunch = async (a) => {
+    if (!await confirmDialog(t('清除“{0}”的数据并重新启动？', a.name || a.pkg), t('应用的全部数据、账号和设置都会被删除，无法恢复。'), t('清数据并重启'), true)) return;
+    const tt = toast(t('正在清除') + ' ' + (a.name || a.pkg) + '…', { sticky: true });
+    try {
+      await api('/api/apps/action?peer=' + encodeURIComponent(peer), { method: 'POST', body: JSON.stringify({ serial, pkg: a.pkg, action: 'clear' }) });
+      const r = await api('/api/apps/action?peer=' + encodeURIComponent(peer), { method: 'POST', body: JSON.stringify({ serial, pkg: a.pkg, action: 'launch' }) });
+      a.running = true;
+      tt.set((r.msg || t('已启动')) + ' · ' + (a.name || a.pkg), 'ok'); tt.close(2500);
+      render();
+    } catch (e) { tt.set(e.message, 'bad'); tt.close(7000); }
+  };
   const moreItems = (a) => {
     // 插件贡献：远程电脑上的设备也用本机插件的菜单
     const plug = pluginMenuItems(hst, 'app', { serial, package: a.pkg });
@@ -491,6 +509,7 @@ function appsDialog(hst, dev) {
       ...plug,
       ...(plug.length ? ['-'] : []),
       { icon: 'stop', label: t('强制停止'), fn: () => call(a, 'stop', t('正在停止')) },
+      { icon: 'refresh', label: t('清数据并重启'), fn: () => clearAndRelaunch(a) },
       { icon: 'eraser', label: t('清除数据…'), fn: async () => { if (await confirmDialog(t('清除“{0}”的数据？', a.name || a.pkg), t('应用的全部数据、账号和设置都会被删除，无法恢复。'), t('清除数据'), true)) call(a, 'clear', t('正在清除')); } },
       a.system ? null : { icon: 'trash', label: t('卸载…'), danger: true, fn: async () => { if (await confirmDialog(t('卸载“{0}”？', a.name || a.pkg), t('应用及其数据会从设备上删除。'), t('卸载'), true)) call(a, 'uninstall', t('正在卸载')); } },
     ].filter(Boolean);
@@ -498,17 +517,28 @@ function appsDialog(hst, dev) {
   const more = (btn, a) => menu(btn, moreItems(a));
   function render() {
     const q = search.value.trim().toLowerCase();
-    const shown = apps.filter(a => (kind === 'system') === a.system && (!q || a.pkg.toLowerCase().includes(q) || (a.name || '').toLowerCase().includes(q)));
+    const shown = apps
+      .filter(a => (kind === 'system') === a.system && (!q || a.pkg.toLowerCase().includes(q) || (a.name || '').toLowerCase().includes(q)))
+      .sort((a, b) => (pinned.has(b.pkg) - pinned.has(a.pkg)));
     count.textContent = t('{0} 个应用', shown.length);
     if (!shown.length) { list.replaceChildren(h('div', { class: 'apps-empty' }, q ? t('没有匹配的应用') : t('没有应用'))); return; }
-    list.replaceChildren(...shown.map(a => ctxMenu(h('div', { class: 'app' },
-      h('div', { class: 't' }, h('b', {}, h('span', {}, a.name || a.pkg), a.running ? h('span', { class: 'run', title: t('正在运行') }, '● ' + t('运行中')) : null), a.name ? h('small', {}, a.pkg) : null),
-      h('div', { class: 'acts' }, ib('play', t('启动'), () => call(a, 'launch', t('正在启动'))), ib('more', t('更多'), e => more(e.currentTarget, a)))), () => [
-      { icon: 'play', label: t('启动'), fn: () => call(a, 'launch', t('正在启动')) },
-      ...moreItems(a),
-      '-',
-      { icon: 'copy', label: t('复制包名'), fn: () => copyText(a.pkg) },
-    ])));
+    list.replaceChildren(...shown.map(a => {
+      const isPin = pinned.has(a.pkg);
+      return ctxMenu(h('div', { class: 'app' },
+        ib('star', isPin ? t('取消置顶') : t('置顶应用'), () => togglePin(a.pkg), 'pin' + (isPin ? ' on' : '')),
+        h('div', { class: 't' }, h('b', {}, h('span', {}, a.name || a.pkg), a.running ? h('span', { class: 'run', title: t('正在运行') }, '● ' + t('运行中')) : null), a.name ? h('small', {}, a.pkg) : null),
+        h('div', { class: 'acts' },
+          ib('play', t('启动'), () => call(a, 'launch', t('正在启动'))),
+          a.running ? ib('stop', t('强制停止'), () => call(a, 'stop', t('正在停止'))) : null,
+          ib('refresh', t('清数据并重启'), () => clearAndRelaunch(a)),
+          ib('more', t('更多'), e => more(e.currentTarget, a)))), () => [
+        { icon: 'star', label: isPin ? t('取消置顶') : t('置顶应用'), fn: () => togglePin(a.pkg) },
+        { icon: 'play', label: t('启动'), fn: () => call(a, 'launch', t('正在启动')) },
+        ...moreItems(a),
+        '-',
+        { icon: 'copy', label: t('复制包名'), fn: () => copyText(a.pkg) },
+      ]);
+    }));
   }
   async function load() {
     list.replaceChildren(h('div', { class: 'apps-empty' }, h('span', { class: 'spin' }), t('正在读取应用列表…')));

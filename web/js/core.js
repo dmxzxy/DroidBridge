@@ -89,6 +89,10 @@ const P = {
   alert: '<path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h16.9a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/>',
   users: '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/>',
   eye: '<path d="M2 12s3.7-7 10-7 10 7 10 7-3.7 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/>',
+  sidebar: '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18"/>',
+  search: '<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>',
+  star: '<polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>',
+  columns: '<rect x="3" y="4" width="7" height="16" rx="1.5"/><rect x="14" y="4" width="7" height="16" rx="1.5"/>',
 };
 /** 应用图标（与 src/icon.rs 绘制的三段曲线一致） */
 const LOGO_SVG = '<svg viewBox="0 0 64 64"><rect x="2" y="2" width="60" height="60" rx="13.5" fill="currentColor" stroke="none"/><g fill="none" stroke="var(--logo-fg,#fff)" stroke-linecap="round"><rect x="16.5" y="17.5" width="14" height="29" rx="4.5" stroke-width="4.8"/><path d="M32.3 14.22A12.6 12.6 0 0 1 39.5 25.6V38.4A12.6 12.6 0 0 1 32.3 49.78" stroke-width="4"/><path d="M39.75 12.3A20.7 20.7 0 0 1 48.5 29.2V34.8A20.7 20.7 0 0 1 39.75 51.7" stroke-width="3.3"/></g></svg>';
