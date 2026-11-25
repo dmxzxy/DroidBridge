@@ -113,7 +113,7 @@
 
 界面贡献：
 - `register` `{kind, def}`；`unregister` `{kind, id}`。kind 与 def：
-  - `menu`: `{id, target, path, icon?, filter?, pin?, on?}`（`pin`：toolbar 项直接显示为投屏卡片工具列的图标按钮；`on`：按钮开启状态的设备 serial 列表）；target ∈ `device | app | file | tools | toolbar | media | logcat`；path 用 `/` 分级，如 `"MyGame/安装测试包"`；filter：`{hasApp?, models?, serials?, packages?, ext?, dir?}`（packages/ext/dir 由前端判断；hasApp/models/serials 由主进程按设备判断）
+  - `menu`: `{id, target, path, icon?, filter?, pin?, on?}`（`pin`：toolbar 项直接显示为投屏卡片工具列的图标按钮；`on`：按钮开启状态的设备 serial 列表；`multi`：同时打开两台及以上投屏时才显示）；target ∈ `device | app | file | tools | toolbar | media | logcat`；path 用 `/` 分级，如 `"MyGame/安装测试包"`；filter：`{hasApp?, models?, serials?, packages?, ext?, dir?}`（packages/ext/dir 由前端判断；hasApp/models/serials 由主进程按设备判断）
   - `panel`: `{id, title, icon?, dock, filter?, refresh?}`；dock ∈ `device | window | settings`；refresh 秒数（前端自动重绘间隔，可省略）
   - `webpanel`: `{id, title, icon?, entry, dock, filter?}`；entry 为插件目录下相对路径，如 `web/index.html`
   - `status`: `{id, text, kind?, tip?, clickable}`；kind ∈ `info | ok | warn | error`

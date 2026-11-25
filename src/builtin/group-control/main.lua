@@ -36,7 +36,7 @@ refresh = function()
   local list = members()
   skew = skewed()
   db.link(list)
-  db.menu("toolbar", T("同步操作", "Sync input"), { id = "toggle", icon = "link", pin = true, on = list }, function(dev)
+  db.menu("toolbar", T("同步操作", "Sync input"), { id = "toggle", icon = "link", pin = true, multi = true, on = list }, function(dev)
     local s = dev.serial
     group[s] = not group[s] or nil
     refresh()

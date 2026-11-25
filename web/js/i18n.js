@@ -633,7 +633,7 @@ const EN = {"已安装 {0}":"Installed {0}",
   "已启动":"Launched",
   "置顶":"Pin",
   "紧凑边框：悬停时显示工具栏":"Compact: show toolbars on hover",
-  "内置插件：可以停用，不能删除":"Built-in plugin: can be disabled, not removed",
+  "内置插件":"Built-in plugin",
 };
 // 界面语言：?lang= > 手动选择 > 服务端语言（桌面版通过 ?lang= 传入）> 浏览器语言
 let LANG = (() => {

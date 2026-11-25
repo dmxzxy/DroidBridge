@@ -324,7 +324,7 @@ item:remove()
 - `filter`：`hasApp`（布尔）、`models`、`serials`（glob 列表）由主程序按设备判断；`packages`（glob 列表，匹配包名）、`ext`（glob 列表，匹配扩展名）、`dir`（布尔）由界面判断
 - 处理函数参数：`device`/`toolbar` → `fn(dev)`；`app` → `fn(dev, pkg)`；`file` → `fn(dev, path, isDir)`；`tools` → `fn()`；`media`（相册里的截图、录屏）→ `fn(item)`，item = `{name, kind, device, size, time, path}`；`logcat`（日志行）→ `fn(dev, line)`，line 是原始文字
 - 返回值：字符串会作为提示显示，其他值只表示成功
-- `toolbar` 菜单项加 `pin = true` 时不进拼图菜单，直接作为图标按钮放在投屏卡片的标题栏里；`on` 给出按钮处于开启状态的设备 serial 列表（这些卡片的边框会高亮）。状态变了就用同一个 `id` 再调用一次 `db.menu` 更新：
+- `toolbar` 菜单项加 `pin = true` 时不进拼图菜单，直接作为图标按钮放在投屏卡片的标题栏里；`on` 给出按钮处于开启状态的设备 serial 列表（这些卡片的边框会高亮）；`multi = true` 时只在同时打开两台及以上投屏时显示。状态变了就用同一个 `id` 再调用一次 `db.menu` 更新：
 
 ```lua
 db.menu("toolbar", "同步操作", { id = "toggle", icon = "link", pin = true, on = { "R5CT10ABCDE" } }, function(dev) end)

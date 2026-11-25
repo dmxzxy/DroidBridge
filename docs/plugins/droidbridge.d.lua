@@ -526,7 +526,7 @@ function DbJson.decode(s) end
 ---@field every fun(sec: number, fn: fun()): DbTimer
 ---@field after fun(sec: number, fn: fun()): DbTimer
 ---@field on fun(event: string, fn: fun(...)) 事件：device.connected / device.disconnected / app.foreground / device.action / device.input / app.installed / app.uninstalled / media.saved / settings.changed / plugin.unload
----@field menu fun(target: string, path: string, opts: table|nil, fn: fun(...)): DbMenuItem target: device | app | file | tools | toolbar | media | logcat；opts: {icon?, filter?, id?, pin?: boolean, on?: string[]}（pin 仅 toolbar：直接显示为投屏卡片按钮，on 为开启状态的设备 serial）
+---@field menu fun(target: string, path: string, opts: table|nil, fn: fun(...)): DbMenuItem target: device | app | file | tools | toolbar | media | logcat；opts: {icon?, filter?, id?, pin?: boolean, multi?: boolean, on?: string[]}（pin 仅 toolbar：直接显示为投屏卡片按钮；multi 为 true 时只在打开两台及以上投屏时显示；on 为开启状态的设备 serial）
 ---@field panel fun(id: string, opts: { title: string, icon?: string, dock?: string, filter?: table, refresh?: number }, render: fun(ui: DbUi, dev: DbDevice|nil)): any
 ---@field webpanel fun(id: string, opts: { title: string, icon?: string, entry: string, dock?: string, filter?: table }): any
 ---@field status fun(id: string, text: string|nil, opts?: { kind?: string, tip?: string, onClick?: fun() }): any

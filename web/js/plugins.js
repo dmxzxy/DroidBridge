@@ -1048,7 +1048,7 @@ function pluginSettingsPane() {
       pluginTile(p),
       h('div', { class: 'plug-row-m' },
         h('div', { class: 'plug-row-n' }, h('span', { class: 'dot ' + pluginStateDot(st) }), h('b', {}, pluginTxt(p.name || p.id)),
-          p.kind === 'builtin' ? h('span', { class: 'plug-lock', title: t('内置插件：可以停用，不能删除'), html: svg('lock') }) : null),
+          p.kind === 'builtin' ? h('span', { class: 'plug-lock', title: t('内置插件'), html: svg('lock') }) : null),
         err ? h('div', { class: 'plug-row-e' }, err) : null),
       grantBtn,
       info.manage ? pluginSrcAction(srcCtx, pluginSrcEntry(p.id), true) : null,
@@ -1737,7 +1737,9 @@ function pluginViewerUpdate(v) {
   const menus = pluginToolbarEntries(devId, false);
   if (v.plugPins) {
     let anyOn = false;
-    v.plugPins.replaceChildren(...pluginToolbarEntries(devId, true).map((e) => {
+    // multi：同时打开两台及以上投屏时才显示
+    const pins = pluginToolbarEntries(devId, true).filter((e) => !e.multi || viewers.size >= 2);
+    v.plugPins.replaceChildren(...pins.map((e) => {
       const on = Array.isArray(e.on) && e.on.includes(devId);
       anyOn = anyOn || on;
       const label = String(e.path || e.id).split('/').pop();

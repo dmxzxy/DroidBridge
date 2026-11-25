@@ -612,7 +612,7 @@ function db.menu(target, path, a, b)
   local id = opts.id or (target .. ":" .. path)
   local on = opts.on
   if type(on) == "table" and #on == 0 then on = nil end
-  local def = { id = id, target = target, path = path, icon = opts.icon, filter = opts.filter, pin = opts.pin and true or nil, on = on }
+  local def = { id = id, target = target, path = path, icon = opts.icon, filter = opts.filter, pin = opts.pin and true or nil, multi = opts.multi and true or nil, on = on }
   menus[id] = { fn = fn, def = def }
   reg("menu", def)
   return {

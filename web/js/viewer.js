@@ -983,6 +983,7 @@ function afterViewersChange() {
   $('#placeholder').style.display = viewers.size ? 'none' : '';
   if (!viewers.size) { document.body.classList.remove('viewing'); history.replaceState(null, '', location.pathname + location.search); }
   renderSide();
+  for (const v of viewers.values()) pluginViewerUpdate(v);
   fitAllViewers();
 }
 
