@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI 助手</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<header class="bar">
+  <span class="ctx" id="ctx"><i id="ctxIcon"></i><b id="ctxName"></b></span>
+  <span class="sp"></span>
+  <span class="chip pick" id="mode" hidden></span>
+  <span class="chip" id="model" hidden></span>
+  <button type="button" class="ib" id="btnNew" title="新对话"></button>
+</header>
+<main id="log"></main>
+<footer class="input" id="input">
+  <div class="cmds" id="cmds" hidden></div>
+  <textarea id="q" rows="1" spellcheck="false"></textarea>
+  <button type="button" class="send" id="btnSend"></button>
+</footer>
+<script src="/plugin-web/sdk.js"></script>
+<script src="md.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

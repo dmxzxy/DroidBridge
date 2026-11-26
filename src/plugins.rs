@@ -1092,10 +1092,11 @@ impl Plugins {
         builtin::is_builtin(&ph.id) && ph.dir == self.root.join(&ph.id)
     }
 
-    /// 插件的保存状态；内置插件第一次出现时默认启用，启用时总是拥有清单里的全部权限
+    /// 插件的保存状态；内置插件第一次出现时按它的默认值启用或停用，启用时总是拥有清单里的全部权限
     fn entry_for(&self, saved: &HashMap<String, StateEntry>, man: &Manifest, dir: &Path) -> StateEntry {
         let builtin = builtin::is_builtin(&man.id) && dir == self.root.join(&man.id);
-        let mut e = saved.get(&man.id).cloned().unwrap_or_else(|| StateEntry { enabled: builtin, ..Default::default() });
+        let on = builtin && builtin::enabled_by_default(&man.id);
+        let mut e = saved.get(&man.id).cloned().unwrap_or_else(|| StateEntry { enabled: on, ..Default::default() });
         if builtin && e.enabled {
             e.granted = man.permissions.clone();
         }
@@ -1865,6 +1866,25 @@ mod tests {
         assert!(!ph2.enabled());
         assert_eq!(std::fs::read_to_string(&main).unwrap(), builtin::BUILTIN[0].files.iter().find(|f| f.0 == "main.lua").unwrap().1);
         assert!(p2.root().join(id).join("plugin.json").exists());
+        let _ = std::fs::remove_dir_all(&data);
+    }
+
+    #[test]
+    fn builtin_ai_assistant_ships_disabled_and_takes_over_source_install() {
+        let data = temp_root("builtin-ai");
+        // 以前从插件源装过：有插件源标记、多余的文件和已保存的设置
+        let p = Plugins::new(&data);
+        let dir = p.root().join("pi-agent");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join(".source.json"), "{}").unwrap();
+        std::fs::write(dir.join("README.md"), "old").unwrap();
+        p.load();
+        let ph = p.get("pi-agent").unwrap();
+        assert!(p.is_builtin(&ph));
+        assert!(!ph.enabled(), "AI 助手默认停用");
+        assert!(!dir.join(".source.json").exists());
+        assert!(dir.join("pi/system.en.md").exists() && dir.join("web/app.js").exists());
+        assert!(ph.error().is_none(), "{:?}", ph.error());
         let _ = std::fs::remove_dir_all(&data);
     }
 

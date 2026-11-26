@@ -18,6 +18,7 @@ See and control Android devices from your computer — not only the ones plugged
 - **Files** — fast storage browser next to the screen or in its own window: thumbnails, preview, multi-select, upload, download, rename, delete, install APKs
 - **Shared viewing** — several people can watch the same device at once over a single mirroring session; everyone sees who is watching and who is in control, and only one person operates at a time
 - **Batch install & sync input** — install one APK on many devices at once; mirror your input on one device to several others
+- **AI assistant** — a built-in plugin to chat inside DroidBridge, troubleshoot devices and act on them, using tools from other plugins too; needs Pi installed, ships disabled
 - **AI agents (MCP)** — let Claude Code, Cursor and other MCP clients read the screen and operate any device; you watch every action live and can pause the AI
 - **Plugins (Lua)** — build project-specific tools: menu items for devices, apps and files, panels next to the screen (including embedded web pages of your own tools), drawings on the mirrored screen, status items, performance metrics, log highlights, AI tools and long-running helper processes; plugins run in separate processes, so a broken plugin cannot take the app down. Teams can publish plugins as a plugin source that everyone installs and updates from Settings, with an update dot on the settings button and optional auto updates ([docs/plugins/SOURCES.md](docs/plugins/SOURCES.md)). See [docs/plugins/README.md](docs/plugins/README.md) (Chinese)
 - **Install APKs / send files** — drop them onto a device screen
@@ -172,6 +173,16 @@ When a remote computer runs an older version than this one, an **Update** badge 
 To update everything: update DroidBridge on your own computer, then click **Update** on each remote computer.
 
 For networks without GitHub access, host the release files (the `droidbridge-server-*.tar.gz` packages and `SHA256SUMS.txt`) on an internal web server and start DroidBridge with the environment variable `DROIDBRIDGE_RELEASE_BASE=http://server/path`.
+
+### AI assistant
+
+The built-in AI assistant plugin lets you chat inside DroidBridge: troubleshoot crashes, jank and errors on a device, have it carry out tasks on the device, or ask how to use DroidBridge.
+
+1. Install [Pi](https://pi.dev): `npm i -g @earendil-works/pi-coding-agent` (needs Node.js 18 or later).
+2. Enable "AI Assistant" in Settings → Plugins (it ships disabled), then enter the API URL and token of a model service in its settings, or use the account Pi is signed in with.
+3. Use "AI" in the screen window's sidebar for that device, "AI Assistant" in the tools menu for all devices, or right-click a log line ("Ask AI") or an app ("AI Diagnose").
+
+Actions that change the device (taps, typing, shell commands, etc.) ask you first by default; switch to acting directly or read only at any time from the top of the chat. AI tools provided by other plugins are added automatically, so the assistant can handle the apps those plugins cover.
 
 ### AI agents (MCP)
 

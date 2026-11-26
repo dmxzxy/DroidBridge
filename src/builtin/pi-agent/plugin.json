@@ -1,0 +1,24 @@
+{
+  "id": "pi-agent",
+  "name": "AI 助手",
+  "version": "0.2.0",
+  "description": "用 Pi 排查设备和应用的问题、完成设备上的操作，能使用其他插件提供的 AI 工具",
+  "author": "DroidBridge",
+  "main": "main.lua",
+  "permissions": [
+    "exec",
+    "fs.read",
+    "net",
+    "device.shell",
+    "device.apps",
+    "device.input",
+    "device.screen",
+    "device.logs",
+    "device.perf",
+    "ai.call"
+  ],
+  "en": {
+    "name": "AI Assistant",
+    "description": "Uses Pi to troubleshoot devices and apps, act on devices, and use AI tools from other plugins"
+  }
+}
