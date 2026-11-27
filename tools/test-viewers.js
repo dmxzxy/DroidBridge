@@ -24,12 +24,18 @@ const browser = process.env.BROWSER || [
 ].find(f => fs.existsSync(f));
 if (!browser) { console.error('未找到 Chrome / Edge / Chromium，可用 BROWSER 环境变量指定'); process.exit(2); }
 const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'db-viewers-'));
-const p = spawn(browser, ['--headless=new', '--disable-gpu', '--no-sandbox', '--remote-debugging-port=9345', '--user-data-dir=' + profile, '--window-size=1440,900', 'about:blank']);
+// 调试端口交给浏览器自己挑空闲的（写在新用户目录的 DevToolsActivePort 里）：固定端口可能被本机别的程序占着，比如 GitLab Runner 的 9345
+const p = spawn(browser, ['--headless=new', '--disable-gpu', '--no-sandbox', '--remote-debugging-port=0', '--user-data-dir=' + profile, '--window-size=1440,900', 'about:blank']);
 let fails = 0;
 const check = (label, ok, detail) => { console.log((ok ? '✓ ' : '✗ ') + label + (detail ? '  ' + detail : '')); if (!ok) fails++; };
 (async () => {
-  let tabs;
-  for (let i = 0; i < 240; i++) { try { tabs = await (await fetch('http://127.0.0.1:9345/json')).json(); if (tabs && tabs.some(t => t.type === 'page')) break; } catch {} await sleep(250); }
+  let tabs, dbg = 0;
+  for (let i = 0; i < 240; i++) {
+    try { dbg = +fs.readFileSync(path.join(profile, 'DevToolsActivePort'), 'utf8').split('\n')[0] || dbg; } catch {}
+    try { if (dbg) tabs = await (await fetch(`http://127.0.0.1:${dbg}/json`)).json(); } catch {}
+    if (tabs && tabs.some(t => t.type === 'page')) break;
+    await sleep(250);
+  }
   if (!tabs || !tabs.some(t => t.type === 'page')) { console.error('浏览器没有启动（60 秒内未打开调试端口）'); p.kill(); process.exit(3); }
   const ws = new WebSocket(tabs.find(t => t.type === 'page').webSocketDebuggerUrl);
   await new Promise(r => ws.onopen = r);

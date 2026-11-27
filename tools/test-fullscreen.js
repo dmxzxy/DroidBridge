@@ -107,6 +107,32 @@ const check = (label, ok, detail) => { console.log((ok ? '✓ ' : '✗ ') + labe
   check('全屏（竖屏窗口）：导航条贴底，画面在它上方居中', nav[1] + nav[3] === 1894 && cv[1] + cv[3] <= nav[1] && Math.abs(cv[1] - (nav[1] - cv[3]) / 2) <= 1, `nav ${nav} canvas ${cv}`);
   await full(false);
 
+  // ---- 竖屏显示器 + 默认 1280p 画面：画面比显示器小，要按比例放大到顶满，不能停在视频原始尺寸 ----
+  await load(1080, 1920, false);
+  await frame(576, 1280);
+  cv = await rect('canvas');
+  check('窗口（竖屏显示器）：画面放大到可用高度，不停在视频原始尺寸', cv[3] > 1600 && Math.abs(cv[2] / cv[3] - 0.45) < 0.01, `canvas ${cv}`);
+  await full(true);
+  nav = await rect('.nav'); cv = await rect('canvas');
+  check('全屏（竖屏显示器，小画面）：画面放大到顶满高度', nav[1] + nav[3] === 1920 && Math.abs(cv[3] - nav[1]) <= 1 && cv[1] === 0, `nav ${nav} canvas ${cv}`);
+  await frame(1280, 576);
+  nav = await rect('.nav'); cv = await rect('canvas');
+  check('全屏（竖屏显示器，横屏画面）：画面放大到顶满宽度并居中', cv[0] === 0 && cv[2] === 1080 && Math.abs(cv[1] - (nav[1] - cv[3]) / 2) <= 1, `nav ${nav} canvas ${cv}`);
+  await full(false);
+
+  // ---- 手机屏幕上自带导航按键（老手机、三键导航）：画面里已经有一份，不再显示我们的 ----
+  await load(1440, 900, false);
+  await frame(576, 1280);
+  const before = (await rect('canvas'))[3];
+  await ev(`${V}.onText({ type: 'meta', nav_buttons: true }); 1`);
+  check('手机自带导航按键：不再显示导航键，让出的高度给画面', (await ev(`getComputedStyle(${V}.nav).display`)) === 'none' && (await rect('canvas'))[3] > before, `${before} → ${(await rect('canvas'))[3]}`);
+  await full(true);
+  cv = await rect('canvas');
+  check('手机自带导航按键 + 全屏：画面顶满整个高度', cv[1] === 0 && Math.abs(cv[3] - 900) <= 1, `canvas ${cv}`);
+  await full(false);
+  await ev(`${V}.onText({ type: 'meta', nav_buttons: false }); 1`);
+  check('手机没有屏幕导航按键：照常显示导航键', (await ev(`getComputedStyle(${V}.nav).display`)) !== 'none');
+
   // ---- 触屏：导航键是画面下沿的小胶囊 ----
   await load(390, 844, true);
   check('触屏：导航键是画面下方留白里的小胶囊，默认收起', (await ev(`${V}.root.classList.contains('nav-pill') && ${V}.nav.previousElementSibling.classList.contains('screen')`)) === true && (await isOpen()) === false);

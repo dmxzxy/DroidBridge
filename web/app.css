@@ -235,9 +235,12 @@ main{flex:1;min-width:0;min-height:calc(100vh - var(--sb-h));padding:12px 16px 1
 .viewer:fullscreen{width:100vw !important;border:0;border-radius:0;background:#000;justify-content:center}
 .viewer:fullscreen .vhead,.viewer:fullscreen .vtools,.viewer:fullscreen .typing{display:none}
 .viewer:fullscreen .vmain,.viewer:fullscreen .vbody,.viewer:fullscreen .vcol,.viewer:fullscreen .screen{flex:1;min-height:0}
-.viewer:fullscreen .screen canvas{max-height:calc(100vh - 40px) !important}
-.viewer:fullscreen.log-bottom .screen canvas{max-height:calc(62vh - 40px) !important}
+/* 全屏：画面按比例放大到铺满可用区域（宽或高顶满），竖屏显示器、低分辨率画面也一样 */
+.viewer:fullscreen .screen{container-type:size}
+.viewer:fullscreen .screen canvas{width:min(100cqw,calc(100cqh * var(--ar,.5625))) !important;height:auto;max-width:none;max-height:none !important}
 .viewer:fullscreen .nav{background:var(--surface)}
+/* 手机屏幕上自带导航按键：画面里已经有一份，不再重复 */
+.viewer.dev-nav .nav{display:none !important}
 /* 导航胶囊（窄屏 / 触屏）：三个键收成画面下方留白里的小胶囊；碰到画面或点胶囊时展开，停手后收回 */
 .viewer.nav-pill .nav{position:relative;justify-content:center;border:0;background:#000}
 .viewer.nav-pill .nav::before{content:"";position:absolute;left:50%;top:50%;width:60px;height:28px;transform:translate(-50%,-50%);border-radius:14px;background:rgba(255,255,255,.14);transition:width .18s,height .18s}

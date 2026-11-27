@@ -1081,6 +1081,8 @@ struct Parts {
 async fn setup(mirror: &Arc<Mirror>, state: &Arc<AppState>, serial: &str, opts: &StreamOpts) -> Result<Parts, String> {
     let adb = &state.cfg.adb;
     let jar = state.cfg.server_jar.to_string_lossy().into_owned();
+    // 和启动并行：设备屏幕上是否自带导航按键
+    let nav = tokio::spawn(adb::nav_buttons(adb.clone(), serial.to_string()));
 
     // 启动阶段串行化，避免并发推送同一个 jar
     let start_guard = state.start_lock.lock().await;
@@ -1220,7 +1222,8 @@ async fn setup(mirror: &Arc<Mirror>, state: &Arc<AppState>, serial: &str, opts: 
         _ => {}
     }
     let codec = String::from_utf8_lossy(&cid).trim_matches('\0').to_string();
-    mirror.publish_meta(json!({"type":"meta","device_name":device_name,"codec":codec,"serial":serial}));
+    let nav_buttons = tokio::time::timeout(Duration::from_secs(2), nav).await.ok().and_then(Result::ok).flatten();
+    mirror.publish_meta(json!({"type":"meta","device_name":device_name,"codec":codec,"serial":serial,"nav_buttons":nav_buttons}));
 
     Ok(Parts { child, video, audio, control, _forward: forward })
 }

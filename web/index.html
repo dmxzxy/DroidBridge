@@ -72,6 +72,7 @@ setupTitlebar();
 initSidebarLayout();
 $('#placeholder').append(h('span', { html: svg('phone') }).firstChild, h('div', {}, t('选择设备开始投屏')), t('设备需开启 USB 调试并连接到电脑'));
 addEventListener('resize', () => { for (const v of viewers.values()) v.fit(); });
+document.addEventListener('fullscreenchange', () => { for (const v of viewers.values()) v.fit(); });
 addEventListener('dragover', e => e.preventDefault());
 addEventListener('drop', e => { e.preventDefault(); if (e.dataTransfer && e.dataTransfer.files.length) toast(t('把文件拖到设备画面上即可安装或传输')); });
 addEventListener('beforeunload', () => { for (const v of viewers.values()) if (v.recording) v.stopRecord(); });

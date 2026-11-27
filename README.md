@@ -87,7 +87,8 @@ The desktop app also runs the server, so other computers can add it. Use the ser
 | Ctrl+V | Paste the computer clipboard to the device |
 | Side toolbar | Power, volume, rotate, screenshot, record, type text (any language), logs; **…** for notifications, screen off, install APK, reconnect |
 | Drop files on the screen | Install APKs, copy other files to `/sdcard/Download` |
-| ◁ ○ □ under the screen | Back, Home, Recents; on phones and tablets they sit in a small pill that opens when you touch the screen or tap it |
+| ◁ ○ □ under the screen | Back, Home, Recents; on phones and tablets they sit in a small pill that opens when you touch the screen or tap it. Not shown when the phone already draws these buttons on its own screen |
+| Fullscreen button in the title bar | The screen is enlarged to fill the whole screen |
 
 ### Wireless devices
 

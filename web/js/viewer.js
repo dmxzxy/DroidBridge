@@ -436,15 +436,23 @@ class Viewer {
     }
   }
 
+  /** 手机屏幕上自带导航按键时（老手机、三键导航），画面里已经有一份，不再显示我们的导航键 */
+  setDevNav(on) {
+    if (this.root.classList.contains('dev-nav') === on) return;
+    this.root.classList.toggle('dev-nav', on);
+    this.fit();
+  }
+
   // 桌面端布局：支持标准比例 / 双排紧凑 / 多机矩阵墙 + 自由缩放 + 侧栏自定义拖拽宽度
   fit() {
     const r = this.root;
     const compact = stageCompact();
     r.classList.toggle('compact-chrome', compact);
     const chromeW = compact ? 2 : 46;
+    if (this.vw && this.vh) r.style.setProperty('--ar', String(this.vw / this.vh));
     if (this.pov) pluginOverlayFit(this);
     if (!this.vw || !this.vh || isMobile()) {
-      r.style.width = ''; this.canvas.style.maxHeight = ''; this.vlog.style.width = '';
+      r.style.width = ''; this.canvas.style.width = ''; this.canvas.style.maxHeight = ''; this.vlog.style.width = '';
       r.classList.remove('log-bottom'); return;
     }
     const avail = Math.max(240, $('main').clientWidth - 32);
@@ -452,7 +460,8 @@ class Viewer {
     const tb = hasTitlebar() ? 36 : 0;
     const bar = $('#stageBar');
     const barH = bar.hidden ? 0 : bar.offsetHeight + 8;
-    const fullH = Math.max(180, innerHeight - 150 - sb - tb - barH);
+    const navH = r.classList.contains('dev-nav') ? 40 : 0;   // 导航键不显示时把那一行让给画面
+    const fullH = Math.max(180, innerHeight - 150 - sb - tb - barH + navH);
 
     let maxH = fullH;
     let cw;
@@ -463,12 +472,15 @@ class Viewer {
       cw = Math.max(140, cellW);
       maxH = Math.round(cw * this.vh / this.vw);
     } else if (mode === 'rows') {
-      maxH = Math.max(220, Math.floor((innerHeight - 130 - sb - tb - barH) / 2) - 48);
-      cw = Math.min(this.vw, maxH * this.vw / this.vh);
+      maxH = Math.max(220, Math.floor((innerHeight - 130 - sb - tb - barH) / 2) - 48 + navH);
+      cw = maxH * this.vw / this.vh;
     } else {
       maxH = Math.round(fullH * (stageScale() / 100));
-      cw = Math.min(this.vw, maxH * this.vw / this.vh);
+      cw = maxH * this.vw / this.vh;
     }
+    // 画面按可用空间放大，不受视频分辨率限制（竖屏显示器上也能顶满）
+    cw = Math.floor(Math.min(cw, avail - chromeW));
+    this.canvas.style.width = cw + 'px';
     this.canvas.style.maxHeight = maxH + 'px';
 
     if (!this.hasOpenDock()) {
@@ -497,7 +509,7 @@ class Viewer {
       case 'status': if (!this.gotFrame) this.showOverlay(m.msg, { spin: true }); break;
       case 'viewers': this.onViewers(m); break;
       case 'busy': this.onBusy(m); break;
-      case 'meta': if (m.device_name && !(typeof devAlias === 'function' && devAlias(this.dev.serial))) this.nameEl.textContent = m.device_name; this.showOverlay(t('等待画面…'), { spin: true }); break;
+      case 'meta': this.setDevNav(m.nav_buttons === true); if (m.device_name && !(typeof devAlias === 'function' && devAlias(this.dev.serial))) this.nameEl.textContent = m.device_name; this.showOverlay(t('等待画面…'), { spin: true }); break;
       case 'session':
         this.vw = m.width; this.vh = m.height;
         if (this.canvas.width !== m.width || this.canvas.height !== m.height) { this.canvas.width = m.width; this.canvas.height = m.height; }

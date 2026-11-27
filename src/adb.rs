@@ -140,6 +140,42 @@ fn parse_devices(out: &str) -> Vec<Device> {
     list
 }
 
+/// 设备屏幕上是否画着导航按键（三键 / 两键导航栏）；无法判断时返回 None
+pub async fn nav_buttons(adb: PathBuf, serial: String) -> Option<bool> {
+    let script = "echo nm=$(settings get secure navigation_mode 2>/dev/null); \
+                  echo fsg=$(settings get global force_fsg_nav_bar 2>/dev/null); \
+                  dumpsys window windows";
+    let out = run_timeout(&adb, &["-s", &serial, "shell", script], std::time::Duration::from_secs(4)).await.ok()?;
+    parse_nav_buttons(&out)
+}
+
+/// 解析 nav_buttons 的输出：手势导航没有按键；否则看导航栏窗口是否存在且可见
+fn parse_nav_buttons(out: &str) -> Option<bool> {
+    let val = |k: &str| out.lines().find_map(|l| l.trim().strip_prefix(k)).map(str::trim);
+    if val("nm=") == Some("2") || val("fsg=") == Some("1") {
+        return Some(false);
+    }
+    let mut windows = false;
+    let mut nav: Option<bool> = None;
+    for line in out.lines().map(str::trim) {
+        if line.starts_with("Window #") {
+            windows = true;
+            if nav.is_some() {
+                break;
+            }
+            if line.contains("NavigationBar") {
+                nav = Some(true);
+            }
+        } else if nav.is_some() {
+            if let Some(v) = line.split_whitespace().find_map(|w| w.strip_prefix("mViewVisibility=")) {
+                nav = Some(v == "0x0");
+                break;
+            }
+        }
+    }
+    if windows { Some(nav.unwrap_or(false)) } else { None }
+}
+
 /// 查找 adb：命令行参数 > 环境变量 ADB > exe 同目录 platform-tools > 开发目录 third_party > PATH。
 pub fn find_adb(cli: Option<PathBuf>) -> PathBuf {
     if let Some(p) = cli {
@@ -208,5 +244,23 @@ mod tests {
         assert_eq!(d[0].state, "device");
         assert_eq!(d[1].state, "unauthorized");
         assert!(d[2].state.starts_with("no permissions"));
+    }
+
+    #[test]
+    fn nav_buttons() {
+        let win = |vis: &str| format!(
+            "WINDOW MANAGER WINDOWS (dumpsys window windows)\n  Window #0 Window{{41b u0 NavigationBar}}:\n    mOwnerUid=10012\n    mViewVisibility={vis} mHaveFrame=true\n  Window #1 Window{{42c u0 StatusBar}}:\n    mViewVisibility=0x0\n"
+        );
+        // 老手机（没有 navigation_mode）：导航栏窗口可见 → 屏幕上有按键
+        assert_eq!(parse_nav_buttons(&format!("nm=\nfsg=\n{}", win("0x0"))), Some(true));
+        assert_eq!(parse_nav_buttons(&format!("nm=null\nfsg=null\n{}", win("0x8"))), Some(false));
+        assert_eq!(parse_nav_buttons(&format!("nm=0\nfsg=null\n{}", win("0x0"))), Some(true));
+        // 手势导航
+        assert_eq!(parse_nav_buttons(&format!("nm=2\nfsg=null\n{}", win("0x0"))), Some(false));
+        assert_eq!(parse_nav_buttons(&format!("nm=\nfsg=1\n{}", win("0x0"))), Some(false));
+        // 实体按键：没有导航栏窗口
+        assert_eq!(parse_nav_buttons("nm=\nfsg=\n  Window #0 Window{42c u0 StatusBar}:\n    mViewVisibility=0x0\n"), Some(false));
+        // dumpsys 不可用
+        assert_eq!(parse_nav_buttons("nm=\nfsg=\nCan't find service: window\n"), None);
     }
 }
