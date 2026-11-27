@@ -4,6 +4,14 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
 <title>DroidBridge</title>
+<script>
+// 主题（跟随系统 / 深色 / 浅色）记在浏览器里；放在样式前面，页面一出来就是对的颜色
+(function () {
+  var s = null;
+  try { s = localStorage.getItem('db_theme'); } catch (e) {}
+  document.documentElement.dataset.theme = s === 'dark' || s === 'light' ? s : (matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
+})();
+</script>
 <link rel="stylesheet" href="app.css">
 </head>
 <body>

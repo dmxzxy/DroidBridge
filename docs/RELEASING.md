@@ -20,6 +20,8 @@
    node tools/test-contextmenu.js
    node tools/test-files.js
    node tools/test-input.js
+   node tools/test-fullscreen.js
+   node tools/test-theme.js
    ```
 
    偶发失败的测试要修好（或确认原来的代码也同样失败并顺手修掉），不要带着红灯发布。

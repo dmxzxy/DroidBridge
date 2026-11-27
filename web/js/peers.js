@@ -101,12 +101,16 @@ function peerDialog(p, opts = {}) {
     }
     adding = null; if (dlg.open) renderFound();
   }
+  // 打开后先等一下再刷新一次：刚向局域网问过谁在线，关机的电脑这时才会从列表里消失
   async function pollFound() {
-    while (dlg.open) {
-      try { const r = await api('/api/discovered'); FOUND = r.list || []; foundEnabled = r.enabled !== false; } catch {}
+    let sig = '';
+    for (let wait = 1200; dlg.open; wait = 2000) {
+      try { const r = await api('/api/discovered?fresh=1'); FOUND = r.list || []; foundEnabled = r.enabled !== false; } catch {}
       if (!dlg.open) break;
-      renderFound(); renderSideFoot();
-      await new Promise(r => setTimeout(r, 2500));
+      // 列表没变就不重画
+      const now = JSON.stringify([foundEnabled, FOUND]);
+      if (now !== sig) { sig = now; renderFound(); renderSideFoot(); }
+      await new Promise(r => setTimeout(r, wait));
     }
   }
 
@@ -393,6 +397,10 @@ function settingsDialog(tab) {
   const lang = h('select', { class: 'select', 'aria-label': 'Language', onchange: () => { localStorage.setItem('db_lang', lang.value); location.reload(); } },
     h('option', { value: 'zh' }, '简体中文'), h('option', { value: 'en' }, 'English'));
   lang.value = LANG;
+  const THEMES = [['auto', t('跟随系统')], ['dark', t('深色')], ['light', t('浅色')]];
+  const theme = h('select', { class: 'select', 'aria-label': t('外观'), onchange: () => setTheme(theme.value) }, THEMES.map(([v, l]) => h('option', { value: v }, l)));
+  const themePref = pref.get('theme', 'auto');
+  theme.value = THEMES.some(([v]) => v === themePref) ? themePref : 'auto';
 
   // 截图和录屏的保存位置：路径过长时保留末尾；本机才能修改或打开
   let mediaDir = '';
@@ -425,6 +433,7 @@ function settingsDialog(tab) {
         row(req(t('同时在手机上播放'), 'Android 13+'), sw('audiodup', '0', changed))),
       group(t('通用'),
         row(LANG === 'zh' ? req('语言', 'Language') : req('Language', '语言'), lang),
+        row(LANG === 'zh' ? req('外观', 'Appearance') : req('Appearance', '外观'), theme),
         row(t('截图保存位置'), dirEl, ...dirTools),
         closePrefRow(row)),
       note,

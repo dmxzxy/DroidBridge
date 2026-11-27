@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// 前端自检：所有脚本语法、i18n 键唯一、t() 用到的中文都有英文对照、index.html 引用的文件都存在。
+// 前端自检：所有脚本语法、样式表花括号配对、i18n 键唯一、t() 用到的中文都有英文对照、index.html 引用的文件都存在。
 // 用法：node tools/check-ui.js
 const fs = require('fs');
 const path = require('path');
@@ -20,6 +20,21 @@ for (const r of refs) {
   if (!fs.existsSync(file)) fail(`index.html 引用了不存在的文件：${r}`);
   if (!lib.includes(`include_str!("../web/${r}")`)) fail(`src/lib.rs 没有嵌入 ${r}`);
   if (!read(path.join(root, 'src/remote.rs')).includes(`src!("web/${r}")`)) fail(`src/remote.rs 的源码清单缺少 web/${r}`);
+}
+
+// 样式表的花括号必须配对：多出或缺少一个，后面整条规则都会被丢掉（比如全局的 box-sizing），界面就错位了
+const cssFiles = [
+  'web/app.css',
+  ...fs.readdirSync(path.join(root, 'src/builtin')).flatMap((d) => {
+    const dir = path.join(root, 'src/builtin', d, 'web');
+    return fs.existsSync(dir) ? fs.readdirSync(dir).filter((f) => f.endsWith('.css')).map((f) => `src/builtin/${d}/web/${f}`) : [];
+  }),
+];
+for (const f of cssFiles) {
+  // 注释和字符串里的花括号不算
+  const css = read(path.join(root, f)).replace(/\/\*[\s\S]*?\*\//g, '').replace(/"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'/g, '');
+  const open = (css.match(/\{/g) || []).length, close = (css.match(/\}/g) || []).length;
+  if (open !== close) fail(`样式表花括号不配对（{ 有 ${open} 个，} 有 ${close} 个）：${f}`);
 }
 
 // 2. 每个脚本都能通过 node --check

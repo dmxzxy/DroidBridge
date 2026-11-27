@@ -104,12 +104,27 @@ const LOGO_SVG = '<svg viewBox="0 0 64 64"><rect x="2" y="2" width="60" height="
 const svg = (n) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">${P[n]}</svg>`;
 const ib = (icon, title, onclick, cls) => h('button', { class: 'ib' + (cls ? ' ' + cls : ''), title, 'aria-label': title, type: 'button', onclick, html: svg(icon) });
 const isMobile = () => matchMedia('(max-width:720px)').matches;
+/** 导航键收成小胶囊：窄屏，或没有鼠标的设备（手机、平板） */
+const navPill = () => isMobile() || matchMedia('(hover: none)').matches;
 
 // ---------------- 偏好设置 ----------------
 const pref = {
   get(k, d) { const v = localStorage.getItem('db_' + k); return v === null ? d : v; },
   set(k, v) { localStorage.setItem('db_' + k, v); },
 };
+
+// ---------------- 主题 ----------------
+/** 实际使用的主题：设了 dark / light 就用它，否则跟随系统 */
+const themeOf = (v) => v === 'dark' || v === 'light' ? v : (matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
+/** 设置外观：'auto' 跟随系统，'dark' / 'light' 固定；立即生效 */
+function setTheme(v) {
+  pref.set('theme', v);
+  document.documentElement.dataset.theme = themeOf(v);
+  if (typeof pluginTheme === 'function') pluginTheme();
+}
+// 系统的深浅色变了：跟随系统的界面立刻跟着换
+matchMedia('(prefers-color-scheme: light)').addEventListener('change', () => setTheme(pref.get('theme', 'auto')));
+
 const QUALITY = {
   size: { label: t('分辨率'), def: '1280', opts: [['720', '720p'], ['1280', '1280p'], ['1920', '1920p'], ['0', t('原始')]] },
   rate: { label: t('码率'), def: '8000000', opts: [['2000000', '2 Mbps'], ['4000000', '4 Mbps'], ['8000000', '8 Mbps'], ['16000000', '16 Mbps'], ['32000000', '32 Mbps']] },

@@ -2,7 +2,11 @@
 // 由 web/index.html 拆分而来；经典脚本，按 index.html 中的顺序加载，共享全局作用域。
 'use strict';
 
-const EN = {"已安装 {0}":"Installed {0}",
+const EN = {"外观":"Appearance",
+  "跟随系统":"System",
+  "深色":"Dark",
+  "浅色":"Light",
+  "已安装 {0}":"Installed {0}",
   "已更新 {0}":"Updated {0}",
   "已更新 {0} 个插件":"Updated {0} plugins",
   "全部更新":"Update all",

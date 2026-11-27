@@ -630,6 +630,9 @@ db.webpanel("web", { title = "MyGame", dock = "window", entry = "web/index.html"
   droidbridge.device.serial;
   // 界面语言 "zh" / "en"（收到 ready 事件后可用）
   droidbridge.lang;
+  // DroidBridge 界面的外观 "dark" / "light"，SDK 同时把它写在 <html data-theme> 上：
+  // 用 :root[data-theme=dark] { ... } 这样的选择器写深色配色，面板就会跟着界面的“外观”设置走
+  droidbridge.theme;
   // 在界面上弹提示，kind: info | ok | warn | error
   droidbridge.notify("已保存", { kind: "ok" });
 </script>

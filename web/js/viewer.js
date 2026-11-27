@@ -176,14 +176,20 @@ class Viewer {
     this.dockResizer = h('div', { class: 'vlog-resizer', title: t('拖拽调整侧栏宽度（双击重置）') });
     this.vlog = h('div', { class: 'vlog' }, this.dockResizer, this.dockBody);
     this.bindDockResizer();
-    this.root = h('div', { class: 'viewer' },
+    // 触屏和窄窗口：导航键收成小胶囊，提示里不提右键、中键
+    const pill = navPill();
+    this.nav = h('div', { class: 'nav' },
+      ib('back', pill ? t('返回') : t('返回 (右键 / Esc)'), key(AKEY.BACK)),
+      ib('home', pill ? t('主页') : t('主页 (中键)'), key(AKEY.HOME)),
+      ib('recent', t('最近任务'), key(AKEY.APP_SWITCH)));
+    this.root = h('div', { class: 'viewer' + (pill ? ' nav-pill' : '') },
       ctxMenu(h('div', { class: 'vhead' }, this.dot, this.nameEl, this.recEl, h('span', { class: 'sub' }, this.host.remote ? this.host.name : ''), this.statEl, this.eyeEl,
         this.plugPins, ib('max', t('全屏'), () => this.fullscreen()), ib('x', t('关闭'), () => this.close())), () => this.moreItems()),
       h('div', { class: 'vmain' },
       h('div', { class: 'vbody' },
         h('div', { class: 'vcol' },
           h('div', { class: 'screen' }, this.canvas, this.pov, this.ime, this.overlay, this.perfEl, this.aiBar, this.ctlBar, h('div', { class: 'drop' }, t('松开以安装 APK 或传到手机'))),
-          h('div', { class: 'nav' }, ib('back', t('返回 (右键 / Esc)'), key(AKEY.BACK)), ib('home', t('主页 (中键)'), key(AKEY.HOME)), ib('recent', t('最近任务'), key(AKEY.APP_SWITCH))),
+          this.nav,
           this.typing),
         h('div', { class: 'vtools' },
           ib('power', t('电源键'), key(AKEY.POWER)), ib('volUp', t('音量 +'), key(AKEY.VOLUME_UP)), ib('volDown', t('音量 −'), key(AKEY.VOLUME_DOWN)),
@@ -192,7 +198,7 @@ class Viewer {
           ib('camera', t('截取屏幕'), () => this.screenshot()), this.recBtn, this.kbBtn, this.audioBtn, this.logBtn, this.filesBtn, this.plugBtn, this.perfBtn, this.moreBtn)),
       this.vlog),
       this.fileInput);
-    this.bindInput();
+    this.bindInput(pill);
     this.bindDrop();
   }
 
@@ -305,6 +311,7 @@ class Viewer {
     this.closed = true; this.recovering = false;
     this.perfOn = false; this.closePerf();
     if (this.recording) this.stopRecord();
+    clearTimeout(this.navTimer);
     if (this.log) this.log.destroy();
     if (this.files) this.files.destroy();
     pluginViewerDestroy(this);
@@ -894,16 +901,36 @@ class Viewer {
     const y = Math.round((e.clientY - r.top) / r.height * this.vh);
     return { x: Math.max(0, Math.min(this.vw - 1, x)), y: Math.max(0, Math.min(this.vh - 1, y)), w: this.vw, h: this.vh };
   }
-  bindInput() {
+  /** 导航胶囊：停手几秒后收回 */
+  navRest() {
+    clearTimeout(this.navTimer);
+    this.navTimer = setTimeout(() => this.nav.classList.remove('open'), 3000);
+  }
+  bindInput(pill) {
     const c = this.canvas;
     const pid = e => e.pointerType === 'mouse' ? -2 : (e.pointerId % 0x7fffffff);
     const touch = (e, action) => {
       if (!this.vw) return;
       this.send({ t: 'touch', action, id: pid(e), ...this.pos(e), p: action === 1 ? 0 : (e.pressure || 1) });
     };
+    if (pill) {
+      // 碰画面时展开；收起时点胶囊只展开，这一次点击不触发按键
+      let opening = false;
+      this.nav.addEventListener('pointerdown', e => {
+        if (e.button !== 0) return;
+        opening = !this.nav.classList.contains('open');
+        clearTimeout(this.navTimer);
+        this.nav.classList.add('open');
+      }, true);
+      this.nav.addEventListener('click', e => {
+        if (opening) { opening = false; e.stopImmediatePropagation(); }
+        this.navRest();
+      }, true);
+    }
     c.addEventListener('pointerdown', e => {
       if (e.pointerType === 'mouse' && e.button !== 0) return;
       e.preventDefault();
+      if (pill) { clearTimeout(this.navTimer); this.nav.classList.add('open'); }
       if (!isMobile()) this.ime.focus({ preventScroll: true }); else c.focus({ preventScroll: true });
       c.setPointerCapture(e.pointerId);
       this.pointers.set(e.pointerId, true);
@@ -915,7 +942,11 @@ class Viewer {
       const evs = e.getCoalescedEvents ? e.getCoalescedEvents() : [];
       for (const ev of (evs.length ? evs : [e])) touch(ev, 2);
     });
-    const up = e => { if (!this.pointers.has(e.pointerId)) return; this.pointers.delete(e.pointerId); touch(e, 1); };
+    const up = e => {
+      if (!this.pointers.has(e.pointerId)) return;
+      this.pointers.delete(e.pointerId); touch(e, 1);
+      if (pill && !this.pointers.size) this.navRest();
+    };
     c.addEventListener('pointerup', up);
     c.addEventListener('pointercancel', up);
     c.addEventListener('contextmenu', e => { e.preventDefault(); this.send({ t: 'back', action: 0 }); this.send({ t: 'back', action: 1 }); });

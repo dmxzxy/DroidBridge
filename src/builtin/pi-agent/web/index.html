@@ -4,6 +4,13 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>AI 助手</title>
+<script>
+// 外观：DroidBridge 打开这个面板时在地址里带着（?theme=dark / light），之后由 SDK 跟着界面切换；单独打开时跟随系统
+(function () {
+  var m = /[?&]theme=(dark|light)/.exec(location.search);
+  document.documentElement.dataset.theme = m ? m[1] : (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+})();
+</script>
 <link rel="stylesheet" href="app.css">
 </head>
 <body>

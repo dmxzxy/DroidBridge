@@ -1269,8 +1269,12 @@ async fn fill_uids(st: &AppState, list: &mut [adb::Device]) {
     }
 }
 
-/// 局域网中发现的其他节点（已添加的电脑和本机除外）
-async fn discovered(State(st): State<Shared>) -> Json<serde_json::Value> {
+/// 局域网中发现的其他节点（已添加的电脑和本机除外）。
+/// 带 ?fresh=1 时先向局域网询问一遍谁在线：关机或关掉被发现的电脑不会在列表里停到超时
+async fn discovered(State(st): State<Shared>, Query(q): Query<HashMap<String, String>>) -> Json<serde_json::Value> {
+    if q.contains_key("fresh") {
+        st.discovery.probe();
+    }
     let known: Vec<String> = st.peers.list().await.into_iter().map(|p| p.addr).collect();
     let mine: Vec<String> = util::local_ips().into_iter().map(|ip| format!("{ip}:{}", st.cfg.port)).collect();
     let list: Vec<_> = st

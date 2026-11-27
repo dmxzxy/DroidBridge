@@ -4,6 +4,7 @@
 //   droidbridge.on('tick', (data) => {})        // 接收 db.web.emit 发出的消息
 //   droidbridge.device.serial                  // 打开这个面板的设备（可能为空）
 //   droidbridge.lang                           // 界面语言 "zh" / "en"
+//   droidbridge.theme                          // 宿主界面的外观 "dark" / "light"（写在 <html data-theme> 上）
 //   droidbridge.notify('完成', { kind: 'ok' })  // 在界面上弹提示
 // 与父页面通过 postMessage 通信：带请求 id，超时 5 分钟。
 (function () {
@@ -15,6 +16,7 @@
   var sdk = {
     device: { serial: '' },
     lang: 'zh',
+    theme: '',
     /** 调用插件自己的 web 处理函数，返回 Promise */
     call: function (name, args) {
       return new Promise(function (resolve, reject) {
@@ -59,6 +61,15 @@
     try { window.parent.postMessage(msg, '*'); } catch (e) {}
   }
 
+  function setTheme(t) {
+    if (t !== 'dark' && t !== 'light') return;
+    sdk.theme = t;
+    document.documentElement.dataset.theme = t;
+  }
+  // 宿主打开面板时把外观写在地址里（?theme=dark / light）：SDK 放在 <head> 里的话，页面一出来就是对的颜色
+  var urlTheme = /[?&]theme=(dark|light)/.exec(location.search);
+  if (urlTheme) setTheme(urlTheme[1]);
+
   window.addEventListener('message', function (e) {
     if (e.source !== window.parent) return;      // 只接受来自宿主页面的消息
     var d = e.data;
@@ -76,9 +87,12 @@
       for (var i = 0; i < list.slice().length; i++) {
         try { list[i](d.data); } catch (err) { console.error(err); }
       }
+    } else if (d.t === 'theme') {
+      setTheme(d.theme);
     } else if (d.t === 'init') {
       if (d.device && typeof d.device === 'object') sdk.device.serial = String(d.device.serial || '');
       if (d.lang) sdk.lang = String(d.lang);
+      setTheme(d.theme);
       var ready = listeners.get('ready');
       if (ready) for (var j = 0; j < ready.slice().length; j++) { try { ready[j](sdk.device); } catch (err) { console.error(err); } }
     }

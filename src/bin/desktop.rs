@@ -268,7 +268,7 @@ fn run_window(target: Result<String, String>, data_dir: &std::path::Path) -> Res
     // 托盘：Linux 缺少 AppIndicator 库、或创建失败时，关闭窗口就直接退出
     let tray_ok = tray_supported();
     let builder = WebViewBuilder::new_with_web_context(&mut ctx)
-        .with_background_color((15, 17, 21, 255))
+        .with_background_color(webview_bg(&window))
         .with_new_window_req_handler(popup_handler(inapp.clone(), popup_proxy.clone()));
     let builder = if custom {
         builder
@@ -453,6 +453,29 @@ fn run_window(target: Result<String, String>, data_dir: &std::path::Path) -> Res
                     ));
                 }
             }
+            // 系统的深浅色变了：托盘图标换成适合当前任务栏颜色的
+            Event::WindowEvent { window_id, event: WindowEvent::ThemeChanged(theme), .. } if window_id == main_id => {
+                let _ = theme;
+                // macOS 的托盘是模板图标，系统自己着色
+                #[cfg(not(target_os = "macos"))]
+                if let Some(t) = &tray {
+                    match tray_icon_image() {
+                        Ok(icon) => {
+                            let _ = t.set_icon(Some(icon));
+                        }
+                        Err(e) => tracing::debug!("tray icon unavailable: {e}"),
+                    }
+                }
+                // 网页的主题跟着系统的深浅色走；这里再主动同步一次，不依赖 WebView2 自己有没有跟上
+                #[cfg(windows)]
+                {
+                    use wry::WebViewExtWindows;
+                    let _ = webview.set_theme(match theme {
+                        tao::window::Theme::Light => wry::Theme::Light,
+                        _ => wry::Theme::Dark,
+                    });
+                }
+            }
             _ => {}
         }
     });
@@ -480,6 +503,15 @@ fn main_close(
 }
 
 type InAppOrigins = std::sync::Arc<std::sync::Mutex<std::collections::HashSet<String>>>;
+
+/// 网页加载前窗口的底色：跟随系统的深浅色，浅色系统下启动时不会先暗一下
+fn webview_bg(window: &tao::window::Window) -> (u8, u8, u8, u8) {
+    if window.theme() == tao::window::Theme::Light {
+        (246, 247, 249, 255)
+    } else {
+        (15, 17, 21, 255)
+    }
+}
 
 /// WebView2 启动参数（所有窗口必须相同）：wry 的默认值，再关掉第三方存储分区——
 /// 否则嵌在面板里的网站和单独窗口里的同一网站各存一份登录，打开窗口就要重新登录
@@ -532,7 +564,7 @@ fn open_sub_window(
         .build(target)
         .map_err(|e| e.to_string())?;
     let builder = WebViewBuilder::new_with_web_context(ctx)
-        .with_background_color((15, 17, 21, 255))
+        .with_background_color(webview_bg(&window))
         .with_url(url)
         .with_new_window_req_handler(on_popup);
     #[cfg(windows)]
@@ -693,16 +725,7 @@ fn build_tray() -> Result<tray_icon::TrayIcon, String> {
         &MenuItem::with_id("quit", tr!("退出", "Quit"), true, None),
     ])
     .map_err(|e| e.to_string())?;
-    // macOS 菜单栏用只有线条的模板图标（系统按明暗模式着色）；其他平台用应用图标，
-    // 深色任务栏 / 面板上用反色版本，免得黑色方块和任务栏混在一起
-    let (rgba, n) = if cfg!(target_os = "macos") {
-        droidbridge::icon::tray_rgba(44, false)
-    } else if taskbar_is_light() {
-        droidbridge::icon::rgba(32)
-    } else {
-        droidbridge::icon::rgba_inverted(32)
-    };
-    let icon = tray_icon::Icon::from_rgba(rgba, n, n).map_err(|e| e.to_string())?;
+    let icon = tray_icon_image()?;
     let builder = tray_icon::TrayIconBuilder::new().with_id("droidbridge");
     #[cfg(target_os = "macos")]
     let builder = builder.with_icon_templated(icon);
@@ -714,6 +737,20 @@ fn build_tray() -> Result<tray_icon::TrayIcon, String> {
         .with_menu_on_left_click(cfg!(target_os = "macos"))
         .build()
         .map_err(|e| e.to_string())
+}
+
+/// 托盘图标用的图案
+fn tray_icon_image() -> Result<tray_icon::Icon, String> {
+    // macOS 菜单栏用只有线条的模板图标（系统按明暗模式着色）；其他平台用应用图标，
+    // 深色任务栏 / 面板上用反色版本，免得黑色方块和任务栏混在一起
+    let (rgba, n) = if cfg!(target_os = "macos") {
+        droidbridge::icon::tray_rgba(44, false)
+    } else if taskbar_is_light() {
+        droidbridge::icon::rgba(32)
+    } else {
+        droidbridge::icon::rgba_inverted(32)
+    };
+    tray_icon::Icon::from_rgba(rgba, n, n).map_err(|e| e.to_string())
 }
 
 /// 任务栏是否为浅色（Windows 读取系统主题设置；Linux 面板多为深色）

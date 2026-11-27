@@ -6,12 +6,13 @@
   --accent:#3b6fe0;--accent-soft:rgba(59,111,224,.10);--ok:#2e9e6b;--bad:#d64541;--bad-soft:rgba(214,69,65,.08);
   --mono:ui-monospace,"Cascadia Code","JetBrains Mono",Consolas,Menlo,monospace;
 }
-@media (prefers-color-scheme:dark){:root{
+/* 深色：<html data-theme=dark>，跟随 DroidBridge 界面的“外观”设置 */
+:root[data-theme=dark]{
   color-scheme:dark;
   --bg:#16191e;--soft:#1e2228;--soft2:#262a31;--hover:rgba(255,255,255,.05);
   --line:rgba(255,255,255,.07);--line2:rgba(255,255,255,.13);--text:#e6e8ec;--sub:#9aa1ad;--faint:#636a76;
   --accent:#5b8def;--accent-soft:rgba(91,141,239,.14);--ok:#3fb27f;--bad:#e5534b;--bad-soft:rgba(229,83,75,.1);
-}}
+}
 *{box-sizing:border-box}
 html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:13px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;-webkit-font-smoothing:antialiased;overflow:hidden}
 body{display:flex;flex-direction:column}

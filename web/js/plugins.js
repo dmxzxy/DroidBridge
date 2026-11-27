@@ -722,6 +722,13 @@ function pluginWebUrl(def) {
   // 只允许加载插件自己的页面（后端 /plugin-web 只提供插件目录内的文件）；插件网页一律由本机提供
   return u.indexOf('/plugin-web/') === 0 ? u : '';
 }
+/** 插件网页当前的深浅色：跟随 DroidBridge 界面的“外观”设置 */
+const pluginThemeNow = () => document.documentElement.dataset.theme || 'dark';
+/** 网页面板的地址，带上当前外观：面板在 iframe 里，页面一加载就要用对的颜色 */
+function pluginWebSrc(def) {
+  const u = pluginWebUrl(def);
+  return u ? u + (u.includes('?') ? '&' : '?') + 'theme=' + pluginThemeNow() : u;
+}
 
 class PluginWebView {
   constructor(def, devId) {
@@ -729,17 +736,22 @@ class PluginWebView {
     this.plugin = def.plugin; this.id = def.id;
     this.title = def.title || def.id;
     this.el = h('div', { class: 'plug-panel plug-webpanel' });
-    const src = pluginWebUrl(def);
-    this.frame = h('iframe', { class: 'plug-frame', sandbox: 'allow-scripts allow-forms', src, title: this.title });
+    this.theme = pluginThemeNow();
+    this.frame = h('iframe', { class: 'plug-frame', sandbox: 'allow-scripts allow-forms', src: pluginWebSrc(def), title: this.title });
     this.ctx = { plugin: this.plugin, serial: this.serial, frame: this.frame, view: this };
     this.el.append(this.frame);
     this.frame.addEventListener('load', () => {
-      try { this.frame.contentWindow.postMessage({ __droidbridge: 1, t: 'init', device: { serial: this.serial || '' }, lang: LANG }, '*'); } catch {}
+      try { this.frame.contentWindow.postMessage({ __droidbridge: 1, t: 'init', device: { serial: this.serial || '' }, lang: LANG, theme: this.theme }, '*'); } catch {}
     });
     pluginWebCtx.add(this.ctx);
     pluginViews.add(this);
   }
-  refresh() { try { this.frame.contentWindow.location.reload(); } catch {} }
+  /** 外观变过就换成带新外观的地址（会重新加载），没变就原地重新加载 */
+  refresh() {
+    const now = pluginThemeNow();
+    if (this.theme !== now) { this.theme = now; this.frame.src = pluginWebSrc(this.def); }
+    else try { this.frame.contentWindow.location.reload(); } catch {}
+  }
   destroy() {
     pluginWebCtx.delete(this.ctx);
     pluginViews.delete(this);
@@ -825,6 +837,11 @@ class PluginExtView {
 
 function pluginWebPost(ctx, msg) {
   try { ctx.frame.contentWindow.postMessage(msg, '*'); } catch {}
+}
+
+/** 外观变了：告诉打开着的插件网页面板（setTheme 调用） */
+function pluginTheme() {
+  for (const ctx of pluginWebCtx) pluginWebPost(ctx, { __droidbridge: 1, t: 'theme', theme: pluginThemeNow() });
 }
 
 /** 找到消息来源对应的网页面板（只接受自己托管的 iframe） */

@@ -87,6 +87,7 @@ The desktop app also runs the server, so other computers can add it. Use the ser
 | Ctrl+V | Paste the computer clipboard to the device |
 | Side toolbar | Power, volume, rotate, screenshot, record, type text (any language), logs; **…** for notifications, screen off, install APK, reconnect |
 | Drop files on the screen | Install APKs, copy other files to `/sdcard/Download` |
+| ◁ ○ □ under the screen | Back, Home, Recents; on phones and tablets they sit in a small pill that opens when you touch the screen or tap it |
 
 ### Wireless devices
 
@@ -213,6 +214,8 @@ Notes:
 
 The UI follows the system language (Chinese or English). Change it in **Settings → Language**, or start with `--lang en` / `--lang zh`.
 
+The UI follows the system's light or dark appearance by default. Pick **Dark** or **Light** in **Settings → Appearance** to keep one regardless of the system; with **System** the UI changes as soon as the system does.
+
 ## Several people on one device
 
 When several people open the same device (on this computer, from other computers, or from phone browsers), the device runs only one mirroring session and everyone shares it:
@@ -233,6 +236,7 @@ DroidBridge gives full control over the attached devices, so access is limited:
 - **Settings → Security → Authorized computers and browsers** lists who can connect, with **Revoke** buttons. The **⋯** menu of a remote computer shows the same list for that computer.
 - Requests from other websites open in your browser are blocked, so a web page cannot quietly watch or control your devices. To use DroidBridge through a reverse proxy or a custom domain, allow it with `--allow-host <name>`.
 - **Let computers on the LAN find this computer** (Settings → Security) controls the UDP 8730 broadcast of the computer name and port. Turned off, this computer still finds others but does not announce itself; `--no-discovery` turns discovery off entirely (as does `--bind 127.0.0.1`). Being found does not grant access.
+- Opening **Add remote computer** first asks the LAN who is online: computers that have shut down, quit or stopped being discoverable disappear from the list within a few seconds (computers on older versions are given 16 seconds).
 - `--token <token>` sets a fixed token that is accepted everywhere (also needed on this computer when set). Scripts, AI clients and older DroidBridge versions can also use a token created under **Create access token**.
 - `--open` restores the old behavior of letting anyone on the LAN connect without authorization. Not recommended.
 - Do not expose the ports to the internet.
@@ -330,7 +334,7 @@ examples/fakeadb.rs fake adb used by tests (simulated device storage)
 | `DELETE /api/media/{name}` | Delete a media file |
 | `POST /api/media/reveal?name=` | Reveal a file in the OS file manager (local requests only) |
 | `GET/PUT /api/settings` | Get / change `media_dir` (PUT is local-only) |
-| `GET /api/discovered` | Computers found on the LAN |
+| `GET /api/discovered` | Computers found on the LAN. With `?fresh=1` it asks the LAN first and leaves out computers that do not answer (shut down, or no longer discoverable) |
 | `POST /api/pair/request`, `GET/DELETE /api/pair/request/{id}` | Ask this computer for authorization (no token needed); poll returns the token once allowed |
 | `GET /api/pair/pending`, `POST /api/pair/pending/{id}` (`{"allow":bool}`, `?peer=`) | Pending requests; allow or decline |
 | `POST /api/peers/pair`, `GET/DELETE /api/peers/pair/{job}` | Ask a remote computer to authorize this one, then add it |

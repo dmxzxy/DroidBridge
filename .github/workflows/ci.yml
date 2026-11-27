@@ -61,5 +61,7 @@ jobs:
           node tools/test-files.js
           node tools/test-plugins.js
           node tools/test-viewers.js
+          node tools/test-fullscreen.js
+          node tools/test-theme.js
 
 
