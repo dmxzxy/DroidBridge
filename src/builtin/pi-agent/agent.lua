@@ -8,7 +8,7 @@ local M = {}
 local CALL = "droidbridge:call"
 local MAX_CONV = 6
 local IDLE_SEC = 20 * 60
-local WIN = db.plugin.dir:match("^%a:[\\/]") ~= nil
+local WIN = db.plugin.dir:find("\\", 1, true) ~= nil
 
 --- key -> 对话 {key, serial, p, busy, items, last, err, seq, pending}
 local convs = {}
@@ -28,25 +28,75 @@ local function dirname(p)
   return (p:gsub("[\\/][^\\/]*$", ""))
 end
 
---- 自动查找 Pi，返回程序和前置参数
-function M.command()
-  if not WIN then return "pi", {} end
-  local p
-  local r = db.exec("where", { "pi" }, { timeout = 10 })
-  for line in (r.stdout or ""):gmatch("[^\r\n]+") do
-    local low = line:lower()
-    if low:match("%.cmd$") or low:match("%.exe$") then p = line break end
+local UNIX_FIND = [[
+PATH="$PATH:$HOME/.npm-global/bin:$HOME/.local/bin:$HOME/.bun/bin:$HOME/.volta/bin:/opt/homebrew/bin:/usr/local/bin"
+printf '\n__DB__%s__DB__%s__DB__\n' "$PATH" "$(command -v pi)"
+]]
+
+--- 用用户的登录 shell 取 PATH 并查找 pi，返回 pi 路径和 PATH
+local function unixFind()
+  local tries = {
+    { "/bin/sh", { "-c", 'exec "${SHELL:-/bin/sh}" -ilc "$1" </dev/null 2>/dev/null', "sh", UNIX_FIND } },
+    { "/bin/sh", { "-c", UNIX_FIND } },
+  }
+  for _, t in ipairs(tries) do
+    local ok, r = pcall(db.exec, t[1], t[2], { timeout = 15 })
+    local path, pi
+    if ok then path, pi = (r.stdout or ""):match("__DB__(.-)__DB__(.-)__DB__") end
+    if pi and pi:sub(1, 1) == "/" then return pi, path end
   end
+end
+
+local WIN_PATH = [[
+[Console]::OutputEncoding = [Text.Encoding]::UTF8
+$p = $env:Path + ';' + [Environment]::GetEnvironmentVariable('Path','Machine') + ';' + [Environment]::GetEnvironmentVariable('Path','User') + ';' + $env:APPDATA + '\npm'
+[Environment]::ExpandEnvironmentVariables($p)
+]]
+
+--- Windows 上取当前和注册表里最新的 PATH，去重后返回目录列表和 PATH 字符串
+local function winPath()
+  local ok, r = pcall(db.exec, "powershell", { "-NoProfile", "-NonInteractive", "-Command", WIN_PATH }, { timeout = 15 })
+  local dirs, seen = {}, {}
+  for d in ((ok and r.stdout) or ""):gmatch("[^;\r\n]+") do
+    d = d:gsub('^%s*"?', ""):gsub('"?%s*$', ""):gsub("[\\/]+$", "")
+    if d ~= "" and not seen[d:lower()] then
+      seen[d:lower()] = true
+      dirs[#dirs + 1] = d
+    end
+  end
+  return dirs, #dirs > 0 and table.concat(dirs, ";") or nil
+end
+
+local function winFind(dirs, names)
+  for _, d in ipairs(dirs) do
+    for _, n in ipairs(names) do
+      local f = d .. "\\" .. n
+      if db.fs.exists(f) then return f end
+    end
+  end
+end
+
+--- 自动查找 Pi，返回程序、前置参数和启动时要用的环境变量
+function M.command()
+  if not WIN then
+    local p, path = unixFind()
+    if not p then error(T("没有找到 Pi", "Pi not found")) end
+    return p, {}, { PATH = path }
+  end
+  local dirs, path = winPath()
+  local env = { PATH = path }
+  local p = winFind(dirs, { "pi.exe", "pi.cmd" })
   if not p then error(T("没有找到 Pi", "Pi not found")) end
   if p:lower():match("%.cmd$") then
     local txt = db.fs.read(p) or ""
-    local rel = txt:match('"%%dp0%%\\([^"]-%.js)"')
+    local rel = txt:match('"%%~?dp0%%?\\([^"]-%.js)"')
     if not rel then error(T("无法识别 Pi 的安装：", "Cannot recognize the Pi installation: ") .. p) end
     local dir = dirname(p)
-    local node = dir .. "\\node.exe"
-    return db.fs.exists(node) and node or "node", { dir .. "\\" .. rel }
+    local node = winFind({ dir }, { "node.exe" }) or winFind(dirs, { "node.exe" })
+    if not node then error(T("没有找到 Node.js，Pi 需要它才能运行", "Node.js not found, Pi needs it to run")) end
+    return node, { dir .. "\\" .. rel }, env
   end
-  return p, {}
+  return p, {}, env
 end
 
 --- 对话对应的 Pi 会话 id；renew 时换一个新的
@@ -66,7 +116,7 @@ end
 local function launch(c)
   local s = config.get()
   local data = db.plugin.dataDir
-  local prog, args = M.command()
+  local prog, args, penv = M.command()
   local rel = "sessions/" .. (c.key == "" and "_" or c.key:gsub("[^%w%-_.]", "_"))
   db.fs.mkdir(rel)
   db.fs.mkdir("work")
@@ -101,6 +151,7 @@ local function launch(c)
     DB_PI_TOOLS = db.fs.join(data, "tools.json"),
     PI_SKIP_VERSION_CHECK = "1",
     PI_TELEMETRY = "0",
+    PATH = penv.PATH,
   }
   if config.custom(s) then
     db.fs.mkdir("agent")
@@ -357,14 +408,14 @@ local checked
 --- 检查 Pi 能否启动，返回 {ok, version, path} 或 {ok=false, error}
 function M.check(force)
   if checked and not force then return checked end
-  local ok, prog, args = pcall(M.command)
+  local ok, prog, args, env = pcall(M.command)
   local r
   if not ok then
     r = { ok = false, error = (tostring(prog):gsub("^.-:%d+: ", "")) }
   else
     local path = args[1] or prog
     args[#args + 1] = "--version"
-    local ok2, res = pcall(db.exec, prog, args, { timeout = 30 })
+    local ok2, res = pcall(db.exec, prog, args, { timeout = 30, env = env })
     if ok2 and res.code == 0 then
       r = { ok = true, version = (res.stdout or ""):match("[%d%.]+"), path = path }
     else
