@@ -12,6 +12,14 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 let html = fs.readFileSync('web/index.html', 'utf8');
 // 模拟数据要放在 <meta charset> 之后、页面脚本之前（放在 <head> 开头会让浏览器按错误编码解析中文）
 html = html.replace('<meta charset="utf-8">', () => `<meta charset="utf-8">\n<script>\n${fs.readFileSync('tools/demo/mock.js', 'utf8')}\n</script>`);
+// 地址带 mouse=1 时把“能不能悬停”一律当成能：没有鼠标的电脑（比如无头 Linux）上界面按触屏排布，桌面布局就测不到
+html = html.replace('<meta charset="utf-8">', () => `<meta charset="utf-8">\n<script>
+(function () {
+  if (!/[?&]mouse=1/.test(location.search)) return;
+  const orig = window.matchMedia;
+  window.matchMedia = (q) => /hover:\\s*none/.test(q) ? { matches: false, media: q } : orig(q);
+})();
+</script>`);
 html = html.replace('<link rel="stylesheet" href="app.css">', () => `<style>\n${fs.readFileSync('web/app.css', 'utf8')}\n</style>`);
 html = html.replace(/<script src="js\/([A-Za-z0-9_-]+)\.js"><\/script>/g, (m, n) => `<script>\n${fs.readFileSync('web/js/' + n + '.js', 'utf8')}\n</script>`);
 const page = path.join(os.tmpdir(), 'db-fullscreen-test.html');
@@ -41,11 +49,11 @@ const check = (label, ok, detail) => { console.log((ok ? '✓ ' : '✗ ') + labe
   const send = (method, params = {}) => new Promise(r => { const i = ++id; pend.set(i, r); ws.send(JSON.stringify({ id: i, method, params })); });
   const ev = async (x) => { const r = await send('Runtime.evaluate', { expression: x, awaitPromise: true, returnByValue: true }); return r.result.exceptionDetails ? 'EXC ' + (r.result.exceptionDetails.exception?.description || r.result.exceptionDetails.text) : r.result.result?.value; };
   const V = '[...viewers.values()][0]';
-  /** 按指定窗口大小重新打开页面；touch 为真时模拟触屏（手机、平板） */
+  /** 按指定窗口大小重新打开页面；touch 为真时模拟触屏（手机、平板），否则模拟有鼠标的电脑 */
   const load = async (w, h, touch) => {
     await send('Emulation.setDeviceMetricsOverride', { width: w, height: h, deviceScaleFactor: 1, mobile: touch });
     await send('Emulation.setTouchEmulationEnabled', { enabled: touch, maxTouchPoints: 5 });
-    await send('Page.navigate', { url: 'http://127.0.0.1:8896/fullscreen.html?s=mview&lang=zh' });
+    await send('Page.navigate', { url: `http://127.0.0.1:8896/fullscreen.html?s=mview&lang=zh${touch ? '' : '&mouse=1'}` });
     await sleep(500);
     for (let i = 0; i < 40; i++) { if ((await ev(`typeof viewers === 'object' && viewers.size > 0 && ${V}.gotFrame`)) === true) break; await sleep(250); }
     await sleep(400);
@@ -127,9 +135,11 @@ const check = (label, ok, detail) => { console.log((ok ? '✓ ' : '✗ ') + labe
   await sleep(200);
   check('触屏：展开后点「返回」发出返回键', (await keys()) === '0:4,1:4', await keys());
 
-  // ---- 窄窗口（没有触屏）也用胶囊 ----
+  // ---- 窄窗口（没有触屏）也用胶囊；横过来的手机、平板窗口很宽，靠的是触屏 ----
   await load(600, 900, false);
   check('窄窗口：同样用胶囊', (await ev(`${V}.root.classList.contains('nav-pill')`)) === true);
+  await load(915, 390, true);
+  check('横过来的手机、平板（宽屏触屏）：同样用胶囊', (await ev(`${V}.root.classList.contains('nav-pill')`)) === true);
 
   console.log(errs.length ? 'page errors: ' + errs.join(' | ') : 'page errors: none');
   console.log(fails ? `\n${fails} 项失败` : '\n全部通过');
