@@ -653,7 +653,7 @@ impl Plugins {
 
     /// 本机设备 + 每个远程电脑的 `/api/devices`（远程缓存 3 秒，单台 3 秒超时，失败跳过）
     pub(crate) async fn all_devices(&self, st: &AppState) -> Vec<PluginDev> {
-        let mut out: Vec<PluginDev> = match adb::list_devices(&st.cfg.adb).await {
+        let mut out: Vec<PluginDev> = match crate::local_devices(st).await {
             Ok(list) => list
                 .into_iter()
                 .map(|d| {

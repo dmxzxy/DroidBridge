@@ -729,11 +729,8 @@ fn remote_id(q: &HashMap<String, String>) -> Option<&str> {
 
 async fn devices(State(st): State<Shared>, Query(q): Query<HashMap<String, String>>) -> Response {
     match remote_id(&q) {
-        None => match adb::list_devices(&st.cfg.adb).await {
-            Ok(mut list) => {
-                fill_uids(&st, &mut list).await;
-                Json(list).into_response()
-            }
+        None => match local_devices(&st).await {
+            Ok(list) => Json(list).into_response(),
             Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, e),
         },
         Some(id) => {
@@ -1250,10 +1247,11 @@ async fn ws_stream(State(st): State<Shared>, ident: Option<axum::Extension<acces
 
 /// 读取无线设备的 ro.serialno（结果缓存），用于识别“同一台设备换了连接方式”
 async fn fill_uids(st: &AppState, list: &mut [adb::Device]) {
-    for d in list.iter_mut().filter(|d| d.wireless && d.state == "device") {
+    for d in list.iter_mut().filter(|d| d.wireless) {
         let cached = st.uids.lock().unwrap().get(&d.serial).cloned();
         let uid = match cached {
             Some(u) => u,
+            None if d.state != "device" => String::new(),
             None => {
                 let u = adb::run_timeout(&st.cfg.adb, &["-s", &d.serial, "shell", "getprop ro.serialno"], std::time::Duration::from_secs(4))
                     .await
@@ -1267,6 +1265,13 @@ async fn fill_uids(st: &AppState, list: &mut [adb::Device]) {
         };
         d.uid = uid;
     }
+}
+
+/// 本机设备列表：补上无线设备的 uid，并把同一台设备的 USB 和无线连接合并成一条
+pub(crate) async fn local_devices(st: &AppState) -> Result<Vec<adb::Device>, String> {
+    let mut list = adb::list_devices(&st.cfg.adb).await?;
+    fill_uids(st, &mut list).await;
+    Ok(adb::merge_same(list))
 }
 
 /// 局域网中发现的其他节点（已添加的电脑和本机除外）。

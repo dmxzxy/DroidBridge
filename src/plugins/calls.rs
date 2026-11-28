@@ -667,6 +667,10 @@ async fn remote_op(peer: &crate::peers::Peer, raw: &str, m: &str, q: &Value) -> 
     match m {
         "push" | "install" => {
             let file = if m == "push" { arg_str(q, "local") } else { arg_str(q, "path") }.unwrap_or("");
+            // B 用它当临时文件名：adb install 要求 .apk 结尾，push 到目录时它就是设备上的文件名
+            if let Some(n) = file.rsplit(['/', '\\']).next().filter(|n| !n.is_empty()) {
+                params["name"] = json!(n);
+            }
             Ok(DevOut::Json(devop::json_call_file(peer, raw, m, &params, std::path::Path::new(file), timeout).await?))
         }
         "pull" | "screenshot" => Ok(DevOut::Bytes(devop::bytes_call(peer, raw, m, &params, timeout).await?)),

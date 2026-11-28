@@ -354,8 +354,8 @@ db.export(name, fn(args, from)) ; db.plugins.list() ; db.plugins.call(id, name, 
 | op | 参数 | 说明 |
 |---|---|---|
 | prop shell uninstall apps hasApp launch stop clear foreground input logcat perf ui files mkdir rename rm clipboard cmd | 同 SPEC 3.3 | 直接在 B 上执行 |
-| push | `remote`；body=文件内容 | B 存到临时目录后 `adb push`，完成后删除 |
-| install | `replace grant downgrade`；body=APK | 同上；返回 `{ok:true, package?}`（能拿到新包名时，A 据此发 `app.installed`） |
+| push | `remote` `name`（A 上的文件名）；body=文件内容 | B 存到临时目录后 `adb push`，完成后删除；`remote` 是目录时设备上的文件名就是 `name` |
+| install | `replace grant downgrade name`；body=APK | 同上（临时文件名以 .apk 结尾，adb install 的要求）；返回 `{ok:true, package?}`（能拿到新包名时，A 据此发 `app.installed`） |
 | pull | `remote` | 返回文件字节，A 写到插件给的本机路径 |
 | screenshot | | 返回 PNG 字节，A 存到自己的 `.tmp`（save=true 时存入 A 的图库） |
 

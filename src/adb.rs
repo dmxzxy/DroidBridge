@@ -87,6 +87,9 @@ pub struct Device {
     pub wireless: bool,
     /// 稳定的设备标识（ro.serialno），用于断线后识别同一台设备；无线设备重连后 serial 可能变化
     pub uid: String,
+    /// 同一台设备同时连着的其他方式（USB 与无线的 serial），列表里只显示其中一条
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub also: Vec<String>,
 }
 
 pub fn is_wireless(serial: &str) -> bool {
@@ -122,6 +125,7 @@ fn parse_devices(out: &str) -> Vec<Device> {
             transport_id: String::new(),
             wireless: is_wireless(serial),
             uid: if is_wireless(serial) { String::new() } else { serial.to_string() },
+            also: Vec::new(),
         };
         for p in parts {
             if let Some((k, v)) = p.split_once(':') {
@@ -138,6 +142,26 @@ fn parse_devices(out: &str) -> Vec<Device> {
         list.push(d);
     }
     list
+}
+
+/// 同一台设备同时有 USB 和无线连接时只留一条（能用的优先，其次 USB），否则会显示成两台；
+/// 靠 uid（USB 为 serial，无线为 ro.serialno）和型号判断是不是同一台，被合并掉的 serial 记在 also 里
+pub fn merge_same(list: Vec<Device>) -> Vec<Device> {
+    let rank = |d: &Device| (d.state == "device", !d.wireless);
+    let mut out: Vec<Device> = Vec::with_capacity(list.len());
+    for mut d in list {
+        let same = |o: &Device| !d.uid.is_empty() && o.uid == d.uid && (d.model.is_empty() || o.model.is_empty() || d.model == o.model);
+        let Some(i) = out.iter().position(same) else {
+            out.push(d);
+            continue;
+        };
+        if rank(&d) > rank(&out[i]) {
+            std::mem::swap(&mut d, &mut out[i]);
+        }
+        out[i].also.push(d.serial.clone());
+        out[i].also.append(&mut d.also);
+    }
+    out
 }
 
 /// 设备屏幕上是否画着导航按键（三键 / 两键导航栏）；无法判断时返回 None
@@ -244,6 +268,40 @@ mod tests {
         assert_eq!(d[0].state, "device");
         assert_eq!(d[1].state, "unauthorized");
         assert!(d[2].state.starts_with("no permissions"));
+    }
+
+    #[test]
+    fn merge_same_device() {
+        let d = |serial: &str, state: &str, uid: &str, model: &str| Device {
+            serial: serial.into(),
+            state: state.into(),
+            uid: uid.into(),
+            wireless: is_wireless(serial),
+            model: model.into(),
+            product: String::new(),
+            device: String::new(),
+            transport_id: String::new(),
+            also: Vec::new(),
+        };
+        // USB 优先，无线的 serial 记在 also
+        let v = merge_same(vec![d("192.168.1.5:5555", "device", "ABC", "OPD2407"), d("ABC", "device", "ABC", "OPD2407")]);
+        assert_eq!(v.len(), 1);
+        assert_eq!((v[0].serial.as_str(), v[0].also.clone()), ("ABC", vec!["192.168.1.5:5555".to_string()]));
+        // USB 未授权时留能用的那条
+        let v = merge_same(vec![d("ABC", "unauthorized", "ABC", "OPD2407"), d("192.168.1.5:5555", "device", "ABC", "OPD2407")]);
+        assert_eq!((v.len(), v[0].serial.as_str(), v[0].also.clone()), (1, "192.168.1.5:5555", vec!["ABC".to_string()]));
+        // 同一台的两条无线也合并
+        let v = merge_same(vec![d("adb-x._adb-tls-connect._tcp.", "device", "ABC", "OPD2407"), d("192.168.1.5:5555", "device", "ABC", "")]);
+        assert_eq!((v.len(), v[0].also.clone()), (1, vec!["192.168.1.5:5555".to_string()]));
+        // 不同设备、uid 还没读到、型号不同：都不合并
+        let v = merge_same(vec![
+            d("ABC", "device", "ABC", "OPD2407"),
+            d("DEF", "device", "DEF", "OPD2407"),
+            d("10.0.0.8:5555", "device", "", "OPD2407"),
+            d("10.0.0.9:5555", "device", "ABC", "SM_G973F"),
+        ]);
+        assert_eq!(v.len(), 4);
+        assert!(v.iter().all(|x| x.also.is_empty()));
     }
 
     #[test]

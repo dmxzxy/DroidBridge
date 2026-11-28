@@ -21,15 +21,19 @@ function setDevAlias(serial, val) {
   if (v) pref.set('alias_' + serial, v);
   else localStorage.removeItem('db_alias_' + serial);
 }
+/** 备注名：设备同时有 USB 和无线连接时列表只显示一条，备注可能记在另一种连接的 serial 上 */
+function devAliasOf(d) {
+  return devAlias(d.serial) || (d.also || []).map(devAlias).find(Boolean) || '';
+}
 function devDisplayName(d) {
-  return devAlias(d.serial) || d.model || d.serial;
+  return devAliasOf(d) || d.model || d.serial;
 }
 async function editDevAlias(hst, dev) {
   const next = await promptDialog(t('设置备注名'), (dev.model ? dev.model + ' · ' : '') + dev.serial, {
-    placeholder: dev.model || dev.serial, value: devAlias(dev.serial), okText: t('保存'),
+    placeholder: dev.model || dev.serial, value: devAliasOf(dev), okText: t('保存'),
   });
   if (next === null) return;
-  setDevAlias(dev.serial, next);
+  for (const s of [dev.serial, ...(dev.also || [])]) setDevAlias(s, next);
   for (const v of viewers.values()) {
     if (v.dev.serial === dev.serial && v.nameEl) v.nameEl.textContent = devDisplayName(v.dev);
   }
@@ -230,7 +234,7 @@ const needsAuth = (msg) => /授权|令牌|token|authoriz/i.test(msg || '');
 function devTip(d) {
   const alias = devAlias(d.serial);
   const head = alias ? `${alias} (${d.model || d.serial})` : (d.model || d.serial);
-  const lines = [head, (d.wireless ? t('无线') : 'USB') + ' · ' + d.serial];
+  const lines = [head, (d.wireless ? t('无线') : 'USB') + ' · ' + [d.serial, ...(d.also || [])].join(' · ')];
   if (d.state !== 'device') lines.push(STATE_HINT[d.state] || (t('设备状态：') + d.state));
   return lines.join('\n');
 }
@@ -243,7 +247,7 @@ function shortSerial(s) {
 
 function devMatches(hst, d) {
   if (!sideQuery) return true;
-  return [devAlias(d.serial), d.model, d.serial].filter(Boolean).join(' ').toLowerCase().includes(sideQuery);
+  return [devAliasOf(d), d.model, d.serial].filter(Boolean).join(' ').toLowerCase().includes(sideQuery);
 }
 
 function devRows(hst, emptyEl) {
@@ -266,7 +270,7 @@ function devRows(hst, emptyEl) {
   return list.map(d => {
     const ready = d.state === 'device';
     const open = [...viewers.values()].some(v => v.host.id === hst.id && v.dev.serial === d.serial);
-    const alias = devAlias(d.serial);
+    const alias = devAliasOf(d);
     const tagText = !alias && d.model && modelCnt.get(d.model) > 1 ? shortSerial(d.serial) : null;
     return ctxMenu(h('div', {
       class: 'dev' + (open ? ' open' : '') + (ready ? '' : ' na'), title: devTip(d), 'data-serial': d.serial,

@@ -258,12 +258,16 @@ pub async fn apply(st: &AppState) -> Result<serde_json::Value, String> {
     };
     // 脱离父进程启动脚本，然后本进程退出
     let mut cmd = Command::new(if cfg!(windows) { "cmd" } else { "sh" });
-    if cfg!(windows) {
+    #[cfg(windows)]
+    {
         // cmd 处理 /C 后的参数时会去掉首尾引号再执行，路径里的空格或 & 就失去了保护；多包一层引号才能原样保留
-        cmd.raw_arg(format!("/C \"\"{}\"\"", script.display())).envs(envs);
-    } else {
+        cmd.raw_arg(format!("/C \"\"{}\"\"", script.display()));
+    }
+    #[cfg(not(windows))]
+    {
         cmd.arg(&script);
     }
+    cmd.envs(envs);
     // Windows：隐藏窗口运行（CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP），本进程退出后脚本继续执行
     #[cfg(windows)]
     cmd.creation_flags(0x0800_0000 | 0x0000_0200);

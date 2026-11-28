@@ -55,25 +55,39 @@ pub async fn plugins_devop(
     };
     let mut params = params;
 
-    // push / install 的文件内容流式写到 `.tmp`，用完删除（避免大 APK 整包缓冲进内存）
+    // push / install 的文件内容流式写到 `.tmp/<devop-id>/`，用完删除整个目录（避免大 APK 整包缓冲进内存）。
+    // 文件名用 A 上的原名：adb install 要求以 .apk / .apex 结尾，push 到目录时它就是设备上的文件名
     let mut tmp: Option<PathBuf> = None;
     if matches!(op.as_str(), "push" | "install") {
-        let dir = st.plugins.root().join(".tmp");
+        let id = format!("devop-{:08x}", util::random_scid());
+        let dir = st.plugins.root().join(".tmp").join(&id);
         let _ = tokio::fs::create_dir_all(&dir).await;
-        let path = dir.join(format!("devop-{:08x}", util::random_scid()));
-        match peers::save_body_to_file(body, &path, peers::UPLOAD_MAX).await {
-            Ok(0) => return err(StatusCode::BAD_REQUEST, tr!("缺少文件内容", "Missing file content")),
-            Ok(_) => {}
-            Err(e) => return err(StatusCode::INTERNAL_SERVER_ERROR, e),
+        let name = params.get("name").and_then(Value::as_str).and_then(safe_name);
+        let name = match (name, op.as_str()) {
+            (Some(n), "install") => with_apk_ext(&n),
+            (Some(n), _) => n,
+            (None, "install") => format!("{id}.apk"),
+            (None, _) => id,
+        };
+        let path = dir.join(name);
+        let saved = peers::save_body_to_file(body, &path, peers::UPLOAD_MAX).await;
+        let failed = match saved {
+            Ok(0) => Some((StatusCode::BAD_REQUEST, tr!("缺少文件内容", "Missing file content"))),
+            Ok(_) => None,
+            Err(e) => Some((StatusCode::INTERNAL_SERVER_ERROR, e)),
+        };
+        if let Some((code, e)) = failed {
+            let _ = tokio::fs::remove_dir_all(&dir).await;
+            return err(code, e);
         }
         let file = path.to_string_lossy().to_string();
         params[if op == "push" { "local" } else { "path" }] = json!(file);
-        tmp = Some(path);
+        tmp = Some(dir);
     }
 
     let r = exec_local(&st, &op, &params, &serial).await;
     if let Some(p) = &tmp {
-        let _ = tokio::fs::remove_file(p).await;
+        let _ = tokio::fs::remove_dir_all(p).await;
     }
     let is_touch_move = op == "input"
         && params.get("kind").and_then(Value::as_str) == Some("touch")
@@ -94,6 +108,31 @@ pub async fn plugins_devop(
         Ok(DevOut::Json(v)) => Json(json!({"ok": v})).into_response(),
         Ok(DevOut::Bytes(b)) => ([(header::CONTENT_TYPE, "application/octet-stream")], b).into_response(),
         Err(e) => err(StatusCode::BAD_REQUEST, e),
+    }
+}
+
+/// A 上的文件名能直接在本机（可能是另一种系统）当文件名用时才返回
+fn safe_name(s: &str) -> Option<String> {
+    let n = s.rsplit(['/', '\\']).next()?;
+    let stem = n.split('.').next().unwrap_or("").to_ascii_uppercase();
+    let reserved = matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+        || ["COM", "LPT"].iter().any(|p| stem.strip_prefix(p).is_some_and(|d| d.len() == 1 && d.starts_with(|c: char| c.is_ascii_digit())));
+    (!n.is_empty()
+        && n.len() <= 200
+        && !n.starts_with(' ')
+        && !n.ends_with([' ', '.'])
+        && !n.chars().any(|c| c.is_control() || "<>:\"/\\|?*".contains(c))
+        && !reserved)
+    .then(|| n.to_string())
+}
+
+/// adb install 只接受以 .apk / .apex 结尾的文件名
+fn with_apk_ext(n: &str) -> String {
+    let lower = n.to_ascii_lowercase();
+    if lower.ends_with(".apk") || lower.ends_with(".apex") {
+        n.to_string()
+    } else {
+        format!("{n}.apk")
     }
 }
 
@@ -236,6 +275,22 @@ mod tests {
         let e = parse_reply(&p, 400, br#"{"error":"boom"}"#).unwrap_err();
         assert_eq!(e, "boom");
         assert_eq!(parse_reply(&p, 200, br#"{"ok":{"out":"x"}}"#).unwrap(), json!({"ok": {"out": "x"}}));
+    }
+
+    #[test]
+    fn temp_file_names() {
+        assert_eq!(safe_name("C:\\dir\\app.apk").as_deref(), Some("app.apk"));
+        assert_eq!(safe_name("/tmp/微信 1.APK").as_deref(), Some("微信 1.APK"));
+        assert_eq!(safe_name("/tmp/a:b.apk"), None, "Windows 不允许的字符");
+        assert_eq!(safe_name("/tmp/con.apk"), None, "Windows 保留名");
+        assert_eq!(safe_name("/tmp/a\nb.apk"), None);
+        assert_eq!(safe_name("/tmp/.."), None);
+        assert_eq!(safe_name(""), None);
+        assert_eq!(with_apk_ext("app.apk"), "app.apk");
+        assert_eq!(with_apk_ext("APP.APK"), "APP.APK");
+        assert_eq!(with_apk_ext("a.apex"), "a.apex");
+        assert_eq!(with_apk_ext("app"), "app.apk");
+        assert_eq!(with_apk_ext("app.zip"), "app.zip.apk");
     }
 
     #[test]

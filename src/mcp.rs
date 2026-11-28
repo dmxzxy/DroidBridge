@@ -4,7 +4,7 @@
 //! 设备 id：本机设备直接用 serial；远程电脑上的设备为 "<远程电脑 id>/<serial>"（list_devices 会列出）。
 //! 工具在设备所在节点执行（远程设备转发到对方的 /api/agent/exec），投屏窗口会显示 AI 的每次操作。
 
-use crate::{adb, agent, peers, AppState};
+use crate::{agent, peers, AppState};
 use axum::extract::State;
 use axum::http::{header, StatusCode};
 use axum::response::{IntoResponse, Response};
@@ -131,7 +131,7 @@ async fn all_tools(st: &AppState) -> Value {
 async fn all_devices(st: &AppState) -> (Vec<(String, String, Option<String>, String, String, String)>, Vec<String>) {
     let mut out = Vec::new();
     let mut errors = Vec::new();
-    match adb::list_devices(&st.cfg.adb).await {
+    match crate::local_devices(st).await {
         Ok(list) => {
             for d in list {
                 out.push((d.serial.clone(), st.cfg.name.clone(), None, d.serial, d.model, d.state));

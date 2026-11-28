@@ -509,7 +509,7 @@ class Viewer {
       case 'status': if (!this.gotFrame) this.showOverlay(m.msg, { spin: true }); break;
       case 'viewers': this.onViewers(m); break;
       case 'busy': this.onBusy(m); break;
-      case 'meta': this.setDevNav(m.nav_buttons === true); if (m.device_name && !(typeof devAlias === 'function' && devAlias(this.dev.serial))) this.nameEl.textContent = m.device_name; this.showOverlay(t('等待画面…'), { spin: true }); break;
+      case 'meta': this.setDevNav(m.nav_buttons === true); if (m.device_name && !(typeof devAliasOf === 'function' && devAliasOf(this.dev))) this.nameEl.textContent = m.device_name; this.showOverlay(t('等待画面…'), { spin: true }); break;
       case 'session':
         this.vw = m.width; this.vh = m.height;
         if (this.canvas.width !== m.width || this.canvas.height !== m.height) { this.canvas.width = m.width; this.canvas.height = m.height; }

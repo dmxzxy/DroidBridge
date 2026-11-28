@@ -36,10 +36,12 @@ const check = (l, ok, d) => { console.log((ok ? '✓ ' : '✗ ') + l + (d ? '  '
   ws.onmessage = e => { const m = JSON.parse(e.data); if (m.id && pend.has(m.id)) { pend.get(m.id)(m); pend.delete(m.id); } if (m.method === 'Runtime.exceptionThrown') errs.push((m.params.exceptionDetails.exception?.description || m.params.exceptionDetails.text).slice(0, 200)); };
   const send = (method, params = {}) => new Promise(r => { const i = ++id; pend.set(i, r); ws.send(JSON.stringify({ id: i, method, params })); });
   const ev = async (x) => { const r = await send('Runtime.evaluate', { expression: x, awaitPromise: true, returnByValue: true }); return r.result.exceptionDetails ? 'EXC ' + (r.result.exceptionDetails.exception?.description || r.result.exceptionDetails.text) : r.result.result?.value; };
-  const rclick = async (x, y) => {
+  const rclick = async (x, y, menu = true) => {
     await send('Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: 'right', clickCount: 1 });
     await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button: 'right', clickCount: 1 });
     await sleep(250);
+    // 机器忙时菜单还没渲染出来：等到它出现为止（不弹菜单的地方传 false）
+    if (menu) for (let i = 0; i < 20 && !(await ev(`!!document.querySelector('.menu')`)); i++) await sleep(100);
   };
   const lclick = async (x, y) => {
     await send('Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: 'left', clickCount: 1 });
@@ -58,7 +60,7 @@ const check = (l, ok, d) => { console.log((ok ? '✓ ' : '✗ ') + l + (d ? '  '
   // 1. 空白处：不出浏览器菜单，也不出我们的菜单
   const prevented = await ev(`(() => { let p = null; const h = e => { p = e.defaultPrevented; }; addEventListener('contextmenu', h); const ev = new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 700, clientY: 850 }); document.querySelector('main').dispatchEvent(ev); removeEventListener('contextmenu', h); return ev.defaultPrevented; })()`);
   check('空白处右键：屏蔽浏览器菜单', prevented === true);
-  await rclick(1300, 850);
+  await rclick(1300, 850, false);
   check('空白处右键：不弹菜单', (await menuItems()) === '', await menuItems());
 
   // 2. 设备画面：右键仍然是“返回”
