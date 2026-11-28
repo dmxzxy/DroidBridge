@@ -251,11 +251,16 @@ pub async fn apply(st: &AppState) -> Result<serde_json::Value, String> {
         let _ = std::fs::set_permissions(&work, std::fs::Permissions::from_mode(0o700));
     }
 
-    let script = if cfg!(windows) { write_windows_script(&target, &file, &work)? } else { write_unix_script(&target, &file, &work)? };
+    let (script, envs) = if cfg!(windows) {
+        write_windows_script(&target, &file, &work)?
+    } else {
+        (write_unix_script(&target, &file, &work)?, Vec::new())
+    };
     // 脱离父进程启动脚本，然后本进程退出
     let mut cmd = Command::new(if cfg!(windows) { "cmd" } else { "sh" });
     if cfg!(windows) {
-        cmd.arg("/C").arg(&script);
+        // cmd 处理 /C 后的参数时会去掉首尾引号再执行，路径里的空格或 & 就失去了保护；多包一层引号才能原样保留
+        cmd.raw_arg(format!("/C \"\"{}\"\"", script.display())).envs(envs);
     } else {
         cmd.arg(&script);
     }
@@ -275,44 +280,41 @@ pub async fn apply(st: &AppState) -> Result<serde_json::Value, String> {
     Ok(json!({"ok": true, "version": ver, "size": size}))
 }
 
-/// Windows：等本进程退出 → 解压 → 覆盖 → 启动 → 删除脚本所在的工作目录（必须是最后一行）
-fn write_windows_script(target: &std::path::Path, archive: &std::path::Path, work: &std::path::Path) -> Result<PathBuf, String> {
+/// Windows：等本进程退出 → 解压 → 覆盖 → 启动 → 删除脚本所在的工作目录（必须是最后一行）。
+/// 脚本只能是 ASCII，路径全部放在环境变量里由调用方设置：cmd 按系统代码页（中文系统是 GBK）读 .bat，
+/// 直接写进去的 UTF-8 中文路径会变成乱码，解压和覆盖都会落到不存在的目录上。
+fn write_windows_script(target: &std::path::Path, archive: &std::path::Path, work: &std::path::Path) -> Result<(PathBuf, Vec<(&'static str, String)>), String> {
     let exe = exe_path();
     let name = exe.file_name().and_then(|n| n.to_str()).unwrap_or("DroidBridge.exe").to_string();
     let tmp = work.join("extracted");
     let pid = std::process::id();
-    let q = |p: &std::path::Path| p.to_string_lossy().replace('\'', "''");
+    let args = args_for_restart().iter().map(|a| format!("\"{}\"", a.replace('"', ""))).collect::<Vec<_>>().join(" ");
     let script = format!(
         "@echo off\r\n\
-         setlocal\r\n\
-         set \"DEST={dest}\"\r\n\
-         set \"ZIP={zip}\"\r\n\
-         set \"TMP={tmp}\"\r\n\
-         set \"EXE={name}\"\r\n\
+         setlocal DisableDelayedExpansion\r\n\
          :wait\r\n\
          taskkill /F /PID {pid} >nul 2>&1\r\n\
          ping -n 2 127.0.0.1 >nul\r\n\
-         if exist \"%DEST%\\%EXE%\" ren \"%DEST%\\%EXE%\" \"%EXE%.old\" >nul 2>&1\r\n\
-         if exist \"%DEST%\\%EXE%\" goto wait\r\n\
-         if exist \"%TMP%\" rmdir /s /q \"%TMP%\"\r\n\
-         powershell -NoProfile -ExecutionPolicy Bypass -Command \"Expand-Archive -LiteralPath '{zipq}' -DestinationPath '{tmpq}' -Force\"\r\n\
-         xcopy \"%TMP%\\*\" \"%DEST%\\\" /E /Y /I /Q >nul\r\n\
-         del \"%DEST%\\%EXE%.old\" >nul 2>&1\r\n\
-         start \"\" \"%DEST%\\%EXE%\" {args}\r\n\
-         (goto) 2>nul & rmdir /s /q \"{work}\" >nul 2>&1\r\n",
-        dest = target.display(),
-        zip = archive.display(),
-        tmp = tmp.display(),
-        work = work.display(),
-        name = name,
-        pid = pid,
-        zipq = q(archive),
-        tmpq = q(&tmp),
-        args = args_for_restart().iter().map(|a| format!("\"{}\"", a.replace('"', ""))).collect::<Vec<_>>().join(" "),
+         if exist \"%DB_DEST%\\%DB_EXE%\" ren \"%DB_DEST%\\%DB_EXE%\" \"%DB_EXE%.old\" >nul 2>&1\r\n\
+         if exist \"%DB_DEST%\\%DB_EXE%\" goto wait\r\n\
+         if exist \"%DB_TMP%\" rmdir /s /q \"%DB_TMP%\"\r\n\
+         powershell -NoProfile -ExecutionPolicy Bypass -Command \"Expand-Archive -LiteralPath $env:DB_ZIP -DestinationPath $env:DB_TMP -Force\"\r\n\
+         xcopy \"%DB_TMP%\\*\" \"%DB_DEST%\\\" /E /Y /I /Q >nul\r\n\
+         if exist \"%DB_DEST%\\%DB_EXE%\" (del \"%DB_DEST%\\%DB_EXE%.old\" >nul 2>&1) else ren \"%DB_DEST%\\%DB_EXE%.old\" \"%DB_EXE%\" >nul 2>&1\r\n\
+         if exist \"%DB_DEST%\\%DB_EXE%\" start \"\" \"%DB_DEST%\\%DB_EXE%\" %DB_ARGS%\r\n\
+         (goto) 2>nul & rmdir /s /q \"%DB_WORK%\" >nul 2>&1\r\n"
     );
     let file = work.join("droidbridge-update.bat");
     std::fs::write(&file, script).map_err(|e| tr!("无法写入更新脚本：{e}", "Cannot write the update script: {e}"))?;
-    Ok(file)
+    let envs = vec![
+        ("DB_DEST", target.to_string_lossy().into_owned()),
+        ("DB_ZIP", archive.to_string_lossy().into_owned()),
+        ("DB_TMP", tmp.to_string_lossy().into_owned()),
+        ("DB_EXE", name),
+        ("DB_WORK", work.to_string_lossy().into_owned()),
+        ("DB_ARGS", args),
+    ];
+    Ok((file, envs))
 }
 
 /// macOS / Linux：等本进程退出 → 解压 → 覆盖 → 启动
@@ -321,11 +323,11 @@ fn write_unix_script(target: &std::path::Path, archive: &std::path::Path, work: 
     let tmp = work.join("extracted");
     let pid = std::process::id();
     let mac = cfg!(target_os = "macos");
-    let dq = |p: &std::path::Path| p.to_string_lossy().replace('"', "\\\"");
+    let dq = |p: &std::path::Path| format!("'{}'", p.to_string_lossy().replace('\'', "'\\''"));
     let body = if mac {
         // target 是 .app 包
         format!(
-            "TARGET=\"{target}\"\nARCHIVE=\"{archive}\"\nTMP=\"{tmp}\"\nWORK=\"{work}\"\n\
+            "TARGET={target}\nARCHIVE={archive}\nTMP={tmp}\nWORK={work}\n\
              while kill -0 {pid} 2>/dev/null; do sleep 1; done\n\
              rm -rf \"$TMP\" && mkdir -p \"$TMP\" && unzip -q \"$ARCHIVE\" -d \"$TMP\"\n\
              rm -rf \"$TARGET\" && cp -R \"$TMP/DroidBridge.app\" \"$TARGET\"\n\
@@ -335,11 +337,11 @@ fn write_unix_script(target: &std::path::Path, archive: &std::path::Path, work: 
             archive = dq(archive),
             tmp = dq(&tmp),
             work = dq(work),
-            args = args_for_restart().iter().map(|x| format!("\"{x}\"")).collect::<Vec<_>>().join(" "),
+            args = args_for_restart().iter().map(|a| format!("'{}'", a.replace('\'', "'\\''"))).collect::<Vec<_>>().join(" "),
         )
     } else {
         format!(
-            "TARGET=\"{target}\"\nARCHIVE=\"{archive}\"\nTMP=\"{tmp}\"\nWORK=\"{work}\"\nEXE=\"{exe}\"\n\
+            "TARGET={target}\nARCHIVE={archive}\nTMP={tmp}\nWORK={work}\nEXE={exe}\n\
              while kill -0 {pid} 2>/dev/null; do sleep 1; done\n\
              rm -rf \"$TMP\" && mkdir -p \"$TMP\" && tar -xzf \"$ARCHIVE\" -C \"$TMP\"\n\
              SRCDIR=$(find \"$TMP\" -maxdepth 2 -name droidbridge-desktop -exec dirname {{}} \\; | head -1)\n\
@@ -387,6 +389,23 @@ mod tests {
             assert_eq!(a, "DroidBridge-0.7.0-windows-x64.zip");
         }
         assert_eq!(asset_name("v0.7.0").unwrap(), asset_name("0.7.0").unwrap());
+    }
+
+    #[test]
+    fn windows_script_stays_ascii_with_paths_in_env() {
+        let work = std::env::temp_dir().join(format!("db-upd-script-{:08x}", crate::util::random_scid()));
+        std::fs::create_dir_all(&work).unwrap();
+        let dir = PathBuf::from(r"D:\软件\DroidBridge");
+        let (file, envs) = write_windows_script(&dir, &dir.join("data/update/a.zip"), &work).unwrap();
+        let script = std::fs::read_to_string(&file).unwrap();
+        let _ = std::fs::remove_dir_all(&work);
+        assert!(script.is_ascii(), "cmd reads .bat in the system code page; non-ASCII bytes become mojibake");
+        assert_eq!(envs.iter().map(|(k, _)| *k).collect::<Vec<_>>(), ["DB_DEST", "DB_ZIP", "DB_TMP", "DB_EXE", "DB_WORK", "DB_ARGS"]);
+        assert_eq!(envs[0].1, dir.to_string_lossy());
+        assert!(envs[..5].iter().all(|(_, v)| !v.is_empty()));
+        for var in ["DB_DEST", "DB_ZIP", "DB_TMP", "DB_EXE", "DB_WORK"] {
+            assert!(script.contains(&format!("%{var}%")) || script.contains(&format!("$env:{var}")), "{var} unused");
+        }
     }
 
     #[test]
